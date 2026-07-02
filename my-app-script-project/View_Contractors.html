@@ -1,0 +1,184 @@
+<!-- CONTRACTORS TAB -->
+<div id="contractorsTab" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-contractorsTab">
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
+    <input type="text" id="searchContractor" class="form-control w-50" placeholder="Search Contractors by Name or Contact..." onkeyup="App.Contractor.filterData(this.value)">
+    <div class="d-flex gap-2 flex-wrap justify-content-end">
+      <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteContractors" type="button"
+        onclick="App.Contractor.bulkDelete()" style="white-space: nowrap;">
+        <i class="bi bi-trash"></i> Delete Selected
+      </button>
+      <button class="btn btn-warning fw-bold text-dark shadow-sm" onclick="App.Contractor.openCreateModal()">+ Register New Contractor</button>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover table-bordered align-middle mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllContractors" class="form-check-input" onclick="App.Contractor.toggleSelectAll(this)"></th>
+          <th style="width: 22%;">Contractor Name</th>
+          <th style="width: 19%;">Contact Info</th>
+          <th style="width: 13%; text-align: center;">Completed Lots / Dispatches</th>
+          <th style="width: 15%; text-align: right;">Balance Due</th>
+          <th style="width: 22%; text-align: center;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="contractorTableBody">
+        <tr><td colspan="6" class="text-center p-4">Loading Contractors...</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="contractorEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3" style="display: none;">
+    <i class="bi bi-person-badge fs-1 text-muted d-block mb-3"></i>
+    <h5 class="fw-bold text-dark">No Contractors Registered</h5>
+    <p class="text-muted mb-0">Register a contractor using the button above, then set their rate card per process.</p>
+  </div>
+</div>
+
+<!-- CONTRACTOR PROFILE / RATE CARD / LEDGER MODAL -->
+<div class="modal fade" id="contractorProfileModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-warning text-dark">
+        <h5 class="modal-title fw-bold" id="contractorProfileTitle">Contractor Profile</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+
+        <ul class="nav nav-pills mb-4 border-bottom pb-2" id="contractorTabs">
+          <li class="nav-item">
+            <button class="nav-link active fw-bold text-dark" id="btn-c-profile" onclick="App.Contractor.switchTab('c-profile')">Profile Info</button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link fw-bold text-dark" id="btn-c-rates" onclick="App.Contractor.switchTab('c-rates')">Rate Card</button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link fw-bold text-dark" id="btn-c-ledger" onclick="App.Contractor.switchTab('c-ledger')">Ledger</button>
+          </li>
+        </ul>
+
+        <!-- Profile Tab -->
+        <div id="c-profile" class="contractor-tab-content">
+          <form id="contractorForm" autocomplete="off">
+            <input type="hidden" id="originalContractorName" name="originalContractorName">
+            <div class="row g-3 mb-4">
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Contractor Name *</label>
+                <input type="text" name="contractorName" id="ctrFormName" class="form-control" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Contact Number</label>
+                <input type="text" name="contact" id="ctrFormContact" class="form-control">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Address</label>
+                <input type="text" name="address" id="ctrFormAddress" class="form-control">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">GST/PAN</label>
+                <input type="text" name="gstPan" id="ctrFormGstPan" class="form-control">
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">Remarks</label>
+                <input type="text" name="remarks" id="ctrFormRemarks" class="form-control">
+              </div>
+            </div>
+            <div class="text-end">
+              <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+              <button type="submit" id="contractorSubmitBtn" class="btn btn-warning fw-bold px-5 text-dark shadow-sm">Save Profile</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Rate Card Tab -->
+        <div id="c-rates" class="contractor-tab-content" style="display:none;">
+          <div class="alert alert-info py-2">Set a negotiated rate per unit for each process this contractor runs. Leave a process unset if they don't carry it.</div>
+          <div class="table-responsive mb-3">
+            <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
+              <thead class="table-dark">
+                <tr>
+                  <th style="width: 35%;">Process</th>
+                  <th style="width: 20%; text-align: right;">Rate / Unit</th>
+                  <th style="width: 30%;">Remarks</th>
+                  <th style="width: 15%; text-align: center;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="contractorRatesBody"></tbody>
+            </table>
+          </div>
+          <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.Contractor.addRateRow()">+ Add Rate</button>
+        </div>
+
+        <!-- Ledger Tab -->
+        <div id="c-ledger" class="contractor-tab-content" style="display:none;">
+          <div class="text-end mb-2">
+            <button type="button" class="btn btn-dark btn-sm fw-bold" onclick="App.Contractor.printLedger()"><i class="bi bi-printer me-1"></i> Print Ledger</button>
+          </div>
+          <div class="row g-2 mb-3 text-center">
+            <div class="col-4">
+              <div class="border rounded-3 p-2 bg-white shadow-sm">
+                <div class="small text-muted text-uppercase">Total Payable</div>
+                <div class="fs-5 fw-bold text-dark" id="ledgerTotalPayable">₹0.00</div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="border rounded-3 p-2 bg-white shadow-sm">
+                <div class="small text-muted text-uppercase">Total Paid</div>
+                <div class="fs-5 fw-bold text-success" id="ledgerTotalPaid">₹0.00</div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="border rounded-3 p-2 bg-white shadow-sm">
+                <div class="small text-muted text-uppercase">Balance Due</div>
+                <div class="fs-5 fw-bold text-danger" id="ledgerBalanceDue">₹0.00</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="alert alert-info py-2"><i class="fw-bold">Note:</i> Payable rows are computed live from Completed Production lots and Dispatch / Logistics records; Payment rows are recorded below.</div>
+
+          <div class="table-responsive mb-3">
+            <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
+              <thead class="table-dark">
+                <tr>
+                  <th style="width: 11%;">Date</th>
+                  <th style="width: 10%;">Type</th>
+                  <th style="width: 11%;">Reference</th>
+                  <th style="width: 26%;">Description</th>
+                  <th style="width: 12%; text-align: right;">Payable</th>
+                  <th style="width: 12%; text-align: right;">Paid</th>
+                  <th style="width: 12%; text-align: right;">Balance</th>
+                  <th style="width: 6%; text-align: center;">✕</th>
+                </tr>
+              </thead>
+              <tbody id="contractorLedgerBody"></tbody>
+            </table>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Record a Payment</h6>
+          <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+              <label class="form-label small fw-bold">Date</label>
+              <input type="date" id="paymentFormDate" class="form-control">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold">Amount *</label>
+              <input type="number" id="paymentFormAmount" class="form-control" min="0.01" step="0.01" placeholder="0.00">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold">Mode / Reference</label>
+              <input type="text" id="paymentFormModeReference" class="form-control" placeholder="e.g. Cash, UPI...">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold">Remarks</label>
+              <input type="text" id="paymentFormRemarks" class="form-control">
+            </div>
+          </div>
+          <div class="text-end mt-2">
+            <button type="button" class="btn btn-success fw-bold" onclick="App.Contractor.recordPayment()">+ Record Payment</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>

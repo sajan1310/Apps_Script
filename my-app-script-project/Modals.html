@@ -1,0 +1,912 @@
+<!-- Toast Notification -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1060;">
+  <div id="systemToast" class="toast align-items-center text-white border-0" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMessage">Notification</div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirmation Modal -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true" style="z-index: 1070;">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-warning">
+        <h5 class="modal-title text-dark">Action Required</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body fs-5" id="confirmMessageText">
+        Are you sure you want to proceed?
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirmActionBtn">Yes, Proceed</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BOM Access Password Modal -->
+<div class="modal fade" id="bomAccessModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true" style="z-index: 1075;">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title"><i class="bi bi-lock-fill me-2"></i>BOM Access Restricted</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-3">The Bill of Materials contains confidential cost and pricing data. Enter the password to continue.</p>
+        <form id="bomAccessForm" autocomplete="off" onsubmit="event.preventDefault(); App.BOM.submitAccessPassword();">
+          <label class="form-label fw-bold">Password</label>
+          <input type="password" id="bomAccessPassword" class="form-control" autocomplete="off" required>
+          <div id="bomAccessError" class="text-danger small mt-2" style="display: none;"></div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary fw-bold" id="bomAccessSubmitBtn" onclick="App.BOM.submitAccessPassword()">Unlock</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Edit / Create PO Modal -->
+<div class="modal fade" id="editPoModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title" id="formTitle">Create New Purchase Order</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <form id="poForm" autocomplete="on">
+          <input type="hidden" id="existingPoNumber" name="existingPoNumber">
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Global Headers & Optional Remarks</h6>
+          <div class="row g-3 mb-4">
+            <div class="col-md-3">
+              <label class="form-label fw-bold">Vendor Name *</label>
+              <select name="vendor" id="formVendor" class="form-select select2-vendor" required></select>
+            </div>
+            <div class="col-md-3"><label class="form-label fw-bold">PO Date *</label><input type="date" name="poDate" id="visiblePoDate" class="form-control" required></div>
+            <div class="col-md-3"><label class="form-label">Contact / Dispatch Address</label><input type="text" name="contact" id="formContact" class="form-control" maxlength="100"></div>
+            <div class="col-md-3"><label class="form-label">Supplier PO Remarks</label><input type="text" name="supplierRemarks" id="formSuppRem" class="form-control" placeholder="Quote or Ref No." maxlength="200"></div>
+            
+            <div class="col-md-6"><label class="form-label">Description (Shown in Document Box)</label><textarea name="poDescription" id="formDesc" class="form-control" rows="2" maxlength="500"></textarea></div>
+            <div class="col-md-6"><label class="form-label">Remarks (Shown in Document Box)</label><textarea name="poRemarks" id="formRemarks" class="form-control" rows="2" maxlength="500"></textarea></div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Line Items</h6>
+          <div class="table-responsive">
+            <table class="table table-bordered bg-white shadow-sm">
+              <thead class="table-light">
+                <tr><th>Name *</th><th>Narration</th><th style="width:10%;">Size</th><th style="width:12%;">Qty *</th><th>Unit</th><th style="width:12%;">Unit Price *</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="itemsBody"></tbody>
+            </table>
+          </div>
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.PO.addRow()">+ Add New Row</button>
+            <a href="#" class="small text-decoration-none" onclick="App.PO.openVendorCatalog(); return false;">Vendor Catalog</a>
+          </div>
+          <div class="alert alert-info py-2 shadow-sm" id="rateComparison" style="display: none;"></div>
+          
+          <div class="text-end mt-2">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" id="poSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save Purchase Order</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Receive Bill Modal -->
+<div class="modal fade" id="receiveBillModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title" id="billModalTitle">Log Incoming Invoice / Bill</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <form id="billForm" autocomplete="off">
+          <input type="hidden" id="existingBillNumber" name="existingBillNumber">
+          <div class="row g-3 mb-4">
+            <input type="hidden" name="contact" id="billContact">
+            <div class="col-md-4">
+              <label class="form-label fw-bold">Vendor Name *</label>
+              <select name="vendor" id="billVendor" class="form-select select2-vendor" required></select>
+            </div>
+
+            <div class="col-md-4"><label class="form-label fw-bold">Invoice / Bill Number *</label><input type="text" name="billNumber" class="form-control" required maxlength="50"></div>
+            <div class="col-md-4"><label class="form-label fw-bold">Invoice Date *</label><input type="date" name="billDate" id="billDateInput" class="form-control" required></div>
+            <div class="col-md-8"><label class="form-label">Ledger Remarks</label><input type="text" name="remarks" class="form-control" placeholder="Optional notes for this bill..." maxlength="500"></div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Items Received</h6>
+          <div class="table-responsive">
+            <table class="table table-bordered bg-white shadow-sm">
+              <thead class="table-light">
+                <tr>
+                  <th>Item Name *</th>
+                  <th style="width:10%;">Size</th>
+                  <th style="width:15%;">Narration</th>
+                  <th style="width:10%;">Recv. Qty *</th>
+                  <th style="width:8%;">Unit</th>
+                  <th style="width:12%;">Unit Price *</th>
+                  <th style="width:10%;">GST Rate (%)</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="billItemsBody"></tbody>
+            </table>
+          </div>
+          
+          <button type="button" class="btn btn-outline-primary btn-sm mb-3 fw-bold" onclick="App.Bill.addRow()">+ Add Bill Item</button>
+
+          <div class="text-end mt-2">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" id="billSubmitBtn" class="btn btn-dark px-5 fw-bold shadow-sm">Record Itemized Bill</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Return Goods Modal -->
+<div class="modal fade" id="returnGoodsModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title" id="returnModalTitle">Log Goods Returned to Vendor</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <form id="returnForm" autocomplete="off">
+          <input type="hidden" id="existingReturnNumber" name="existingReturnNumber">
+          <div class="row g-3 mb-4">
+            <input type="hidden" name="contact" id="returnContact">
+            <div class="col-md-4">
+              <label class="form-label fw-bold">Vendor Name *</label>
+              <select name="vendor" id="returnVendor" class="form-select select2-vendor" required></select>
+            </div>
+
+            <div class="col-md-4"><label class="form-label fw-bold">Return / Debit Note Number</label><input type="text" name="returnNumber" class="form-control" maxlength="50"></div>
+            <div class="col-md-4"><label class="form-label fw-bold">Return Date *</label><input type="date" name="returnDate" id="returnDateInput" class="form-control" required></div>
+            <div class="col-md-4"><label class="form-label">Original Bill # (optional)</label><input type="text" name="billNumber" id="returnBillNumber" class="form-control" placeholder="e.g. INV-998" maxlength="50"></div>
+            <div class="col-md-8"><label class="form-label">Ledger Remarks</label><input type="text" name="remarks" class="form-control" placeholder="Optional notes for this return..." maxlength="500"></div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Items Returned</h6>
+          <div class="table-responsive">
+            <table class="table table-bordered bg-white shadow-sm">
+              <thead class="table-light">
+                <tr>
+                  <th>Item Name *</th>
+                  <th style="width:10%;">Size</th>
+                  <th style="width:14%;">Narration</th>
+                  <th style="width:9%;">Qty *</th>
+                  <th style="width:8%;">Unit</th>
+                  <th style="width:11%;">Credit Rate</th>
+                  <th style="width:16%;">Reason</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="returnItemsBody"></tbody>
+            </table>
+          </div>
+
+          <button type="button" class="btn btn-outline-primary btn-sm mb-3 fw-bold" onclick="App.Return.addRow()">+ Add Returned Item</button>
+
+          <div class="text-end mt-2">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" id="returnSubmitBtn" class="btn btn-dark px-5 fw-bold shadow-sm">Return Goods</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Log Wastage Modal -->
+<div class="modal fade" id="logWastageModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-warning text-dark">
+        <h5 class="modal-title fw-bold"><i class="bi bi-exclamation-triangle me-2"></i>Log Component Wastage</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <form id="wastageForm" autocomplete="off">
+          <div class="row g-3 mb-4">
+            <div class="col-md-4">
+              <label class="form-label fw-bold">Wastage Date *</label>
+              <input type="date" name="date" id="wastageDateInput" class="form-control" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Vendor <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="text" name="vendor" id="wastageVendor" class="form-control" list="vendorList" placeholder="Select or type vendor…" autocomplete="off" maxlength="200">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Remarks <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="text" name="remarks" class="form-control" placeholder="Optional notes for this wastage entry…" maxlength="500">
+            </div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Items Wasted</h6>
+          <div class="table-responsive">
+            <table class="table table-bordered bg-white shadow-sm">
+              <thead class="table-light">
+                <tr>
+                  <th>Item Name *</th>
+                  <th style="width:10%;">Size</th>
+                  <th style="width:9%;">Qty *</th>
+                  <th style="width:8%;">Unit</th>
+                  <th style="width:22%;">Reason for Wastage *</th>
+                  <th style="width:5%;"></th>
+                </tr>
+              </thead>
+              <tbody id="wastageItemsBody"></tbody>
+            </table>
+          </div>
+
+          <button type="button" class="btn btn-outline-warning btn-sm mb-3 fw-bold" onclick="App.Wastage.addRow()">+ Add Item</button>
+
+          <div class="text-end mt-2">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" id="wastageSubmitBtn" class="btn btn-warning text-dark px-5 fw-bold shadow-sm">
+              <i class="bi bi-exclamation-triangle me-1"></i>Log Wastage
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Issue Stock Modal -->
+<div class="modal fade" id="issueStockModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-box-arrow-up me-2"></i>Issue Stock</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="alert alert-secondary py-2 mb-3" role="alert" style="font-size: 13px;">
+          <i class="bi bi-info-circle-fill me-2"></i>For items not covered by a Process's own recipe (BOM). This debits Stock directly and stays out of any Production lot's Components Consumed list.
+        </div>
+        <form id="issueStockForm" autocomplete="off">
+          <div class="row g-3 mb-4">
+            <div class="col-md-3">
+              <label class="form-label fw-bold">Issue Date *</label>
+              <input type="date" name="date" id="issueDateInput" class="form-control" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold">Issued To / Purpose *</label>
+              <input type="text" name="issuedTo" id="issueIssuedTo" class="form-control" placeholder="e.g. Contractor name, department…" required maxlength="200">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Reference <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="text" name="reference" id="issueReferenceInput" class="form-control" placeholder="e.g. Lot #" maxlength="100">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Remarks <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="text" name="remarks" class="form-control" placeholder="Optional notes…" maxlength="500">
+            </div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Items Issued</h6>
+          <div class="table-responsive">
+            <table class="table table-bordered bg-white shadow-sm">
+              <thead class="table-light">
+                <tr>
+                  <th>Item Name *</th>
+                  <th style="width:12%;">Size</th>
+                  <th style="width:10%;">Qty *</th>
+                  <th style="width:10%;">Unit</th>
+                  <th style="width:5%;"></th>
+                </tr>
+              </thead>
+              <tbody id="issueItemsBody"></tbody>
+            </table>
+          </div>
+
+          <button type="button" class="btn btn-outline-dark btn-sm mb-3 fw-bold" onclick="App.Issue.addRow()">+ Add Item</button>
+
+          <div class="text-end mt-2">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" id="issueStockSubmitBtn" class="btn btn-dark px-5 fw-bold shadow-sm">
+              <i class="bi bi-box-arrow-up me-1"></i>Issue Stock
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Item Master Modal -->
+<div class="modal fade" id="itemModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold" id="itemFormTitle">Register New Item</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <form id="itemForm" autocomplete="off">
+          <input type="hidden" id="originalItemName" name="originalItemName">
+          <input type="hidden" id="originalItemSize" name="originalItemSize">
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Item Identification & Metadata</h6>
+          <div class="row g-3 mb-4">
+            <div class="col-md-8"><label class="form-label fw-bold">Item Name *</label><input type="text" name="itemName" id="formItemName" class="form-control" list="itemList" required maxlength="100"></div>
+            <div class="col-md-4"><label class="form-label fw-bold">Size</label><input type="text" name="itemSize" id="formItemSize" class="form-control" list="sizeList" maxlength="50"></div>
+            
+            <div class="col-md-4"><label class="form-label">Remarks</label><input type="text" name="itemRemarks" id="formItemRemarks" class="form-control" maxlength="200"></div>
+            <div class="col-md-4"><label class="form-label">Narration</label><input type="text" name="itemNarration" id="formItemNarration" class="form-control" maxlength="200"></div>
+            <div class="col-md-4"><label class="form-label">Specification</label><input type="text" name="itemSpec" id="formItemSpec" class="form-control" maxlength="200"></div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">
+            Units <a href="#" class="float-end small" onclick="App.Unit.openModal(); return false;">Manage Unit Master &#8599;</a>
+          </h6>
+          <div class="row g-3 mb-4">
+            <div class="col-md-4">
+              <label class="form-label fw-bold">Base Unit</label>
+              <input type="text" name="itemBaseUnit" id="formItemBaseUnit" class="form-control" list="unitList" value="Pcs" placeholder="Pcs">
+              <div class="form-text">Unit stock, BOM, and production are tracked in.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold">Purchase Unit</label>
+              <input type="text" name="itemPurchaseUnit" id="formItemPurchaseUnit" class="form-control" list="unitList" placeholder="Same as Base Unit">
+              <div class="form-text">Unit the vendor rate below is quoted in (e.g. Gross, Kg).</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Weight per Base Unit (g)</label>
+              <input type="number" name="itemWeightPerBaseUnit" id="formItemWeightPerBaseUnit" class="form-control" min="0" step="any" placeholder="Only if bought by weight">
+              <div class="form-text">Set this when Purchase Unit is a weight (Kg/Gram) but Base Unit is a count (Pcs).</div>
+            </div>
+          </div>
+
+          <div class="row g-3 mb-4" id="initialStockRow">
+            <div class="col-md-4">
+              <label class="form-label">Initial Stock <span class="text-muted">(optional)</span></label>
+              <input type="number" name="itemInitialStock" id="formItemInitialStock" class="form-control" min="0" step="any" placeholder="0">
+              <div class="form-text" id="initialStockHint">Creates a matching Stock entry for this item. Leave blank for 0.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Reorder Threshold <span class="text-muted">(optional)</span></label>
+              <input type="number" id="formItemThreshold" class="form-control" min="0" step="1" placeholder="e.g. 10">
+              <div class="form-text">Alert when stock falls below this level. Leave blank to keep unchanged.</div>
+            </div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Approved Vendors & Rates</h6>
+          <div class="table-responsive">
+            <table class="table table-bordered bg-white shadow-sm">
+              <thead class="table-light">
+                <tr>
+                  <th>Vendor Name *</th>
+                  <th style="width:30%;">Negotiated Rate (&#8377;) *</th>
+                  <th style="width:10%;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="itemVendorsBody"></tbody>
+            </table>
+          </div>
+          
+          <button type="button" class="btn btn-outline-info text-dark btn-sm mb-3 fw-bold border-2" onclick="App.Item.addVendorRow()">+ Add Vendor & Rate</button>
+          
+          <div class="text-end mt-2">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" id="itemSubmitBtn" class="btn btn-info fw-bold px-5 shadow-sm text-dark">Save Item Record</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Unit Master Modal -->
+<div class="modal fade" id="unitModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold">Unit Master &mdash; Conversion Table</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <p class="text-muted small">
+          Units in the same Family convert to each other by a fixed ratio (Factor to Base).
+          The Family's base unit (e.g. Pcs for Count, Gram for Weight) has Factor 1.
+        </p>
+        <h6 class="text-secondary border-bottom pb-1 fw-bold" id="unitFormTitle">Add Unit</h6>
+        <form id="unitForm" class="row g-2 align-items-end mb-4" autocomplete="off">
+          <input type="hidden" id="originalUnitName" name="originalUnitName">
+          <div class="col-md-3">
+            <label class="form-label small">Unit Name *</label>
+            <input type="text" name="unitName" id="formUnitName" class="form-control" required maxlength="50">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">Family *</label>
+            <input type="text" name="family" id="formUnitFamily" class="form-control" list="unitFamilyList" required maxlength="50" placeholder="Count, Weight, Volume...">
+            <datalist id="unitFamilyList"></datalist>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Factor to Base *</label>
+            <input type="number" name="factorToBase" id="formUnitFactor" class="form-control" required min="0.0001" step="any">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">Remarks</label>
+            <input type="text" name="remarks" id="formUnitRemarks" class="form-control" maxlength="200">
+          </div>
+          <div class="col-md-1 d-flex">
+            <button type="submit" class="btn btn-info fw-bold text-dark w-100">Save</button>
+          </div>
+        </form>
+
+        <div class="mb-2">
+          <input type="text" id="unitMasterSearch" class="form-control" placeholder="Search units..." autocomplete="off" onkeyup="App.Unit.renderTable()">
+        </div>
+        <div class="table-responsive mb-3">
+          <table class="table table-bordered bg-white shadow-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Unit Name</th>
+                <th>Family</th>
+                <th style="width:20%;">Factor to Base</th>
+                <th>Remarks</th>
+                <th style="width:10%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="unitTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Color Master Modal -->
+<div class="modal fade" id="colorMasterModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold">Color Master</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <p class="text-muted small">
+          Colors used as suggestions on BOM components and Production logging. Free text is still
+          accepted everywhere &mdash; this just keeps spelling consistent (e.g. always "Red", never "red ").
+        </p>
+        <button type="button" class="btn btn-sm btn-outline-primary mb-3" onclick="App.Color.autoExtract()" title="Detects dual/multi-color variants in Item Master (e.g. Red-White) built from colors already listed below, and adds any new combination as one entry">
+          <i class="bi bi-magic"></i> Detect Color Combinations from Item Master
+        </button>
+
+        <h6 class="text-secondary border-bottom pb-1 fw-bold" id="colorMasterFormTitle">Add Color</h6>
+        <form id="colorMasterForm" class="row g-2 align-items-end mb-4" autocomplete="off">
+          <input type="hidden" id="originalColorName" name="originalName">
+          <div class="col-md-4">
+            <label class="form-label small">Color Name *</label>
+            <input type="text" name="name" id="formColorName" class="form-control" required maxlength="50">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Remarks</label>
+            <input type="text" name="remarks" id="formColorRemarks" class="form-control" maxlength="200">
+          </div>
+          <div class="col-md-2 d-flex">
+            <button type="submit" class="btn btn-info fw-bold text-dark w-100">Save</button>
+          </div>
+        </form>
+
+        <div class="mb-2">
+          <input type="text" id="colorMasterSearch" class="form-control" placeholder="Search colors..." autocomplete="off" onkeyup="App.Color.renderTable()">
+        </div>
+        <div class="table-responsive mb-3">
+          <table class="table table-bordered bg-white shadow-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th style="width:8%;">#</th>
+                <th>Color</th>
+                <th>Remarks</th>
+                <th style="width:10%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="colorMasterTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Model Master Modal -->
+<div class="modal fade" id="modelMasterModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold">Model Master</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <p class="text-muted small">
+          Models used as suggestions for a Product/BOM's name. Free text is still accepted when
+          creating a Product &mdash; this just keeps spelling consistent across color variants of the same Model.
+        </p>
+        <h6 class="text-secondary border-bottom pb-1 fw-bold" id="modelMasterFormTitle">Add Model</h6>
+        <form id="modelMasterForm" class="row g-2 align-items-end mb-4" autocomplete="off">
+          <input type="hidden" id="originalModelName" name="originalName">
+          <div class="col-md-4">
+            <label class="form-label small">Model Name *</label>
+            <input type="text" name="name" id="formModelName" class="form-control" required maxlength="100">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Remarks</label>
+            <input type="text" name="remarks" id="formModelRemarks" class="form-control" maxlength="200">
+          </div>
+          <div class="col-md-2 d-flex">
+            <button type="submit" class="btn btn-info fw-bold text-dark w-100">Save</button>
+          </div>
+        </form>
+
+        <div class="mb-2">
+          <input type="text" id="modelMasterSearch" class="form-control" placeholder="Search models..." autocomplete="off" onkeyup="App.Model.renderTable()">
+        </div>
+        <div class="table-responsive mb-3">
+          <table class="table table-bordered bg-white shadow-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Model</th>
+                <th>Remarks</th>
+                <th style="width:10%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="modelMasterTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Process Type Master Modal -->
+<div class="modal fade" id="processTypeMasterModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold">Process Type Master</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+          <p class="text-muted small mb-0">
+            Categories used to group Processes (e.g. Painting, Welding, Assembly) in the Processes table.
+            Leaving a Process's Process Type blank groups it under "General".
+          </p>
+          <button type="button" class="btn btn-outline-dark btn-sm fw-bold text-nowrap" onclick="App.ProcessType.importFromProcessNames()" title="Re-matches every Process's Process Type against the names listed here, based on whichever name is a substring of its Process Name">
+            <i class="bi bi-magic"></i> Import from Process Name
+          </button>
+        </div>
+        <h6 class="text-secondary border-bottom pb-1 fw-bold" id="processTypeMasterFormTitle">Add Process Type</h6>
+        <form id="processTypeMasterForm" class="row g-2 align-items-end mb-4" autocomplete="off">
+          <input type="hidden" id="originalProcessTypeName" name="originalName">
+          <div class="col-md-4">
+            <label class="form-label small">Process Type Name *</label>
+            <input type="text" name="name" id="formProcessTypeName" class="form-control" required maxlength="100">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Remarks</label>
+            <input type="text" name="remarks" id="formProcessTypeRemarks" class="form-control" maxlength="200">
+          </div>
+          <div class="col-md-2 d-flex">
+            <button type="submit" class="btn btn-info fw-bold text-dark w-100">Save</button>
+          </div>
+        </form>
+
+        <div class="mb-2">
+          <input type="text" id="processTypeMasterSearch" class="form-control" placeholder="Search process types..." autocomplete="off" onkeyup="App.ProcessType.renderTable()">
+        </div>
+        <div class="table-responsive mb-3">
+          <table class="table table-bordered bg-white shadow-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Process Type</th>
+                <th>Remarks</th>
+                <th style="width:10%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="processTypeMasterTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Item Ledger & Comparison Modal -->
+<div class="modal fade" id="itemLedgerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold" id="itemLedgerTitle" style="font-family: 'Outfit', sans-serif;">Item Ledger & Comparison</h5>
+        <div class="d-flex align-items-center">
+          <button class="btn btn-dark btn-sm fw-bold me-2" onclick="App.Item.printLedger()"><i class="bi bi-printer me-1"></i> Print Ledger</button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" style="margin-top: 1px;"></button>
+        </div>
+      </div>
+      <div class="modal-body bg-light">
+        <!-- Stock Position Card -->
+        <div class="card mb-4 border-0 shadow-sm">
+          <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
+            <span>Stock Position (Initial vs Current)</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width: 20%;">Size</th>
+                    <th style="width: 18%; text-align: center;">Initial Stock</th>
+                    <th style="width: 18%; text-align: center;">Current Stock</th>
+                    <th style="width: 44%; text-align: center;">Pending Order</th>
+                  </tr>
+                </thead>
+                <tbody id="itemLedgerStockBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Vendor Rates Comparison Card -->
+        <div class="card mb-4 border-0 shadow-sm">
+          <div class="card-header bg-dark text-white fw-bold d-flex justify-content-between align-items-center" style="font-family: 'Outfit', sans-serif;">
+            <span>Vendor Rates & Variants Comparison</span>
+            <span class="badge bg-info text-dark">Classified by Size</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width: 15%;">Size</th>
+                    <th style="width: 20%;">Narration</th>
+                    <th style="width: 25%;">Vendor Name</th>
+                    <th style="width: 16%;">Contact Info</th>
+                    <th style="width: 12%; text-align: right;">Master Rate</th>
+                    <th style="width: 12%; text-align: right;">Latest PO Rate</th>
+                  </tr>
+                </thead>
+                <tbody id="itemLedgerComparisonBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Transaction History (Ledger) Card -->
+        <div class="card border-0 shadow-sm">
+          <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
+            <span>Transaction Ledger History (POs, Bills & Production Consumption)</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width: 9%;">Date</th>
+                    <th style="width: 11%;">Type</th>
+                    <th style="width: 10%;">Ref #</th>
+                    <th style="width: 16%;">Vendor / Source</th>
+                    <th style="width: 9%;">Size</th>
+                    <th style="width: 13%;">Narration</th>
+                    <th style="width: 9%; text-align: center;">Order Qty</th>
+                    <th style="width: 9%; text-align: center;">Incoming Qty</th>
+                    <th style="width: 9%; text-align: center;">Outgoing Qty</th>
+                    <th style="width: 9%; text-align: right;">Price</th>
+                  </tr>
+                </thead>
+                <tbody id="itemLedgerHistoryBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Stock <-> Item Master Sync Review Modal -->
+<div class="modal fade" id="syncReviewModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-warning text-dark">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">Sync Review — Items missing from Stock</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <p class="text-muted mb-3">These Item Master entries have no matching row on the Stock sheet (likely deleted or renamed directly on the sheet). Decide whether to keep each one — creating its Stock row with an initial quantity — or discard the Item Master entry entirely. Select multiple rows to apply an action to all of them at once.</p>
+        <div class="d-flex gap-2 mb-2">
+          <button class="btn btn-success btn-sm fw-bold d-none" id="btnSyncReviewKeepSelected" onclick="App.Item.keepSelectedOrphans()"><i class="bi bi-check-lg"></i> Keep Selected</button>
+          <button class="btn btn-danger btn-sm fw-bold d-none" id="btnSyncReviewDiscardSelected" onclick="App.Item.discardSelectedOrphans()"><i class="bi bi-trash"></i> Discard Selected</button>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover table-bordered align-middle mb-0">
+            <thead class="table-dark">
+              <tr>
+                <th style="width: 5%; text-align: center;"><input type="checkbox" id="selectAllSyncReview" class="form-check-input" onclick="App.Item.toggleSelectAllOrphans(this)"></th>
+                <th>Item Name</th>
+                <th style="width: 15%;">Size</th>
+                <th style="width: 18%;">Initial Stock</th>
+                <th style="width: 22%; text-align: center;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="syncReviewBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Colorwise Production Summary Modal -->
+<div class="modal fade" id="colorwiseSummaryModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">Colorwise Production Summary</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label fw-bold">Process</label>
+            <select id="colorwiseSummaryProcessFilter" class="form-select" onchange="App.Production.renderColorwiseSummary()">
+              <option value="">All Processes</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-bold">Status</label>
+            <select id="colorwiseSummaryStatusFilter" class="form-select" onchange="App.Production.renderColorwiseSummary()">
+              <option value="">All Statuses</option>
+              <option value="Pending">Pending</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover table-bordered bg-white align-middle mb-0">
+            <thead class="table-dark">
+              <tr>
+                <th>Color</th>
+                <th class="text-center">Lots</th>
+                <th class="text-center">Pending</th>
+                <th class="text-center">In Progress</th>
+                <th class="text-center">Completed</th>
+                <th class="text-center">Cancelled</th>
+                <th class="text-center">Total Qty</th>
+              </tr>
+            </thead>
+            <tbody id="colorwiseSummaryBody"></tbody>
+          </table>
+        </div>
+        <div id="colorwiseSummaryEmptyState" class="text-center p-4 text-muted" style="display:none;">No production lots match this filter.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Production Sheet Modal -->
+<div class="modal fade" id="productionSheetModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen-sm-down" style="max-width: 95vw;">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title fw-bold" id="productionSheetTitle" style="font-family: 'Outfit', sans-serif;">Production Sheet</h5>
+        <div class="d-flex align-items-center">
+          <button class="btn btn-outline-light btn-sm fw-bold me-2" id="prodSheetSaveBtn" onclick="App.Production.saveProductionSheet()" title="Save these component changes and remarks with this production lot"><i class="bi bi-save me-1"></i> Save Customization</button>
+          <button class="btn btn-outline-light btn-sm fw-bold me-2" onclick="App.Production.resetProductionSheetQuantities()" title="Discard customizations and restore this lot's originally recorded components"><i class="bi bi-arrow-counterclockwise me-1"></i> Reset to Recorded Components</button>
+          <button class="btn btn-dark btn-sm fw-bold me-2" onclick="App.Production.printProductionSheet()"><i class="bi bi-printer me-1"></i> Print Sheet</button>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" style="margin-top: 1px;"></button>
+        </div>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="card mb-3 border-0 shadow-sm">
+          <div class="card-body py-3">
+            <div class="row g-2">
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Date</span><div class="fw-bold" id="prodSheetDate"></div></div>
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Lot #</span><div class="fw-bold" id="prodSheetProductId"></div></div>
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Output Item</span><div class="fw-bold" id="prodSheetProductName"></div></div>
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Lot Qty</span><div class="fw-bold" id="prodSheetLotQty"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="alert alert-info py-2 mb-3" role="alert" style="font-size: 13px;">
+          <i class="bi bi-info-circle-fill me-2"></i>This entire table is editable &mdash; change item names, sizes, narrations, vendors, or quantities, and add/remove rows to match the customer's requirement. Click <strong>Save Customization</strong> to keep these changes with this lot.
+        </div>
+
+        <div class="card border-0 shadow-sm mb-3">
+          <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
+            Common Components <small class="fw-normal">(applies regardless of color &mdash; Qty per Unit &times; Lot Qty, from the Process recipe)</small>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>Item Name</th>
+                    <th>Size</th>
+                    <th>Narration</th>
+                    <th class="text-end">Required Qty</th>
+                    <th class="text-center">✕</th>
+                  </tr>
+                </thead>
+                <tbody id="productionSheetCommonBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card-body border-top">
+            <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.Production.addCommonSheetRow()">+ Add Common Component</button>
+          </div>
+        </div>
+
+        <div class="card border-0 shadow-sm" id="productionSheetMatrixCard">
+          <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
+            Per-Color Components <small class="fw-normal">(grouped into one table per set of colors actually used &mdash; same item across colors is shown as a single row)</small>
+          </div>
+          <!-- Populated by App.Production.renderProductionSheetTable as one
+               <table> per distinct color-signature group, instead of a
+               single shared table with every color in the lot as a column
+               (which got very wide/sparse once a lot had several colors
+               split unevenly across items). -->
+          <div class="card-body p-0" id="productionSheetMatrixTables"></div>
+          <div class="card-body border-top">
+            <button type="button" class="btn btn-outline-primary btn-sm fw-bold me-2" onclick="App.Production.addMatrixSheetRow()">+ Add Per-Color Component</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm fw-bold" onclick="App.Production.addProductionSheetColor()">+ Add Color Column</button>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <label class="form-label fw-bold" for="productionSheetRemarks">Remarks</label>
+          <textarea id="productionSheetRemarks" class="form-control" rows="2" placeholder="What was changed, and why or for whom? (e.g. customer-requested substitution)" maxlength="500"></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Vendor Catalog Modal -->
+<div class="modal fade" id="vendorCatalogModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title">Vendor Catalog</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="vendorCatalogSearch" class="form-control form-control-sm mb-3" placeholder="Search by item, size, narration, or vendor…">
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered table-hover">
+            <thead class="table-dark sticky-top">
+              <tr>
+                <th>Item Name</th>
+                <th>Size</th>
+                <th>Narration</th>
+                <th>Vendor</th>
+                <th class="text-end">Rate</th>
+                <th>Last Purchase Date</th>
+              </tr>
+            </thead>
+            <tbody id="vendorCatalogBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,226 @@
+<!--
+  View_ReturnLedger.html
+
+  Vendor Return Ledger View
+
+  Records goods sent back to a vendor (defective, excess, wrong item, etc.)
+  — the mirror image of the Bill Ledger. Returned quantities are debited
+  from Stock and reduce the amount owed to the vendor.
+
+  Dependencies:
+  - Script.html (App.Return, App.Utils)
+  - Styles.html (table, button, form styles)
+  - Modals.html (returnGoodsModal)
+-->
+
+<div id="returnLedger" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-returnLedger">
+
+  <!-- ─────────────────────────────────────────────────────────────────
+       TOOLBAR: Search and Action Buttons
+       ───────────────────────────────────────────────────────────────── -->
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-4" style="align-items: flex-start;">
+
+    <!-- LEFT SECTION: Search and Filter Controls -->
+    <div class="d-flex flex-grow-1 flex-wrap gap-3 align-items-center" style="max-width: 900px;">
+
+      <!-- Search Input -->
+      <div class="flex-grow-1" style="min-width: 250px;">
+        <input type="text"
+               id="searchReturn"
+               class="form-control"
+               placeholder="Search by Return#, Bill#, Vendor, or Item…"
+               autocomplete="off"
+               aria-label="Search Returns"
+               onkeyup="App.Return.filterData(this.value)">
+        <small class="text-muted" style="display: block; margin-top: 4px;">
+          Filter by return number, bill reference, vendor, or item
+        </small>
+      </div>
+
+      <!-- Date Filter -->
+      <div style="min-width: 170px;">
+        <input type="date"
+               id="returnDateFilter"
+               class="form-control"
+               aria-label="Filter Returns by Date"
+               onchange="App.Return.filterByDate(this.value)">
+        <small class="text-muted" style="display: block; margin-top: 4px;">
+          Show returns logged on this date
+        </small>
+      </div>
+    </div>
+
+    <!-- RIGHT SECTION: Bulk Actions + Action Buttons -->
+    <div class="d-flex gap-2 flex-wrap justify-content-end">
+      <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteReturns" type="button" onclick="App.Return.bulkDelete()" style="white-space: nowrap;">
+        <i class="bi bi-trash"></i> Delete Selected
+      </button>
+      <button class="btn btn-warning fw-bold shadow-sm text-dark"
+              type="button"
+              onclick="App.Wastage.openWastageModal()"
+              aria-label="Log component wastage"
+              style="white-space: nowrap; padding: 10px 20px;">
+        <i class="bi bi-exclamation-triangle me-2"></i>
+        Log Wastage
+      </button>
+      <button class="btn btn-outline-warning fw-bold shadow-sm text-dark"
+              type="button"
+              onclick="App.Wastage.toggleReview()"
+              id="btnToggleWastageReview"
+              aria-label="Review wastage records"
+              style="white-space: nowrap; padding: 10px 20px;">
+        <i class="bi bi-eye me-2"></i>
+        Review Wastage
+      </button>
+      <button class="btn btn-primary fw-bold shadow-sm"
+              type="button"
+              onclick="App.Return.openReturnModal()"
+              aria-label="Log goods returned to a vendor"
+              style="white-space: nowrap; padding: 10px 24px;">
+        <i class="bi bi-arrow-return-left me-2"></i>
+        Return Goods
+      </button>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────────────────────────────────────────
+       RETURN LEDGER TABLE
+       ───────────────────────────────────────────────────────────────── -->
+  <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <table class="table table-hover table-bordered align-middle mb-0"
+           role="table"
+           style="margin-bottom: 0;">
+
+      <!-- Table Header -->
+      <thead class="table-dark">
+        <tr role="row">
+          <th role="columnheader" style="width: 4%; text-align: center;">
+            <input type="checkbox" id="selectAllReturns" class="form-check-input" onclick="App.Return.toggleSelectAll(this)">
+          </th>
+          <th role="columnheader" style="width: 14%; min-width: 110px;">
+            <i class="bi bi-arrow-return-left me-2"></i>Return#
+          </th>
+          <th role="columnheader" style="width: 12%; min-width: 100px;">
+            <i class="bi bi-receipt me-2"></i>Bill#
+          </th>
+          <th role="columnheader" style="width: 12%; min-width: 120px;">
+            <i class="bi bi-calendar me-2"></i>Date
+          </th>
+          <th role="columnheader" style="width: 14%; min-width: 130px;">
+            <i class="bi bi-truck me-2"></i>Vendor
+          </th>
+          <th role="columnheader" style="width: 26%; min-width: 200px;">
+            <i class="bi bi-box-seam me-2"></i>Items Returned
+          </th>
+          <th role="columnheader" style="width: 8%; min-width: 80px; text-align: center;">
+            <i class="bi bi-collection me-2"></i>Qty
+          </th>
+          <th role="columnheader" style="width: 10%; min-width: 120px; text-align: right;">
+            <i class="bi bi-currency-rupee me-2"></i>Credit
+          </th>
+          <th role="columnheader" style="width: 8%; min-width: 140px;">
+            <i class="bi bi-gear me-2"></i>Actions
+          </th>
+        </tr>
+      </thead>
+
+      <!-- Table Body: Populated by JavaScript -->
+      <tbody id="returnTableBody" role="rowgroup">
+        <!-- Rows generated by App.Return.renderTable() -->
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Empty State (shown when no returns) -->
+  <div id="returnEmptyState"
+       class="text-center py-5 text-muted"
+       style="display: none;">
+    <div style="font-size: 48px; margin-bottom: 16px;">📤</div>
+    <h5>No Goods Returned Yet</h5>
+    <p style="margin-bottom: 20px;">
+      Log defective, excess, or wrong items sent back to a vendor — it'll be debited from Stock automatically.
+    </p>
+    <button class="btn btn-primary"
+            type="button"
+            onclick="App.Return.openReturnModal()">
+      Log First Return
+    </button>
+  </div>
+
+  <!-- Pagination -->
+  <div id="returnPagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
+
+  <!-- ─────────────────────────────────────────────────────────────────
+       WASTAGE REVIEW SECTION (collapsible)
+       ───────────────────────────────────────────────────────────────── -->
+  <div id="wastageReviewSection" style="display: none; margin-top: 32px;">
+    <div class="d-flex justify-content-between align-items-center mb-3 border-bottom pb-2">
+      <h5 class="fw-bold text-warning mb-0">
+        <i class="bi bi-exclamation-triangle me-2"></i>Wastage Records
+      </h5>
+      <div class="d-flex gap-2 flex-wrap align-items-center">
+        <!-- Wastage Search -->
+        <input type="text"
+               id="searchWastage"
+               class="form-control form-control-sm"
+               placeholder="Search by item, vendor, reason…"
+               style="min-width: 220px;"
+               autocomplete="off"
+               onkeyup="App.Wastage.filterData(this.value)">
+        <!-- Wastage Date Filter -->
+        <input type="date"
+               id="wastageDateFilter"
+               class="form-control form-control-sm"
+               style="min-width: 150px;"
+               onchange="App.Wastage.filterByDate(this.value)">
+        <!-- Bulk Actions -->
+        <button class="btn btn-sm btn-success fw-bold d-none" id="btnPrintSelectedWastage" type="button" onclick="App.Wastage.printSelected()" style="white-space: nowrap;">
+          <i class="bi bi-printer"></i> Print Selected
+        </button>
+        <button class="btn btn-sm btn-danger fw-bold d-none" id="btnBulkDeleteWastage" type="button" onclick="App.Wastage.bulkDelete()" style="white-space: nowrap;">
+          <i class="bi bi-trash"></i> Delete Selected
+        </button>
+      </div>
+    </div>
+
+    <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+      <table class="table table-hover table-bordered align-middle mb-0">
+        <thead style="background:#fff3cd;">
+          <tr>
+            <th style="width:4%; text-align:center;">
+              <input type="checkbox" id="selectAllWastage" class="form-check-input" onclick="App.Wastage.toggleSelectAll(this)">
+            </th>
+            <th style="min-width:130px;"><i class="bi bi-hash me-1"></i>Wastage ID</th>
+            <th style="min-width:100px;"><i class="bi bi-calendar me-1"></i>Date</th>
+            <th style="min-width:120px;"><i class="bi bi-truck me-1"></i>Vendor</th>
+            <th style="min-width:200px;"><i class="bi bi-box-seam me-1"></i>Items Wasted</th>
+            <th style="min-width:80px; text-align:center;"><i class="bi bi-collection me-1"></i>Total Qty</th>
+            <th style="min-width:100px;"><i class="bi bi-gear me-1"></i>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="wastageTableBody">
+          <tr><td colspan="7" class="text-center p-4 text-muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Wastage Empty State -->
+    <div id="wastageEmptyState" class="text-center py-5 text-muted" style="display: none;">
+      <div style="font-size: 48px; margin-bottom: 16px;">🗑️</div>
+      <h5>No Wastage Records Yet</h5>
+      <p style="margin-bottom: 20px;">Log component-wise material losses — they'll be debited from Stock automatically.</p>
+      <button class="btn btn-warning text-dark" type="button" onclick="App.Wastage.openWastageModal()">Log First Wastage</button>
+    </div>
+
+    <!-- Wastage Pagination -->
+    <div id="wastagePagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
+  </div>
+
+  <!-- Help/Info Section -->
+  <div class="alert alert-info mt-4" role="alert" style="display: none;">
+    <i class="bi bi-info-circle me-2"></i>
+    <strong>About Returns:</strong>
+    Returns record goods sent back to a vendor for any reason (defective, excess, wrong item). Returned quantities are
+    debited from Stock and the credit amount reduces what's owed to the vendor. Optionally reference the original Bill#.
+  </div>
+</div>

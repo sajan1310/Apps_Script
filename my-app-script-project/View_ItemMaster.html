@@ -1,0 +1,41 @@
+<div id="itemMaster" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-itemMaster">
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
+    <div class="d-flex w-50 align-items-center flex-wrap gap-2">
+      <input type="text" id="searchItem" class="form-control me-2" placeholder="Search Items, Sizes, Vendors, or try 'pending orders' / 'low stock' / 'no metadata'..." autocomplete="off" onkeyup="App.Item.filterData(this.value)">
+      <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintItems" onclick="App.Item.bulkPrint()" style="white-space: nowrap;"><i class="bi bi-printer"></i> Print Selected</button>
+      <button class="btn btn-outline-warning fw-bold shadow-sm d-none" id="btnMergeSelected" onclick="App.Item.mergeSelected()" style="white-space: nowrap;" title="Check exactly 2 items: the one to KEEP first, then the duplicate to remove."><i class="bi bi-magic"></i> Merge Selected</button>
+      <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteItems" onclick="App.Item.bulkDelete()" style="white-space: nowrap;"><i class="bi bi-trash"></i> Delete Selected</button>
+    </div>
+    <div class="d-flex gap-2 flex-wrap justify-content-end">
+      <button id="btnSyncFromStock" class="btn btn-outline-success fw-bold shadow-sm position-relative" onclick="App.Item.syncFromStock()" title="Import items from Stock sheet that are not yet in Item Master">
+        <i class="bi bi-arrow-repeat"></i> Sync from Stock
+        <span id="itemOrphanBadge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger d-none"></span>
+      </button>
+      <button id="btnMergeDuplicates" class="btn btn-outline-warning fw-bold shadow-sm" onclick="App.Item.mergeDuplicates()" title="Fix truncated-name duplicates and merge any rows that share the same Name + Size">
+        <i class="bi bi-magic"></i> Merge Duplicates
+      </button>
+      <button class="btn btn-info fw-bold text-white shadow-sm" onclick="App.Item.openCreateModal()">+ Register New Item</button>
+    </div>
+  </div>
+  <div id="itemOrphanBanner" class="alert alert-warning d-none d-flex justify-content-between align-items-center shadow-sm mb-3" role="alert">
+    <span><i class="bi bi-exclamation-triangle-fill me-2"></i><span id="itemOrphanBannerText"></span></span>
+    <button type="button" class="btn btn-warning btn-sm fw-bold" onclick="App.Item.openSyncReview()">Review</button>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover table-bordered align-middle mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th style="width: 5%; text-align: center;"><input type="checkbox" id="selectAllItems" class="form-check-input" onclick="App.Item.toggleSelectAll(this)"></th>
+          <th style="width: 20%;">Item Name <button type="button" class="th-filter-btn" data-filter-key="name" onclick="App.Item.toggleColumnFilter(event, 'name')"><i class="bi bi-funnel"></i></button></th>
+          <th style="width: 10%;">Size <button type="button" class="th-filter-btn" data-filter-key="size" onclick="App.Item.toggleColumnFilter(event, 'size')"><i class="bi bi-funnel"></i></button></th>
+          <th style="width: 15%;">Narration <button type="button" class="th-filter-btn" data-filter-key="narration" onclick="App.Item.toggleColumnFilter(event, 'narration')"><i class="bi bi-funnel"></i></button></th>
+          <th style="width: 15%;">Meta Data <button type="button" class="th-filter-btn" data-filter-key="metadata" onclick="App.Item.toggleColumnFilter(event, 'metadata')"><i class="bi bi-funnel"></i></button></th>
+          <th style="width: 23%;">Associated Vendor Rates <button type="button" class="th-filter-btn" data-filter-key="vendor" onclick="App.Item.toggleColumnFilter(event, 'vendor')"><i class="bi bi-funnel"></i></button></th>
+          <th style="width: 12%;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="itemTableBody"></tbody>
+    </table>
+  </div>
+  <div id="itemPagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
+</div>

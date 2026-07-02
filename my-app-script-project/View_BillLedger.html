@@ -1,0 +1,282 @@
+<!--
+  View_BillLedger.html
+  
+  Bill Ledger View
+  
+  Displays all bills received against POs or direct bills with search, 
+  filter, and action buttons.
+  
+  Features:
+  - Real-time search by bill number or PO reference
+  - Direct bill tracking (PO = "DIRECT")
+  - Responsive table with action buttons
+  - GST-inclusive amount display
+  - Pagination support (future enhancement)
+  
+  Dependencies:
+  - script.html (App.Bill, App.Utils)
+  - styles.html (table, button, form styles)
+  - Modals.html (receiveBillModal)
+-->
+
+<div id="billLedger" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-billLedger">
+  
+  <!-- ─────────────────────────────────────────────────────────────────
+       TOOLBAR: Search and Action Buttons
+       ───────────────────────────────────────────────────────────────── -->
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-4" style="align-items: flex-start;">
+    
+    <!-- LEFT SECTION: Search and Filter Controls -->
+    <div class="d-flex flex-grow-1 flex-wrap gap-3 align-items-center" style="max-width: 900px;">
+
+      <!-- Search Input -->
+      <div class="flex-grow-1" style="min-width: 250px;">
+        <input type="text"
+               id="searchBill"
+               class="form-control"
+               placeholder="Search by Bill#, PO, Vendor, or Item…"
+               autocomplete="off"
+               aria-label="Search Bills"
+               onkeyup="App.Bill.filterData(this.value)">
+        <small class="text-muted" style="display: block; margin-top: 4px;">
+          Filter by bill number, PO, vendor, or item
+        </small>
+      </div>
+
+      <!-- Date Filter -->
+      <div style="min-width: 170px;">
+        <input type="date"
+               id="billDateFilter"
+               class="form-control"
+               aria-label="Filter Bills by Date"
+               onchange="App.Bill.filterByDate(this.value)">
+        <small class="text-muted" style="display: block; margin-top: 4px;">
+          Show bills received on this date
+        </small>
+      </div>
+
+      <!-- Sort By -->
+      <div style="min-width: 190px;">
+        <select id="billSortBy" class="form-select" aria-label="Sort Bills" onchange="App.Bill.sortBy(this.value)">
+          <option value="dateDesc">Date (Newest first)</option>
+          <option value="dateAsc">Date (Oldest first)</option>
+          <option value="billNumberDesc">Bill# (Newest first)</option>
+          <option value="billNumberAsc">Bill# (Oldest first)</option>
+          <option value="vendorAsc">Vendor (A&ndash;Z)</option>
+          <option value="vendorDesc">Vendor (Z&ndash;A)</option>
+          <option value="amountDesc">Amount (High&ndash;Low)</option>
+          <option value="amountAsc">Amount (Low&ndash;High)</option>
+        </select>
+        <small class="text-muted" style="display: block; margin-top: 4px;">Sort by</small>
+      </div>
+    </div>
+    
+    <!-- RIGHT SECTION: Bulk Actions + Receive Bill Button -->
+    <div class="d-flex gap-2 flex-wrap justify-content-end">
+      <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintBills" type="button" onclick="App.Bill.bulkPrint()" style="white-space: nowrap;">
+        <i class="bi bi-printer"></i> Print Selected
+      </button>
+      <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteBills" type="button" onclick="App.Bill.bulkDelete()" style="white-space: nowrap;">
+        <i class="bi bi-trash"></i> Delete Selected
+      </button>
+      <button class="btn btn-primary fw-bold shadow-sm"
+              type="button"
+              onclick="App.Bill.openReceiveModal()"
+              aria-label="Record a new bill receipt"
+              style="white-space: nowrap; padding: 10px 24px;">
+        <i class="bi bi-plus-circle me-2"></i>
+        Receive New Bill
+      </button>
+    </div>
+  </div>
+  
+  <!-- ─────────────────────────────────────────────────────────────────
+       BILL LEDGER TABLE
+       
+       Responsive table showing all bills received with inline actions.
+       
+       Columns:
+       - PO#: Purchase Order reference (or "DIRECT" for direct bills)
+       - Bill#: Bill/Invoice number (unique identifier)
+       - Date: Bill date (sortable)
+       - Items Logged: List of items with quantity and unit
+       - Qty: Total quantity in bill
+       - Amount: Total amount including GST (formatted currency)
+       - Actions: Delete button (row action)
+       
+       Features:
+       - Direct bills marked with "DIRECT" badge
+       - PO reference shown as badge when applicable
+       - Items list shows name, size (if any), quantity, unit
+       - Amount includes GST (not displayed separately in ledger)
+       - Responsive: Horizontal scroll on mobile, full width on desktop
+       
+       Responsive:
+       - table-responsive wrapper enables horizontal scroll
+       - Buttons stack on small screens
+       - Full width on desktop, scrollable on mobile
+       ───────────────────────────────────────────────────────────────── -->
+  <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <table class="table table-hover table-bordered align-middle mb-0"
+           role="table"
+           style="margin-bottom: 0;">
+      
+      <!-- Table Header -->
+      <thead class="table-dark">
+        <tr role="row">
+          <th role="columnheader" style="width: 4%; text-align: center;">
+            <input type="checkbox" id="selectAllBills" class="form-check-input" onclick="App.Bill.toggleSelectAll(this)">
+          </th>
+          <th role="columnheader" style="width: 12%; min-width: 100px;">
+            <i class="bi bi-file-earmark me-2"></i>PO#
+          </th>
+          <th role="columnheader" style="width: 15%; min-width: 120px;">
+            <i class="bi bi-receipt me-2"></i>Bill#
+          </th>
+          <th role="columnheader" style="width: 12%; min-width: 120px;">
+            <i class="bi bi-calendar me-2"></i>Date
+          </th>
+          <th role="columnheader" style="width: 14%; min-width: 130px;">
+            <i class="bi bi-truck me-2"></i>Vendor
+          </th>
+          <th role="columnheader" style="width: 28%; min-width: 200px;">
+            <i class="bi bi-box-seam me-2"></i>Items Logged
+          </th>
+          <th role="columnheader" style="width: 10%; min-width: 80px; text-align: center;">
+            <i class="bi bi-collection me-2"></i>Qty
+          </th>
+          <th role="columnheader" style="width: 14%; min-width: 120px; text-align: right;">
+            <i class="bi bi-currency-rupee me-2"></i>Amount
+          </th>
+          <th role="columnheader" style="width: 8%; min-width: 140px;">
+            <i class="bi bi-gear me-2"></i>Actions
+          </th>
+        </tr>
+      </thead>
+      
+      <!-- Table Body: Populated by JavaScript -->
+      <tbody id="billTableBody" role="rowgroup">
+        <!-- Rows generated by App.Bill.renderTable() -->
+      </tbody>
+    </table>
+  </div>
+  
+  <!-- Empty State (shown when no bills) -->
+  <div id="billEmptyState"
+       class="text-center py-5 text-muted"
+       style="display: none;">
+    <div style="font-size: 48px; margin-bottom: 16px;">📦</div>
+    <h5>No Bills Received Yet</h5>
+    <p style="margin-bottom: 20px;">
+      Start by recording the first bill against a Purchase Order or as a direct bill.
+    </p>
+    <button class="btn btn-primary"
+            type="button"
+            onclick="App.Bill.openReceiveModal()">
+      Record First Bill
+    </button>
+  </div>
+
+  <!-- Pagination -->
+  <div id="billPagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
+
+  <!-- ─────────────────────────────────────────────────────────────────
+       BILL SUMMARY SECTION (Optional Enhancement)
+       
+       Could show:
+       - Total bills received
+       - Total amount (with and without GST)
+       - Average bill amount
+       - Top vendors by frequency
+       
+       Uncomment when summary stats are available:
+       
+       <div class="row mt-4">
+         <div class="col-md-3">
+           <div class="card">
+             <div class="card-body text-center">
+               <h6 class="text-muted">Total Bills</h6>
+               <h3 id="billCountTotal">0</h3>
+             </div>
+           </div>
+         </div>
+         <div class="col-md-3">
+           <div class="card">
+             <div class="card-body text-center">
+               <h6 class="text-muted">Total Amount</h6>
+               <h3 id="billAmountTotal">&#8377;0</h3>
+             </div>
+           </div>
+         </div>
+       </div>
+       ───────────────────────────────────────────────────────────────── -->
+
+  <!-- Help/Info Section -->
+  <div class="alert alert-info mt-4" role="alert" style="display: none;">
+    <i class="bi bi-info-circle me-2"></i>
+    <strong>About Bills:</strong>
+    Bills can be recorded against existing Purchase Orders or as direct bills (when PO = "DIRECT").
+    All amounts shown include GST. Use the search box to find bills by number, PO, vendor, or item, and the date picker to find bills received on a specific date.
+  </div>
+</div>
+
+<!--
+  STYLING NOTES:
+  
+  - Responsive Design:
+    - max-width: 500px on search keeps layout compact
+    - flex-wrap gap-2 allows stacking on narrow screens
+    - table-responsive wrapper enables horizontal scroll
+    - min-width values prevent column collapse
+  
+  - Bill Amount Display:
+    - Amounts always include GST (computed in backend)
+    - No separate GST column needed in ledger
+    - GST already applied when bills received
+    - Individual line GST rates stored in database (if needed later)
+  
+  - PO Reference:
+    - Regular PO number shown as badge
+    - "DIRECT" shown as secondary badge for direct bills
+    - Searchable by both types
+  
+  - Accessibility:
+    - role attributes for screen readers
+    - aria-label on interactive elements
+    - Semantic HTML5 structure
+    - Search icon positioned absolutely (not clickable)
+  
+  - Performance:
+    - Filter via JavaScript (no server round-trip)
+    - Table body populated once on tab load
+    - Re-render only when data changes
+  
+  - Future Enhancements:
+    - Summary stats card (top section)
+    - Pagination (bottom navigation)
+    - Sorting by date/amount
+    - Export to CSV/Excel
+    - Bulk actions (select multiple bills)
+    - GST breakdown view (expandable rows)
+-->
+
+<!--
+  INTEGRATION CHECKLIST:
+  
+  ✅ Uses App.Bill.openReceiveModal() → Opens bill form
+  ✅ Uses App.Utils.filterTable() → Real-time search
+  ✅ Populated by App.Bill.renderTable() → Dynamic rows
+  ✅ Works with Modals.html → receiveBillModal
+  ✅ Uses styles.html → Table, button styles
+  ✅ Responsive with Bootstrap 5
+  ✅ Accessible with ARIA labels
+  
+  REQUIRED COMPONENTS (in script.html):
+  - App.Bill.openReceiveModal()
+  - App.Bill.renderTable()
+  - App.Bill.loadData()
+  - App.Utils.filterTable()
+  
+  REQUIRED HTML (in Modals.html):
+  - #receiveBillModal
+-->

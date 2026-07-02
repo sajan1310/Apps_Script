@@ -1,0 +1,34 @@
+==============================================================================
+AUDIT REPORT — Maharaja Bikes ERP (Apps Script project)
+==============================================================================
+
+-- ERROR (0) -------------------------------------------------------
+  (none)
+
+-- WARNING (0) -----------------------------------------------------
+  (none)
+
+-- INFO (19) --------------------------------------------------------
+  [console] main.js: 8 console.* call(s)
+  [console] module_bill.js: 6 console.* call(s)
+  [console] module_bom.js: 17 console.* call(s)
+  [console] module_clients.js: 8 console.* call(s)
+  [console] module_contractors.js: 14 console.* call(s)
+  [console] module_dashboard.js: 1 console.* call(s)
+  [console] module_dispatch.js: 9 console.* call(s)
+  [console] module_items.js: 22 console.* call(s)
+  [console] module_po.js: 8 console.* call(s)
+  [console] module_process.js: 17 console.* call(s)
+  [console] module_production.js: 17 console.* call(s)
+  [console] module_return.js: 6 console.* call(s)
+  [console] module_stock.js: 11 console.* call(s)
+  [console] module_tags.js: 6 console.* call(s)
+  [console] module_units.js: 4 console.* call(s)
+  [console] module_vendors.js: 2 console.* call(s)
+  [console] module_warehouse.js: 12 console.* call(s)
+  [console] utils.js: 19 console.* call(s)
+  [security] appsscript.json webapp.access is 'ANYONE' with executeAs 'USER_DEPLOYING' — anyone with the URL can read/write the spreadsheet using the deploying user's permissions. Confirm this is intentional for this ERP system.
+
+==============================================================================
+SUMMARY: 0 error(s), 0 warning(s), 19 info note(s)
+==============================================================================
