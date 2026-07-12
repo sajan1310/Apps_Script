@@ -61,7 +61,7 @@ function initReturnSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Return Ledger sheet initialized successfully.');
   } catch (error) {
-    console.error('[initReturnSheet] Error:', error.message);
+    Log.error('[initReturnSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Return Ledger sheet: ' + error.message);
   }
 }
@@ -116,7 +116,7 @@ function getReturnData() {
         const parsedDate = toSafeDateString(rawDate);
 
         if (!parsedDate && rawDate) {
-          console.warn(`[getReturnData] Unparseable date in return #${returnNum}: "${rawDate}"`);
+          Log.warn(`[getReturnData] Unparseable date in return #${returnNum}: "${rawDate}"`);
         }
 
         const isoDateStr = parsedDate
@@ -166,7 +166,7 @@ function getReturnData() {
 
     return buildResponse(true, sorted);
   } catch (error) {
-    console.error('[getReturnData] Error:', error.message);
+    Log.error('[getReturnData] Error:', error.message);
     logAction('ERROR', 'getReturnData', 'module_return', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to load returns: ' + error.message);
   }
@@ -327,7 +327,7 @@ function saveReturn(formData) {
 
     return buildResponse(true, { returnNumber }, msg);
   } catch (error) {
-    console.error('[saveReturn] Error:', error.message);
+    Log.error('[saveReturn] Error:', error.message);
     logAction('ERROR', 'saveReturn', formData.returnNumber, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save return: ' + error.message);
   } finally {
@@ -368,7 +368,7 @@ function deleteReturn(returnNumber) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[deleteReturn] Error:', error.message);
+    Log.error('[deleteReturn] Error:', error.message);
     logAction('ERROR', 'deleteReturn', returnNumber, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete return: ' + error.message);
   } finally {
@@ -412,7 +412,7 @@ function deleteReturnsBulk(returnNumbers) {
 
     return buildResponse(true, { deletedIds }, msg);
   } catch (error) {
-    console.error('[deleteReturnsBulk] Error:', error.message);
+    Log.error('[deleteReturnsBulk] Error:', error.message);
     logAction('ERROR', 'deleteReturnsBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete returns: ' + error.message);
   } finally {

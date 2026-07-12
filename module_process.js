@@ -70,7 +70,7 @@ function initProcessMasterSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Process Master sheet initialized successfully.');
   } catch (error) {
-    console.error('[initProcessMasterSheet] Error:', error.message);
+    Log.error('[initProcessMasterSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Process Master sheet: ' + error.message);
   }
 }
@@ -128,7 +128,7 @@ function getProcessData(activeOnly) {
 
       return buildResponse(true, records);
     } catch (error) {
-      console.error('[getProcessData] Error:', error.message);
+      Log.error('[getProcessData] Error:', error.message);
       return buildResponse(false, null, 'Failed to load process data: ' + error.message);
     }
   });
@@ -148,7 +148,7 @@ function ensureProcessOutputItemColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProcessOutputItemColumn] Error:', error.message);
+    Log.error('[ensureProcessOutputItemColumn] Error:', error.message);
   }
 }
 
@@ -166,7 +166,7 @@ function ensureProcessTypeColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProcessTypeColumn] Error:', error.message);
+    Log.error('[ensureProcessTypeColumn] Error:', error.message);
   }
 }
 
@@ -184,7 +184,7 @@ function ensureProcessPrimaryColorAxisColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProcessPrimaryColorAxisColumn] Error:', error.message);
+    Log.error('[ensureProcessPrimaryColorAxisColumn] Error:', error.message);
   }
 }
 
@@ -217,7 +217,7 @@ function _setProcessPrimaryColorAxis(processId, primaryColorAxis) {
       }
     }
   } catch (error) {
-    console.error('[_setProcessPrimaryColorAxis] Error:', error.message);
+    Log.error('[_setProcessPrimaryColorAxis] Error:', error.message);
   }
 }
 
@@ -252,7 +252,7 @@ function getNextProcessId() {
 
     return 'PRC-' + (maxNum + 1);
   } catch (error) {
-    console.error('[getNextProcessId] Error:', error.message);
+    Log.error('[getNextProcessId] Error:', error.message);
     return 'PRC-1001';
   }
 }
@@ -440,7 +440,7 @@ function saveProcess(formData) {
     logAction('CREATE', APP_CONFIG.SHEETS.PROCESS_MASTER, newProcessId, `Process created: ${processName}`, 'SUCCESS');
     return buildResponse(true, { processId: newProcessId }, 'Process created successfully.');
   } catch (error) {
-    console.error('[saveProcess] Error:', error.message);
+    Log.error('[saveProcess] Error:', error.message);
     logAction('ERROR', 'saveProcess', formData.processId || 'NEW', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save process: ' + error.message);
   } finally {
@@ -750,7 +750,7 @@ function deleteProcess(processId) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[deleteProcess] Error:', error.message);
+    Log.error('[deleteProcess] Error:', error.message);
     logAction('ERROR', 'deleteProcess', processId, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete process: ' + error.message);
   } finally {
@@ -816,7 +816,7 @@ function deleteProcessesBulk(processIds) {
 
     return buildResponse(true, { skipped: Array.from(inUseSet) }, msg);
   } catch (error) {
-    console.error('[deleteProcessesBulk] Error:', error.message);
+    Log.error('[deleteProcessesBulk] Error:', error.message);
     logAction('ERROR', 'deleteProcessesBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete processes: ' + error.message);
   } finally {
@@ -871,7 +871,7 @@ function reorderProcesses(orderedProcessIds) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[reorderProcesses] Error:', error.message);
+    Log.error('[reorderProcesses] Error:', error.message);
     logAction('ERROR', 'reorderProcesses', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to reorder processes: ' + error.message);
   } finally {
@@ -898,7 +898,7 @@ function initProcessComponentsSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Process Components sheet initialized successfully.');
   } catch (error) {
-    console.error('[initProcessComponentsSheet] Error:', error.message);
+    Log.error('[initProcessComponentsSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Process Components sheet: ' + error.message);
   }
 }
@@ -922,7 +922,7 @@ function ensureProcessComponentsQtyColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProcessComponentsQtyColumn] Error:', error.message);
+    Log.error('[ensureProcessComponentsQtyColumn] Error:', error.message);
   }
 }
 
@@ -947,7 +947,7 @@ function ensureProcessComponentsSourceTypeColumn(sheet) {
       }
     }
   } catch (error) {
-    console.error('[ensureProcessComponentsSourceTypeColumn] Error:', error.message);
+    Log.error('[ensureProcessComponentsSourceTypeColumn] Error:', error.message);
   }
 }
 
@@ -974,7 +974,7 @@ function ensureProcessComponentsColorGroupColumn(sheet) {
       }
     }
   } catch (error) {
-    console.error('[ensureProcessComponentsColorGroupColumn] Error:', error.message);
+    Log.error('[ensureProcessComponentsColorGroupColumn] Error:', error.message);
   }
 }
 
@@ -994,7 +994,7 @@ function ensureProcessComponentsColorAxisColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProcessComponentsColorAxisColumn] Error:', error.message);
+    Log.error('[ensureProcessComponentsColorAxisColumn] Error:', error.message);
   }
 }
 
@@ -1041,7 +1041,7 @@ function getProcessComponentsData(processId) {
 
     return buildResponse(true, components);
   } catch (error) {
-    console.error('[getProcessComponentsData] Error:', error.message);
+    Log.error('[getProcessComponentsData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load process components: ' + error.message);
   }
 }
@@ -1075,7 +1075,7 @@ function getProcessColorGroups(processId) {
     const colorLinks = _getAllProcessColorLinks();
     return buildResponse(true, computeColorGroupsForProcess(components, poolRows, colorLinks));
   } catch (error) {
-    console.error('[getProcessColorGroups] Error:', error.message);
+    Log.error('[getProcessColorGroups] Error:', error.message);
     return buildResponse(false, null, 'Failed to load process color groups: ' + error.message);
   }
 }
@@ -1331,7 +1331,7 @@ function getProcessColorAxes(processId) {
 
     return buildResponse(true, { axes, primaryColorAxis, primaryAxisKey });
   } catch (error) {
-    console.error('[getProcessColorAxes] Error:', error.message);
+    Log.error('[getProcessColorAxes] Error:', error.message);
     return buildResponse(false, null, 'Failed to load process color axes: ' + error.message);
   }
 }
@@ -1415,7 +1415,7 @@ function _mergeLinkedAxes(axes, colorLinks) {
         return false;
       });
       if (unresolved) {
-        console.warn('[computeColorGroupsForProcess] Linked processes ' + componentProcessIds.join(', ') +
+        Log.warn('[computeColorGroupsForProcess] Linked processes ' + componentProcessIds.join(', ') +
           ' have no full color mapping for "' + anchorColor + '" — skipping that combination.');
         return;
       }
@@ -1491,7 +1491,7 @@ function getAllProcessColorGroups() {
 
     return buildResponse(true, result);
   } catch (error) {
-    console.error('[getAllProcessColorGroups] Error:', error.message);
+    Log.error('[getAllProcessColorGroups] Error:', error.message);
     return buildResponse(false, null, 'Failed to load process color groups: ' + error.message);
   }
 }
@@ -1716,7 +1716,7 @@ function getProcessColorLinksData(processId) {
 
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getProcessColorLinksData] Error:', error.message);
+    Log.error('[getProcessColorLinksData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load process color links: ' + error.message);
   }
 }

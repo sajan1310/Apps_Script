@@ -84,7 +84,7 @@ function doGet(e) {
         appTitle = APP_CONFIG.APP_TITLE;
       }
     } catch (configError) {
-      console.warn('[doGet] APP_CONFIG not available, using default title:', configError);
+      Log.warn('[doGet] APP_CONFIG not available, using default title:', configError);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -115,13 +115,12 @@ function doGet(e) {
     // Set application title
     output.setTitle(isMobileUi ? appTitle + ' — Mobile' : appTitle);
 
-    // Configure viewport for mobile/responsive design
-    // Prevents awkward auto-zoom when clicking on inputs on mobile devices.
-    // The mobile shell additionally locks maximum-scale so it reads as an
-    // app rather than a pinch-zoomable desktop page.
-    output.addMetaTag('viewport', isMobileUi
-      ? 'width=device-width, initial-scale=1, maximum-scale=1'
-      : 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no');
+    // Configure viewport for mobile/responsive design. Locking maximum-scale
+    // / user-scalable=no blocks pinch-zoom entirely (WCAG 1.4.4) on a
+    // data-dense ERP — removed from both shells. iOS auto-zoom-on-focus is
+    // instead prevented the correct way: keeping form field font-size >=16px
+    // at mobile widths (see Styles.html's <=768px block, Mobile_Styles.html).
+    output.addMetaTag('viewport', 'width=device-width, initial-scale=1');
 
     // Security: Prevent clickjacking by controlling iframe embedding
     // XFrameOptionsMode.DEFAULT allows same-origin framing
@@ -133,7 +132,7 @@ function doGet(e) {
 
     return output;
   } catch (error) {
-    console.error('[doGet] Critical routing error:', error);
+    Log.error('[doGet] Critical routing error:', error);
     return _renderErrorFallback(error);
   }
 }
@@ -178,7 +177,7 @@ function doGet(e) {
  */
 function include(filename) {
   if (!filename || typeof filename !== 'string') {
-    console.error('[include] Invalid filename provided');
+    Log.error('[include] Invalid filename provided');
     return _renderComponentError('Invalid filename');
   }
 
@@ -202,11 +201,11 @@ function include(filename) {
       return rawContent;
     }
   } catch (error) {
-    console.error(`[include] Component load failure [${filename}]:`, error);
+    Log.error(`[include] Component load failure [${filename}]:`, error);
 
     // If it's a script component, return a JS-safe console error to avoid crashing client-side JS parser
     if (filename.toLowerCase().indexOf('script') !== -1) {
-      return `\nconsole.error("[include] Failed to load script component '${filename}': ${error.message.replace(/"/g, '\\"')}");\n`;
+      return `\nLog.error("[include] Failed to load script component '${filename}': ${error.message.replace(/"/g, '\\"')}");\n`;
     }
 
     // Return visible error message in DOM (error boundary)
@@ -598,6 +597,6 @@ function onEdit(e) {
       }
     }
   } catch (err) {
-    console.error('[onEdit] Error:', err.message);
+    Log.error('[onEdit] Error:', err.message);
   }
 }

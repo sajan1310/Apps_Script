@@ -50,7 +50,7 @@ function _initTagSheet(sheetKey, label) {
     SpreadsheetApp.flush();
     return buildResponse(true, null, `${label} sheet initialized successfully.`);
   } catch (error) {
-    console.error(`[_initTagSheet:${sheetKey}] Error:`, error.message);
+    Log.error(`[_initTagSheet:${sheetKey}] Error:`, error.message);
     return buildResponse(false, null, `Failed to initialize ${label} sheet: ` + error.message);
   }
 }
@@ -109,7 +109,7 @@ function _getTagData(sheetKey, label) {
 
     return buildResponse(true, tags);
   } catch (error) {
-    console.error(`[_getTagData:${sheetKey}] Error:`, error.message);
+    Log.error(`[_getTagData:${sheetKey}] Error:`, error.message);
     return buildResponse(false, null, `Failed to load ${label}: ` + error.message);
   }
 }
@@ -189,7 +189,7 @@ function extractColorsFromItemMaster() {
     const newColors = Array.from(found.values()).sort((a, b) => a.localeCompare(b));
     return buildResponse(true, { newColors, scannedCount: rows.length });
   } catch (error) {
-    console.error('[extractColorsFromItemMaster] Error:', error.message);
+    Log.error('[extractColorsFromItemMaster] Error:', error.message);
     return buildResponse(false, null, 'Failed to scan Item Master for colors: ' + error.message);
   }
 }
@@ -251,7 +251,7 @@ function _saveTag(sheetKey, label, formData) {
 
     return buildResponse(true, { name: newName }, msg);
   } catch (error) {
-    console.error(`[_saveTag:${sheetKey}] Error:`, error.message);
+    Log.error(`[_saveTag:${sheetKey}] Error:`, error.message);
     logAction('ERROR', `saveTag:${sheetKey}`, formData ? formData.name : 'unknown', error.message, 'ERROR');
     return buildResponse(false, null, `Failed to save ${label} entry: ` + error.message);
   } finally {
@@ -307,7 +307,7 @@ function _deleteTag(sheetKey, label, name) {
     logAction('DELETE', APP_CONFIG.SHEETS[sheetKey], name, `${label} entry deleted`, 'SUCCESS');
     return buildResponse(true, null, `"${name}" deleted from ${label}.`);
   } catch (error) {
-    console.error(`[_deleteTag:${sheetKey}] Error:`, error.message);
+    Log.error(`[_deleteTag:${sheetKey}] Error:`, error.message);
     logAction('ERROR', `deleteTag:${sheetKey}`, name, error.message, 'ERROR');
     return buildResponse(false, null, `Failed to delete ${label} entry: ` + error.message);
   } finally {
@@ -394,7 +394,7 @@ function importProcessTypesFromProcessNames() {
 
     return buildResponse(true, { processesUpdated: processesUpdated }, msg);
   } catch (error) {
-    console.error('[importProcessTypesFromProcessNames] Error:', error.message);
+    Log.error('[importProcessTypesFromProcessNames] Error:', error.message);
     logAction('ERROR', 'importProcessTypesFromProcessNames', '', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to import process types: ' + error.message);
   } finally {

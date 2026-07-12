@@ -48,7 +48,7 @@ function initContractorsSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Contractors sheet initialized successfully.');
   } catch (error) {
-    console.error('[initContractorsSheet] Error:', error.message);
+    Log.error('[initContractorsSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Contractors sheet: ' + error.message);
   }
 }
@@ -80,7 +80,7 @@ function getContractorsData() {
 
       return buildResponse(true, contractors);
     } catch (error) {
-      console.error('[getContractorsData] Error:', error.message);
+      Log.error('[getContractorsData] Error:', error.message);
       return buildResponse(false, null, 'Failed to load contractors: ' + error.message);
     }
   });
@@ -165,7 +165,7 @@ function saveContractor(formData) {
 
     return buildResponse(true, { name: newName }, msg);
   } catch (error) {
-    console.error('[saveContractor] Error:', error.message);
+    Log.error('[saveContractor] Error:', error.message);
     logAction('SAVE_CONTRACTOR_ERROR', APP_CONFIG.SHEETS.CONTRACTORS, formData ? formData.contractorName : 'unknown', error.message, 'ERROR');
     return buildResponse(false, null, error.message);
   } finally {
@@ -304,7 +304,7 @@ function initContractorRatesSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Contractor Rates sheet initialized successfully.');
   } catch (error) {
-    console.error('[initContractorRatesSheet] Error:', error.message);
+    Log.error('[initContractorRatesSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Contractor Rates sheet: ' + error.message);
   }
 }
@@ -342,7 +342,7 @@ function getContractorRatesData(contractorName) {
 
     return buildResponse(true, rates);
   } catch (error) {
-    console.error('[getContractorRatesData] Error:', error.message);
+    Log.error('[getContractorRatesData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load contractor rates: ' + error.message);
   }
 }
@@ -440,7 +440,7 @@ function getContractorRateForProcess(contractorName, processName) {
   try {
     return buildResponse(true, { ratePerUnit: _getContractorRate(contractorName, processName) });
   } catch (error) {
-    console.error('[getContractorRateForProcess] Error:', error.message);
+    Log.error('[getContractorRateForProcess] Error:', error.message);
     return buildResponse(false, null, 'Failed to look up contractor rate: ' + error.message);
   }
 }
@@ -508,7 +508,7 @@ function saveContractorRate(formData) {
 
     return buildResponse(true, null, 'Rate saved successfully.');
   } catch (error) {
-    console.error('[saveContractorRate] Error:', error.message);
+    Log.error('[saveContractorRate] Error:', error.message);
     logAction('ERROR', 'saveContractorRate', formData.contractorName || 'unknown', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save rate: ' + error.message);
   } finally {
@@ -545,7 +545,7 @@ function deleteContractorRate(contractorName, processName) {
 
     return buildResponse(false, null, 'Rate card entry not found.');
   } catch (error) {
-    console.error('[deleteContractorRate] Error:', error.message);
+    Log.error('[deleteContractorRate] Error:', error.message);
     logAction('ERROR', 'deleteContractorRate', contractorName, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete rate: ' + error.message);
   } finally {
@@ -795,7 +795,7 @@ function getContractorLedgerData() {
 
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getContractorLedgerData] Error:', error.message);
+    Log.error('[getContractorLedgerData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load contractor ledger: ' + error.message);
   }
 }
@@ -848,7 +848,7 @@ function initContractorPaymentsSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Contractor Payments sheet initialized successfully.');
   } catch (error) {
-    console.error('[initContractorPaymentsSheet] Error:', error.message);
+    Log.error('[initContractorPaymentsSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Contractor Payments sheet: ' + error.message);
   }
 }
@@ -900,7 +900,7 @@ function getContractorPaymentsData(contractorName) {
 
     return buildResponse(true, payments);
   } catch (error) {
-    console.error('[getContractorPaymentsData] Error:', error.message);
+    Log.error('[getContractorPaymentsData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load contractor payments: ' + error.message);
   }
 }
@@ -949,7 +949,7 @@ function recordContractorPayment(formData) {
 
     return buildResponse(true, null, 'Payment recorded successfully.');
   } catch (error) {
-    console.error('[recordContractorPayment] Error:', error.message);
+    Log.error('[recordContractorPayment] Error:', error.message);
     logAction('ERROR', 'recordContractorPayment', formData.contractorName || 'unknown', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to record payment: ' + error.message);
   } finally {
@@ -995,7 +995,7 @@ function deleteContractorPayment(rowIdx, expectedContractorName, expectedAmount)
 
     return buildResponse(true, null, 'Payment record deleted successfully.');
   } catch (error) {
-    console.error('[deleteContractorPayment] Error:', error.message);
+    Log.error('[deleteContractorPayment] Error:', error.message);
     logAction('ERROR', 'deleteContractorPayment', String(rowIdx), error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete payment: ' + error.message);
   } finally {
@@ -1124,7 +1124,7 @@ function getContractorAccountLedger(contractorName) {
       balanceDue: totalPayable - totalPaid
     });
   } catch (error) {
-    console.error('[getContractorAccountLedger] Error:', error.message);
+    Log.error('[getContractorAccountLedger] Error:', error.message);
     return buildResponse(false, null, 'Failed to load contractor account ledger: ' + error.message);
   }
 }

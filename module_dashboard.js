@@ -310,7 +310,7 @@ function getDashboardData() {
       readyToDispatchTotalCount: readyToDispatchFull.length
     });
   } catch (error) {
-    console.error('[getDashboardData] Error:', error.message);
+    Log.error('[getDashboardData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load dashboard data: ' + error.message);
   }
 }
@@ -376,7 +376,7 @@ function getMobileDashboard() {
       userEmail: _getActiveUserEmail()
     });
   } catch (error) {
-    console.error('[getMobileDashboard] Error:', error.message);
+    Log.error('[getMobileDashboard] Error:', error.message);
     return buildResponse(false, null, 'Failed to load mobile dashboard: ' + error.message);
   }
 }

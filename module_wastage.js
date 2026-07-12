@@ -44,7 +44,7 @@ function initWastageSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Wastage Log sheet initialized successfully.');
   } catch (error) {
-    console.error('[initWastageSheet] Error:', error.message);
+    Log.error('[initWastageSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Wastage Log sheet: ' + error.message);
   }
 }
@@ -147,7 +147,7 @@ function getWastageData() {
 
     return buildResponse(true, sorted);
   } catch (error) {
-    console.error('[getWastageData] Error:', error.message);
+    Log.error('[getWastageData] Error:', error.message);
     logAction('ERROR', 'getWastageData', 'module_wastage', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to load wastage records: ' + error.message);
   }
@@ -244,7 +244,7 @@ function saveWastage(formData) {
     logAction('CREATE', APP_CONFIG.SHEETS.WASTAGE, wastageId, `Items: ${items.length}`, 'SUCCESS');
     return buildResponse(true, { wastageId }, `Wastage ${wastageId} logged successfully.`);
   } catch (error) {
-    console.error('[saveWastage] Error:', error.message);
+    Log.error('[saveWastage] Error:', error.message);
     logAction('ERROR', 'saveWastage', '', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save wastage: ' + error.message);
   } finally {
@@ -292,7 +292,7 @@ function deleteWastageBulk(wastageIds) {
 
     return buildResponse(true, { deletedIds }, msg);
   } catch (error) {
-    console.error('[deleteWastageBulk] Error:', error.message);
+    Log.error('[deleteWastageBulk] Error:', error.message);
     logAction('ERROR', 'deleteWastageBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete wastage records: ' + error.message);
   } finally {

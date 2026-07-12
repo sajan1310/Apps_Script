@@ -1437,6 +1437,19 @@
     border-bottom: 2px solid var(--border-color);
   }
 
+  /* Sticky header for the 3 biggest ledgers (PO, Bill, Stock) -- long lists
+     otherwise lose column context while scrolling. thead's own background
+     is transparent (rule above), so an opaque one is set here too, or
+     scrolled rows would show through the stuck header text. */
+  #poLedger .table-responsive thead th,
+  #billLedger .table-responsive thead th,
+  #stockTab .table-responsive thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background-color: var(--bg-light);
+  }
+
   th {
     padding: 14px 12px;
     text-align: left;
@@ -2192,6 +2205,19 @@
      @media (max-width: 768px) — RESPONSIVE ADJUSTMENTS
      ───────────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
+    /* iOS Safari auto-zooms the whole page when focusing a form field whose
+       computed font-size is below 16px. The viewport meta tag no longer
+       locks zoom (see main.js#doGet), so this is the correct way to stop
+       that auto-zoom instead: keep inputs themselves at >=16px on mobile
+       widths, while leaving the 14px desktop size (Styles.html ~919)
+       untouched above this breakpoint. */
+    input,
+    textarea,
+    select,
+    .form-control {
+      font-size: 16px;
+    }
+
     body {
       padding: 12px;
     }
@@ -2253,7 +2279,13 @@
     }
 
     .modal-body {
+      /* 60vh starved landscape phones (the visual viewport is short there,
+         so 60% of it left little room for form fields below the fold).
+         100dvh accounts for mobile browser chrome (address bar) shrinking
+         the real viewport, which plain vh does not -- kept as a fallback
+         for browsers without dvh support. */
       max-height: 60vh;
+      max-height: calc(100dvh - 160px);
     }
 
     table th,
@@ -2274,6 +2306,13 @@
 
     .table-container {
       padding: 12px;
+    }
+
+    /* Row action buttons (View Profile/Ledger, Delete, etc. -- the single
+       class used across every table's action column) fall below the
+       WCAG 2.5.5 ~44px touch-target guideline at .btn-sm sizing on a phone. */
+    .btn-action {
+      min-height: 44px;
     }
 
     button,

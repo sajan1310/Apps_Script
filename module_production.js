@@ -74,7 +74,7 @@ function initProductionSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Production sheet initialized successfully.');
   } catch (error) {
-    console.error('[initProductionSheet] Error:', error.message);
+    Log.error('[initProductionSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Production sheet: ' + error.message);
   }
 }
@@ -95,7 +95,7 @@ function ensureProductionExtraColumns(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProductionExtraColumns] Error:', error.message);
+    Log.error('[ensureProductionExtraColumns] Error:', error.message);
   }
 }
 
@@ -115,7 +115,7 @@ function ensureProductionProcessColumns(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProductionProcessColumns] Error:', error.message);
+    Log.error('[ensureProductionProcessColumns] Error:', error.message);
   }
 }
 
@@ -135,7 +135,7 @@ function ensureProductionContractorColumns(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProductionContractorColumns] Error:', error.message);
+    Log.error('[ensureProductionContractorColumns] Error:', error.message);
   }
 }
 
@@ -154,7 +154,7 @@ function ensureProductionWarehouseColumns(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProductionWarehouseColumns] Error:', error.message);
+    Log.error('[ensureProductionWarehouseColumns] Error:', error.message);
   }
 }
 
@@ -172,7 +172,7 @@ function ensureProductionColorColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProductionColorColumn] Error:', error.message);
+    Log.error('[ensureProductionColorColumn] Error:', error.message);
   }
 }
 
@@ -191,7 +191,7 @@ function ensureProductionColorBreakdownColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureProductionColorBreakdownColumn] Error:', error.message);
+    Log.error('[ensureProductionColorBreakdownColumn] Error:', error.message);
   }
 }
 
@@ -268,7 +268,7 @@ function getProcessWipData(processId) {
 
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getProcessWipData] Error:', error.message);
+    Log.error('[getProcessWipData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load process WIP data: ' + error.message);
   }
 }
@@ -345,7 +345,7 @@ function getProductionData() {
           const parsed = JSON.parse(componentsRaw);
           if (Array.isArray(parsed)) componentsConsumed = parsed;
         } catch (e) {
-          console.error('[getProductionData] Invalid componentsConsumed JSON on row', i + 2, ':', e.message);
+          Log.error('[getProductionData] Invalid componentsConsumed JSON on row', i + 2, ':', e.message);
         }
       }
 
@@ -356,7 +356,7 @@ function getProductionData() {
           const parsed = JSON.parse(customComponentsRaw);
           if (Array.isArray(parsed)) customComponents = parsed;
         } catch (e) {
-          console.error('[getProductionData] Invalid customComponents JSON on row', i + 2, ':', e.message);
+          Log.error('[getProductionData] Invalid customComponents JSON on row', i + 2, ':', e.message);
         }
       }
 
@@ -367,7 +367,7 @@ function getProductionData() {
           const parsed = JSON.parse(colorBreakdownRaw);
           if (Array.isArray(parsed)) colorBreakdown = parsed;
         } catch (e) {
-          console.error('[getProductionData] Invalid colorBreakdown JSON on row', i + 2, ':', e.message);
+          Log.error('[getProductionData] Invalid colorBreakdown JSON on row', i + 2, ':', e.message);
         }
       }
 
@@ -404,7 +404,7 @@ function getProductionData() {
     
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getProductionData] Error:', error.message);
+    Log.error('[getProductionData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load production data: ' + error.message);
   }
 }
@@ -896,7 +896,7 @@ function saveProduction(formData) {
     const successMsg = poolWarning ? `${baseMsg} Warning: ${poolWarning} Warehouse Pool stock will now show negative for this item.` : baseMsg;
     return buildResponse(true, { lotNumber: lotNumber }, successMsg);
   } catch (error) {
-    console.error('[saveProduction] Error:', error.message);
+    Log.error('[saveProduction] Error:', error.message);
     logAction('ERROR', 'saveProduction', formData.processId || 'NEW', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save production: ' + error.message);
   } finally {
@@ -978,7 +978,7 @@ function deleteProduction(rowIdx, expectedProductId, expectedQty) {
 
     return buildResponse(true, null, 'Production log deleted successfully.');
   } catch (error) {
-    console.error('[deleteProduction] Error:', error.message);
+    Log.error('[deleteProduction] Error:', error.message);
     logAction('ERROR', 'deleteProduction', String(rowIdx), error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete production: ' + error.message);
   } finally {
@@ -1036,7 +1036,7 @@ function deleteProductionBulk(rowIdxs) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[deleteProductionBulk] Error:', error.message);
+    Log.error('[deleteProductionBulk] Error:', error.message);
     logAction('ERROR', 'deleteProductionBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete production records: ' + error.message);
   } finally {
@@ -1137,7 +1137,7 @@ function updateProductionStatus(rowIdx, expectedQty, newStatus) {
     const statusMsg = poolWarning ? `Status updated successfully. Warning: ${poolWarning} Warehouse Pool stock will now show negative for this item.` : 'Status updated successfully.';
     return buildResponse(true, { status: status }, statusMsg);
   } catch (error) {
-    console.error('[updateProductionStatus] Error:', error.message);
+    Log.error('[updateProductionStatus] Error:', error.message);
     logAction('ERROR', 'updateProductionStatus', String(rowIdx), error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to update status: ' + error.message);
   } finally {
@@ -1213,7 +1213,7 @@ function saveProductionSheet(rowIdx, expectedProductId, expectedQty, customCompo
 
     return buildResponse(true, { customComponents: cleanComponents, sheetRemarks: remarks }, 'Production sheet saved successfully.');
   } catch (error) {
-    console.error('[saveProductionSheet] Error:', error.message);
+    Log.error('[saveProductionSheet] Error:', error.message);
     logAction('ERROR', 'saveProductionSheet', String(rowIdx), error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save production sheet: ' + error.message);
   } finally {

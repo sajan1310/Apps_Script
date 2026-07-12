@@ -1,0 +1,512 @@
+<script>
+  'use strict';
+  // Script_Contractors.html -- App.Contractor
+
+    // ==========================================
+    // CONTRACTORS & RATE CARD NAMESPACE
+    // ==========================================
+    App.State.globalContractors = [];
+    App.State.filteredContractors = [];
+    App.State.globalContractorLedger = [];
+
+    App.Contractor = {
+      async loadData() {
+        const tbody = document.getElementById('contractorTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-center p-4">Loading Contractors...</td></tr>';
+
+        try {
+          const [, contractorsRes, ledgerRes] = await Promise.all([
+            App.Process.ensureLoaded(),
+            Api.call('getContractorsData'),
+            Api.call('getContractorLedgerData')
+          ]);
+
+          if (!contractorsRes.success) {
+            App.Utils.showToast(contractorsRes.message, true);
+            return;
+          }
+
+          App.State.globalContractors = contractorsRes.data;
+          App.State.filteredContractors = contractorsRes.data;
+          App.State.globalContractorLedger = ledgerRes.success ? ledgerRes.data : [];
+          App.State.selectedContractors = [];
+          this.renderTable();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load contractors', true);
+        }
+      },
+
+      // Ensures App.State.globalContractors is populated (used by Production's,
+      // BOM's, and Dispatch's Select2 contractor fields without requiring the
+      // Contractors tab to have been visited first).
+      async ensureLoaded() {
+        if (App.State.globalContractors && App.State.globalContractors.length) return;
+        try {
+          const res = await Api.call('getContractorsData');
+          if (res.success) App.State.globalContractors = res.data;
+        } catch (err) {
+          // Ignored — Contractor dropdowns will simply be empty until loaded elsewhere.
+        }
+      },
+
+      _ledgerFor(contractorName) {
+        const key = (contractorName || '').toLowerCase();
+        return (App.State.globalContractorLedger || []).find(l => l.contractorName.toLowerCase() === key);
+      },
+
+      filterData(searchTerm) {
+        const term = searchTerm.toLowerCase().trim();
+        if (!term) {
+          App.State.filteredContractors = App.State.globalContractors;
+        } else {
+          App.State.filteredContractors = App.State.globalContractors.filter(c => {
+            const haystack = [c.name, c.contact, c.address, c.remarks].join(' ');
+            return App.Utils.matchesKeywords(haystack, term);
+          });
+        }
+        this.renderTable();
+      },
+
+      renderTable() {
+        const tbody = document.getElementById('contractorTableBody');
+        if (!tbody) return;
+
+        const emptyState = document.getElementById('contractorEmptyState');
+        if (App.State.filteredContractors.length === 0) {
+          tbody.innerHTML = '';
+          if (emptyState) emptyState.style.display = 'block';
+          this.updateBulkButtons();
+          return;
+        }
+        if (emptyState) emptyState.style.display = 'none';
+
+        const selectAllChk = document.getElementById('selectAllContractors');
+        if (selectAllChk) {
+          selectAllChk.checked = App.State.filteredContractors.every(c =>
+            App.Selection.isSelected(App.State.selectedContractors, c.name));
+        }
+
+        let html = '';
+        App.State.filteredContractors.forEach(c => {
+          const ledger = this._ledgerFor(c.name);
+          const balanceDue = ledger ? ledger.balanceDue : 0;
+          const balanceClass = balanceDue > 0 ? 'text-danger' : (balanceDue < 0 ? 'text-success' : 'text-dark');
+          const checkedAttr = App.Selection.isSelected(App.State.selectedContractors, c.name) ? 'checked' : '';
+          html += `<tr>
+        <td class="text-center">
+          <input type="checkbox" class="form-check-input contractor-select-chk" data-key="${escapeHtml(c.name)}" ${checkedAttr} onchange="App.Contractor.onRowSelectChange()">
+        </td>
+        <td><strong>${escapeHtml(c.name)}</strong></td>
+        <td>${escapeHtml(c.contact || '-')}</td>
+        <td class="text-center">${ledger ? escapeHtml(String(ledger.lotCount)) : '0'}</td>
+        <td class="text-end fw-bold ${balanceClass}">${formatCurrency(balanceDue)}</td>
+        <td class="text-center">
+          <button class="btn btn-sm btn-outline-primary btn-action mb-1" onclick="App.Contractor.openProfileModal('${escapeHtml(c.name)}')">Profile / Rate Card</button>
+          <button class="btn btn-sm btn-danger btn-action" onclick="App.Contractor.delete('${escapeHtml(c.name)}')">Delete</button>
+        </td>
+      </tr>`;
+        });
+
+        tbody.innerHTML = html;
+        this.updateBulkButtons();
+      },
+
+      toggleSelectAll(masterChk) {
+        App.Selection.toggleAll(App.State.selectedContractors, 'contractor-select-chk', masterChk);
+        this.updateBulkButtons();
+      },
+
+      onRowSelectChange() {
+        App.Selection.syncFromRows(App.State.selectedContractors, 'contractor-select-chk', 'selectAllContractors');
+        this.updateBulkButtons();
+      },
+
+      updateBulkButtons() {
+        const count = App.State.selectedContractors.length;
+        App.Selection.updateButton('btnBulkDeleteContractors', count, '<i class="bi bi-trash"></i> Delete Selected');
+      },
+
+      async bulkDelete() {
+        const selected = App.State.selectedContractors;
+        if (!selected.length) return;
+
+        App.Utils.confirmAction(
+          `Are you sure you want to delete ${selected.length} selected contractor(s)? Their rate card will also be removed. Contractors with Production, Dispatch, or payment history will be skipped.`,
+          async () => {
+            try {
+              const res = await Api.call('deleteContractorsBulk', selected);
+              App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+              if (res?.success) {
+                App.State.selectedContractors = [];
+                await this.loadData();
+              }
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete contractors.', true);
+            }
+          }
+        );
+      },
+
+      switchTab(tabId) {
+        document.querySelectorAll('.contractor-tab-content').forEach(t => t.style.display = 'none');
+        document.getElementById(tabId).style.display = 'block';
+
+        document.querySelectorAll('#contractorTabs .nav-link').forEach(btn => {
+          btn.classList.remove('active', 'bg-warning');
+        });
+        const activeBtn = document.getElementById('btn-' + tabId);
+        if (activeBtn) activeBtn.classList.add('active', 'bg-warning');
+      },
+
+      openCreateModal() {
+        const form = document.getElementById('contractorForm');
+        if (form) form.reset();
+        document.getElementById('originalContractorName').value = '';
+        document.getElementById('contractorProfileTitle').innerText = 'Register New Contractor';
+        document.getElementById('contractorSubmitBtn').innerText = 'Register Contractor';
+
+        this.switchTab('c-profile');
+        document.getElementById('btn-c-rates').parentElement.style.display = 'none';
+        document.getElementById('btn-c-ledger').parentElement.style.display = 'none';
+
+        const modalEl = document.getElementById('contractorProfileModal');
+        if (modalEl && typeof bootstrap !== 'undefined') new bootstrap.Modal(modalEl).show();
+      },
+
+      async openProfileModal(contractorName) {
+        const contractor = App.State.globalContractors.find(c => App.Utils.sameText(c.name, contractorName));
+        if (!contractor) return;
+
+        const form = document.getElementById('contractorForm');
+        if (form) form.reset();
+
+        document.getElementById('originalContractorName').value = contractor.name;
+        document.getElementById('ctrFormName').value = contractor.name;
+        document.getElementById('ctrFormContact').value = contractor.contact;
+        document.getElementById('ctrFormAddress').value = contractor.address;
+        document.getElementById('ctrFormGstPan').value = contractor.gstPan;
+        document.getElementById('ctrFormRemarks').value = contractor.remarks;
+
+        document.getElementById('contractorProfileTitle').innerText = `Contractor: ${contractor.name}`;
+        document.getElementById('contractorSubmitBtn').innerText = 'Update Profile Info';
+
+        document.getElementById('btn-c-rates').parentElement.style.display = 'block';
+        document.getElementById('btn-c-ledger').parentElement.style.display = 'block';
+
+        await this.loadRateCard(contractor.name);
+        await this.renderLedgerTab(contractor.name);
+
+        this.switchTab('c-profile');
+
+        const modalEl = document.getElementById('contractorProfileModal');
+        if (modalEl && typeof bootstrap !== 'undefined') new bootstrap.Modal(modalEl).show();
+      },
+
+      // Builds the Process <option> list for a rate card row: active Process
+      // Master names plus the hardcoded "Dispatch / Logistics" virtual category.
+      // A row's already-saved process is always included even if it's since
+      // gone inactive or been deleted from Process Master — otherwise the
+      // <select> can't represent its real value, silently selects whatever
+      // option happens to be first, and Save/Delete would then act on that
+      // wrong process instead of the one this row actually belongs to.
+      buildProcessOptionsHtml(selected) {
+        const names = (App.State.globalProcesses || []).filter(p => p.active).map(p => p.processName);
+        names.push('Dispatch / Logistics');
+        const sel = String(selected || '').trim();
+        if (sel && !names.some(n => n.toLowerCase() === sel.toLowerCase())) {
+          names.unshift(sel);
+          return names.map(n => `<option value="${escapeHtml(n)}" ${n === sel ? 'selected' : ''}>${escapeHtml(n)}${n === sel ? ' (inactive/removed)' : ''}</option>`).join('');
+        }
+        return names.map(n => `<option value="${escapeHtml(n)}" ${n === sel ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+      },
+
+      async loadRateCard(contractorName) {
+        const tbody = document.getElementById('contractorRatesBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-center p-3">Loading rate card...</td></tr>';
+
+        try {
+          const res = await Api.call('getContractorRatesData', contractorName);
+          const rates = res.success ? res.data : [];
+          App.State.currentContractorRates = { contractorName, rates };
+
+          if (!rates.length) {
+            tbody.innerHTML = '';
+            return;
+          }
+          tbody.innerHTML = rates.map(r => this.renderRateRow(r)).join('');
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load rate card', true);
+        }
+      },
+
+      renderRateRow(rate) {
+        const rowId = 'rate_row_' + Math.floor(Math.random() * 1000000);
+        const originalProcess = rate.processName || '';
+        return `<tr id="${rowId}" data-original-process="${escapeHtml(originalProcess)}">
+      <td><select class="form-select form-select-sm rate-process">${this.buildProcessOptionsHtml(originalProcess)}</select></td>
+      <td><input type="number" class="form-control form-control-sm text-end rate-amount" value="${rate.ratePerUnit || 0}" min="0" step="0.01"></td>
+      <td><input type="text" class="form-control form-control-sm rate-remarks" value="${escapeHtml(rate.remarks || '')}"></td>
+      <td class="text-center">
+        <button type="button" class="btn btn-sm btn-outline-success" onclick="App.Contractor.saveRateRow('${rowId}')">Save</button>
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Contractor.deleteRateRow('${rowId}')">✕</button>
+      </td>
+    </tr>`;
+      },
+
+      addRateRow() {
+        const tbody = document.getElementById('contractorRatesBody');
+        if (!tbody) return;
+        tbody.insertAdjacentHTML('beforeend', this.renderRateRow({ processName: '', ratePerUnit: 0, remarks: '' }));
+      },
+
+      // Saving upserts by (contractor, process) — it has no idea this row used
+      // to mean a different process. If the dropdown was switched away from
+      // the row's original saved process, the old (contractor, oldProcess)
+      // entry would otherwise be left behind as an orphaned duplicate, so we
+      // explicitly delete it after the new pair saves successfully.
+      async saveRateRow(rowId) {
+        const row = document.getElementById(rowId);
+        if (!row) return;
+
+        const contractorName = App.State.currentContractorRates?.contractorName;
+        if (!contractorName) return;
+
+        const processName = row.querySelector('.rate-process').value;
+        const ratePerUnit = row.querySelector('.rate-amount').value;
+        const remarks = row.querySelector('.rate-remarks').value;
+        const originalProcess = row.dataset.originalProcess || '';
+
+        if (!processName) {
+          App.Utils.showToast('Select a process for this rate.', true);
+          return;
+        }
+
+        try {
+          const res = await Api.call('saveContractorRate', { contractorName, processName, ratePerUnit, remarks });
+          if (!res.success) {
+            App.Utils.showToast(res.message, true);
+            return;
+          }
+          if (originalProcess && originalProcess.toLowerCase() !== processName.toLowerCase()) {
+            await Api.call('deleteContractorRate', contractorName, originalProcess);
+          }
+          App.Utils.showToast(res.message, false);
+          await this.loadRateCard(contractorName);
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to save rate', true);
+        }
+      },
+
+      async deleteRateRow(rowId) {
+        const row = document.getElementById(rowId);
+        if (!row) return;
+
+        // Identify the row by the process it was originally saved under, not
+        // whatever the dropdown currently shows — the user may have switched
+        // it to a different process without saving first.
+        const originalProcess = row.dataset.originalProcess || '';
+        const contractorName = App.State.currentContractorRates?.contractorName;
+
+        // Brand-new unsaved row (no matching saved entry) — just remove it locally.
+        const existing = (App.State.currentContractorRates?.rates || []).find(r => App.Utils.sameText(r.processName, originalProcess));
+        if (!existing || !contractorName) {
+          row.remove();
+          return;
+        }
+
+        App.Utils.confirmAction(
+          `Delete the rate card entry for "${contractorName}" on process "${originalProcess}"? This cannot be undone.`,
+          async () => {
+            try {
+              const res = await Api.call('deleteContractorRate', contractorName, originalProcess);
+              App.Utils.showToast(res.message, !res.success);
+              if (res.success) await this.loadRateCard(contractorName);
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete rate', true);
+            }
+          }
+        );
+      },
+
+      async renderLedgerTab(contractorName) {
+        const tbody = document.getElementById('contractorLedgerBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-center p-3">Loading ledger...</td></tr>';
+
+        App.State.currentAccountLedgerContractor = contractorName;
+        document.getElementById('paymentFormDate').value = todayIso();
+        document.getElementById('paymentFormAmount').value = '';
+        document.getElementById('paymentFormModeReference').value = '';
+        document.getElementById('paymentFormRemarks').value = '';
+
+        try {
+          const res = await Api.call('getContractorAccountLedger', contractorName);
+          if (!res.success) {
+            App.Utils.showToast(res.message, true);
+            return;
+          }
+
+          const { entries, totalPayable, totalPaid, balanceDue } = res.data;
+          App.State.currentAccountLedgerData = { contractorName, entries, totalPayable, totalPaid, balanceDue };
+
+          document.getElementById('ledgerTotalPayable').innerText = formatCurrency(totalPayable);
+          document.getElementById('ledgerTotalPaid').innerText = formatCurrency(totalPaid);
+          const balanceEl = document.getElementById('ledgerBalanceDue');
+          balanceEl.innerText = formatCurrency(balanceDue);
+          balanceEl.className = `fs-5 fw-bold ${balanceDue > 0 ? 'text-danger' : (balanceDue < 0 ? 'text-success' : 'text-dark')}`;
+
+          if (!tbody) return;
+          if (!entries.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted p-4">No transactions yet for this contractor.</td></tr>';
+            return;
+          }
+
+          tbody.innerHTML = entries.map(e => {
+            const badgeClass = e.type === 'Payable' ? 'bg-warning text-dark' : 'bg-success';
+            const deleteBtn = e.type === 'Payment'
+              ? `<button class="btn btn-sm btn-outline-danger" onclick="App.Contractor.deletePayment(${e.rowIdx}, '${escapeHtml(contractorName)}', ${e.rawAmount}, '${escapeHtml(e.date)}')">✕</button>`
+              : '';
+            return `<tr>
+          <td>${escapeHtml(e.date)}</td>
+          <td><span class="badge ${badgeClass}">${escapeHtml(e.type)}</span></td>
+          <td>${escapeHtml(e.ref)}</td>
+          <td><small>${escapeHtml(e.description)}</small></td>
+          <td class="text-end">${e.type === 'Payable' ? formatCurrency(e.amount) : '-'}</td>
+          <td class="text-end text-success">${e.type === 'Payment' ? formatCurrency(e.rawAmount) : '-'}</td>
+          <td class="text-end fw-bold">${formatCurrency(e.balance)}</td>
+          <td class="text-center">${deleteBtn}</td>
+        </tr>`;
+          }).join('');
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load account ledger', true);
+        }
+      },
+
+      printLedger() {
+        const ledgerData = App.State.currentAccountLedgerData;
+        const contractorName = App.State.currentAccountLedgerContractor;
+        if (!ledgerData || !contractorName) return;
+
+        const contractor = App.State.globalContractors.find(c => App.Utils.sameText(c.name, contractorName)) || {};
+
+        document.getElementById('print-contractor-name').innerText = contractorName;
+        document.getElementById('print-contractor-gstpan').innerText = contractor.gstPan || '-';
+        document.getElementById('print-contractor-contact').innerText = contractor.contact || '-';
+        document.getElementById('print-contractor-address').innerText = contractor.address || '-';
+        document.getElementById('print-contractor-remarks').innerText = contractor.remarks || 'No remarks';
+        document.getElementById('print-contractor-report-date').innerText = new Date().toLocaleDateString('en-GB');
+
+        document.getElementById('print-contractor-total-payable').innerText = formatCurrency(ledgerData.totalPayable);
+        document.getElementById('print-contractor-total-paid').innerText = formatCurrency(ledgerData.totalPaid);
+        document.getElementById('print-contractor-balance-due').innerText = formatCurrency(ledgerData.balanceDue);
+
+        const ledgerBody = document.getElementById('print-contractor-ledger-body');
+        if (ledgerBody) {
+          ledgerBody.innerHTML = ledgerData.entries.length
+            ? ledgerData.entries.map(e => `<tr>
+          <td style="padding:6px;border:1px solid #999;color:#000;">${escapeHtml(e.date)}</td>
+          <td style="padding:6px;border:1px solid #999;color:#000;">${escapeHtml(e.type)}</td>
+          <td style="padding:6px;border:1px solid #999;color:#000;">${escapeHtml(e.ref)}</td>
+          <td style="padding:6px;border:1px solid #999;color:#000;">${escapeHtml(e.description)}</td>
+          <td style="padding:6px;border:1px solid #999;text-align:right;font-weight:700;color:#000;">${e.type === 'Payable' ? formatCurrency(e.amount) : '-'}</td>
+          <td style="padding:6px;border:1px solid #999;text-align:right;font-weight:700;color:#000;">${e.type === 'Payment' ? formatCurrency(e.rawAmount) : '-'}</td>
+          <td style="padding:6px;border:1px solid #999;text-align:right;font-weight:700;color:#000;">${formatCurrency(e.balance)}</td>
+        </tr>`).join('')
+            : '<tr><td colspan="7" style="padding:10px;text-align:center;color:#999;">No transactions yet for this contractor.</td></tr>';
+        }
+
+        App.Print.trigger('print-contractor-ledger-container', `Contractor_Ledger_${contractorName.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+      },
+
+      async recordPayment() {
+        const contractorName = App.State.currentAccountLedgerContractor;
+        if (!contractorName) return;
+
+        const date = document.getElementById('paymentFormDate').value;
+        const amount = document.getElementById('paymentFormAmount').value;
+        const modeReference = document.getElementById('paymentFormModeReference').value;
+        const remarks = document.getElementById('paymentFormRemarks').value;
+
+        if (!toNumber(amount) || toNumber(amount) <= 0) {
+          App.Utils.showToast('Enter a valid payment amount.', true);
+          return;
+        }
+
+        try {
+          const res = await Api.call('recordContractorPayment', { contractorName, date, amount, modeReference, remarks });
+          App.Utils.showToast(res.message, !res.success);
+          if (res.success) {
+            await this.renderLedgerTab(contractorName);
+            await this.loadData(); // refresh Balance Due on the main list
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to record payment', true);
+        }
+      },
+
+      deletePayment(rowIdx, contractorName, amount, date) {
+        App.Utils.confirmAction(
+          `Delete ${contractorName}'s payment of ${formatCurrency(amount)}${date ? ` dated ${date}` : ''}? This cannot be undone.`,
+          async () => {
+            try {
+              const res = await Api.call('deleteContractorPayment', rowIdx, contractorName, amount);
+              App.Utils.showToast(res.message, !res.success);
+              if (res.success) {
+                await this.renderLedgerTab(contractorName);
+                await this.loadData();
+              }
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete payment', true);
+            }
+          }
+        );
+      },
+
+      delete(contractorName) {
+        App.Utils.confirmAction(
+          `Are you sure you want to delete contractor "${contractorName}"? Their rate card will also be removed.`,
+          async () => {
+            try {
+              const res = await Api.call('deleteContractor', contractorName);
+              App.Utils.showToast(res.message, !res.success);
+              if (res.success) await this.loadData();
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete contractor', true);
+            }
+          }
+        );
+      }
+    };
+
+    // Wire up Contractor profile form submission
+    document.addEventListener('DOMContentLoaded', function () {
+      const contractorForm = document.getElementById('contractorForm');
+      if (contractorForm) {
+        contractorForm.onsubmit = async function (e) {
+          e.preventDefault();
+
+          const formData = Object.fromEntries(new FormData(contractorForm));
+          const isEdit = !!formData.originalContractorName;
+          const submitBtn = document.getElementById('contractorSubmitBtn');
+          if (submitBtn) submitBtn.disabled = true;
+
+          try {
+            const response = await Api.call('saveContractor', formData);
+            if (response.success) {
+              await App.Contractor.loadData();
+              if (isEdit) {
+                const modalEl = document.getElementById('contractorProfileModal');
+                if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+              } else {
+                App.Contractor.openCreateModal();
+              }
+            }
+            App.Utils.showToast(response.message, !response.success);
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to save contractor', true);
+          } finally {
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        };
+      }
+    });
+</script>

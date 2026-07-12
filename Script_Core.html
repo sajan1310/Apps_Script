@@ -1,0 +1,2356 @@
+<script>
+  'use strict';
+  // Script_Core.html -- Api wrapper, escapeHtml, shared helpers, App.State/Selection/Utils/Navigation/Logo/Init, bootstrap
+
+
+    // ================================================================
+    // MOCK ENVIRONMENT — local / preview testing only (no GAS runtime)
+    // ================================================================
+    if (typeof window.google === 'undefined') {
+      console.warn('[PO-System] GAS environment not detected — running with mock data.');
+
+      const _mock = {
+        poData: [
+          {
+            poNumber: '1001',
+            poDate: '23/05/2026',
+            poDateRaw: '2026-05-23T00:00:00.000Z',
+            vendor: 'Hero MotoCorp',
+            contact: 'Ludhiana',
+            poDescription: 'Monthly Restock',
+            poRemarks: 'Urgent',
+            totalQty: 50,
+            supplierRemarks: 'Ref-123',
+            items: [
+              {
+                name: 'Brake Pads',
+                narration: 'Front',
+                size: 'Standard',
+                qty: 50,
+                unit: 'Pcs',
+                price: 150,
+                total: 7500
+              }
+            ],
+            grandTotal: 7500
+          }
+        ],
+        billData: [
+          {
+            poNumber: '1001',
+            billNumber: 'INV-998',
+            billDate: '25/05/2026',
+            vendor: 'Hero MotoCorp',
+            contact: 'Ludhiana',
+            items: [
+              {
+                name: 'Brake Pads',
+                size: 'Standard',
+                narration: 'Front',
+                qty: 50,
+                unit: 'Pcs',
+                price: 150,
+                gstRatePct: 18,
+                lineTotal: 8850
+              }
+            ],
+            totalQty: 50,
+            totalAmount: 8850,
+            remarks: 'Included GST'
+          }
+        ],
+        returnData: [
+          {
+            returnNumber: 'RTN-501',
+            returnDate: '26/05/2026',
+            returnDateRaw: '2026-05-26T00:00:00.000Z',
+            vendor: 'Hero MotoCorp',
+            contact: 'Ludhiana',
+            billNumber: 'INV-998',
+            items: [
+              {
+                name: 'Brake Pads',
+                size: 'Standard',
+                narration: 'Front',
+                qty: 5,
+                unit: 'Pcs',
+                price: 150,
+                lineTotal: 750,
+                reason: 'Defective batch'
+              }
+            ],
+            totalQty: 5,
+            totalAmount: 750,
+            remarks: 'Replacement requested'
+          }
+        ],
+        itemData: [
+          {
+            name: '9-PLUS-RIM-PAPER---M-COLOR',
+            size: '12X1.75',
+            remarks: 'General',
+            narration: 'Color Rim paper standard quality',
+            specification: '12-inch rim compatible',
+            baseUnit: 'Pcs',
+            purchaseUnit: 'Gross',
+            weightPerBaseUnit: 0,
+            vendors: [
+              { vendor: 'Avon Cycles', rate: 99, ratePerBaseUnit: 99 / 144 },
+              { vendor: 'DT Swiss', rate: 118.0, ratePerBaseUnit: 118.0 }
+            ]
+          }
+        ],
+        vendorData: [
+          { name: 'Hero MotoCorp', contact: '9876543210', address: 'Ludhiana', gstin: '03AAAAA1111A1Z1', remarks: 'Primary supplier' },
+          { name: 'Avon Cycles', contact: '9876543211', address: 'Punjab', gstin: '03BBBBB2222B2Z2', remarks: 'Approved' },
+          { name: 'DT Swiss', contact: '9876543212', address: 'Switzerland', gstin: 'NL809033333B01', remarks: 'Imported' }
+        ],
+        unitData: [
+          { unitName: 'Pcs', family: 'Count', factorToBase: 1, remarks: 'Base unit for count-based items' },
+          { unitName: 'Dozen', family: 'Count', factorToBase: 12, remarks: '' },
+          { unitName: 'Gross', family: 'Count', factorToBase: 144, remarks: '12 dozen' },
+          { unitName: 'Box', family: 'Count', factorToBase: 50, remarks: '' },
+          { unitName: 'Gram', family: 'Weight', factorToBase: 1, remarks: 'Base unit for weight-based items' },
+          { unitName: 'Kg', family: 'Weight', factorToBase: 1000, remarks: '' }
+        ],
+        bomData: [
+          {
+            productId: 'PRD-1001',
+            productName: 'Maharaja Super Cruiser 24 Speed',
+            remarks: 'Premium variant - use only approved rim suppliers.',
+            components: [
+              {
+                itemName: '9-PLUS-RIM-PAPER---M-COLOR',
+                size: '12X1.75',
+                narration: 'Color Rim paper standard quality',
+                rate: 120.5,
+                vendor: 'Avon Cycles',
+                qtyPerProduct: 2,
+                lineCost: 241
+              }
+            ],
+            totalCost: 241,
+            totalQty: 2,
+            additionalCosts: [
+              { description: 'Labor - Fitting', rate: 50 },
+              { description: 'Paint Cost', rate: 75 }
+            ],
+            totalAdditionalCost: 125,
+            grandTotal: 366
+          }
+        ],
+        productionData: [
+          {
+            rowIdx: 2,
+            date: '05/06/2026',
+            dateRaw: '2026-06-05T00:00:00.000Z',
+            productId: 'PRD-1001',
+            productName: 'Maharaja Super Cruiser 24 Speed',
+            qty: 25,
+            assignedBy: 'Supervisor Singh',
+            assignedTo: 'Line A',
+            status: 'In Progress',
+            remarks: 'First batch of the month',
+            customComponents: [],
+            sheetRemarks: ''
+          },
+          {
+            rowIdx: 3,
+            date: '01/06/2026',
+            dateRaw: '2026-06-01T00:00:00.000Z',
+            productId: 'PRD-1001',
+            productName: 'Maharaja Super Cruiser 24 Speed',
+            qty: 25,
+            assignedBy: 'Supervisor Singh',
+            assignedTo: 'Line B',
+            status: 'Completed',
+            remarks: 'Auto-queued from PI ORD-1001 - Royal Traders',
+            customComponents: [],
+            sheetRemarks: ''
+          }
+        ],
+        stockData: [
+          { name: '9-PLUS-RIM-PAPER---M-COLOR', size: '12 inch', initialStock: 100, currentStock: 100, threshold: 20, isLowStock: false },
+          { name: '9-PLUS-RIM-PAPER---M-COLOR', size: '14 inch', initialStock: 50, currentStock: 15, threshold: 30, isLowStock: true },
+          { name: '9-PLUS-STICKER-B-REST--M-COLOR', size: '16 inch', initialStock: 80, currentStock: 80, threshold: 10, isLowStock: false }
+        ],
+        clientData: [
+          { name: 'Royal Traders', contact: '9988776655', address: 'Amritsar', gstin: '03CCCCC3333C3Z3', remarks: 'Regular buyer' }
+        ],
+        clientOrderData: [
+          {
+            orderNumber: 'ORD-1001',
+            orderDate: '10/06/2026',
+            dateRaw: '2026-06-10T00:00:00.000Z',
+            clientName: 'Royal Traders',
+            status: 'Order Confirmed',
+            orderRemarks: 'First bulk order',
+            lines: [
+              { productId: 'PRD-1001', productName: 'Maharaja Super Cruiser 24 Speed', qty: 10, lineRemarks: '', productionPushed: true }
+            ]
+          }
+        ],
+        dispatchData: [
+          {
+            rowIdx: 2,
+            dispatchNumber: 'DSP-1001',
+            dispatchDate: '12/06/2026',
+            dateRaw: '2026-06-12T00:00:00.000Z',
+            orderNumber: 'ORD-1001',
+            clientName: 'Royal Traders',
+            productId: 'PRD-1001',
+            productName: 'Maharaja Super Cruiser 24 Speed',
+            qty: 4,
+            transport: 'Truck PB-10-AB-1234',
+            remarks: 'Partial delivery',
+            invoiceNumber: 'INV-2026-001',
+            privateMark: 'RT-001',
+            grNumber: 'GR-55123'
+          }
+        ],
+        processData: [
+          { processId: 'PRC-1001', processName: 'Frame Painting', sequence: 1, lotPrefix: 'FP', isFinalStage: false, active: true, remarks: 'Auto-seeded default process', outputItemName: 'Painted Frame' },
+          { processId: 'PRC-1002', processName: 'Rim Assembly', sequence: 2, lotPrefix: 'RA', isFinalStage: false, active: true, remarks: 'Auto-seeded default process', outputItemName: 'Fitted Rim' },
+          { processId: 'PRC-1003', processName: 'Frame Fitting', sequence: 3, lotPrefix: 'FF', isFinalStage: false, active: true, remarks: 'Auto-seeded default process', outputItemName: 'Fitted Frame' },
+          { processId: 'PRC-1004', processName: 'Bicycle Packing', sequence: 4, lotPrefix: 'PK', isFinalStage: true, active: true, remarks: 'Auto-seeded default process', outputItemName: 'Packed Bicycle' }
+        ],
+        processComponentsData: [
+          { processId: 'PRC-1001', itemName: 'Paint - Red', size: '1L', narration: 'Primary coat', qtyPerUnit: 0.2, remarks: '', sourceType: 'ITEM' }
+        ]
+      };
+
+      const _mockAsync = (payload, delay = 250) =>
+        new Promise(resolve => setTimeout(() => resolve(payload), delay));
+
+      window.google = {
+        script: {
+          run: {
+            withSuccessHandler(cb) {
+              const runner = {
+                withFailureHandler() {
+                  return runner;
+                },
+                getPOData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.poData)
+                  }).then(cb);
+                },
+                getBillData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.billData)
+                  }).then(cb);
+                },
+                getItemsData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.itemData)
+                  }).then(cb);
+                },
+                savePO() {
+                  _mockAsync({
+                    success: true,
+                    message: 'Mock: PO saved!'
+                  }).then(cb);
+                },
+                deletePO(n) {
+                  const idx = _mock.poData.findIndex(p => String(p.poNumber) === String(n));
+                  if (idx !== -1) _mock.poData.splice(idx, 1);
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: PO #${n} deleted!`
+                  }).then(cb);
+                },
+                deletePOsBulk(poNumbers) {
+                  _mockAsync({
+                    success: true,
+                    data: { deletedIds: (poNumbers || []).map(p => String(p).trim()) },
+                    message: `Mock: Bulk deleted ${(poNumbers || []).length} PO(s)!`
+                  }).then(cb);
+                },
+                saveBill(formData) {
+                  const oldBillNum = String(formData.existingBillNumber || '').trim();
+                  const oldVendor = String(formData.existingVendor || '').trim();
+                  const isEdit = !!oldBillNum;
+                  const billNumber = String(formData.billNumber || '').trim();
+
+                  let items = [];
+                  try {
+                    items = typeof formData.items === 'string' ? JSON.parse(formData.items) : (formData.items || []);
+                  } catch (e) { }
+
+                  let totalQty = 0;
+                  let totalAmount = 0;
+                  const formattedItems = items.map(item => {
+                    const qty = Number(item.qty || 0);
+                    const price = Number(item.price || 0);
+                    const gst = Number(item.gst != null && item.gst !== '' ? item.gst : 18);
+                    const subtotal = qty * price;
+                    const lineTotal = subtotal * (1 + gst / 100);
+                    totalQty += qty;
+                    totalAmount += lineTotal;
+                    return {
+                      name: item.name,
+                      size: item.size || '',
+                      narration: item.narration || '',
+                      qty: qty,
+                      unit: item.unit || 'Pcs',
+                      price: price,
+                      gstRatePct: gst,
+                      lineTotal: parseFloat(lineTotal.toFixed(2))
+                    };
+                  });
+
+                  let displayDate = 'N/A';
+                  let isoDate = '';
+                  if (formData.billDate) {
+                    const parts = formData.billDate.split('-');
+                    if (parts.length === 3) {
+                      displayDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+                      isoDate = formData.billDate;
+                    } else {
+                      displayDate = formData.billDate;
+                    }
+                  }
+
+                  let poNumbersArray = [];
+                  try {
+                    const raw = formData.poNumbers || formData.poNumber || '[]';
+                    if (Array.isArray(raw)) {
+                      poNumbersArray = raw;
+                    } else if (String(raw).startsWith('[')) {
+                      poNumbersArray = JSON.parse(raw);
+                    } else {
+                      poNumbersArray = String(raw).split(',').map(s => s.trim()).filter(Boolean);
+                    }
+                  } catch (e) {
+                    poNumbersArray = formData.poNumber ? [String(formData.poNumber)] : [];
+                  }
+
+                  const billObj = {
+                    poNumber: poNumbersArray[0] || 'DIRECT',
+                    poNumbers: poNumbersArray,
+                    billNumber: billNumber,
+                    billDate: displayDate,
+                    billDateRaw: isoDate,
+                    vendor: formData.vendor || '',
+                    contact: formData.contact || '',
+                    remarks: formData.remarks || '',
+                    items: formattedItems,
+                    totalQty: totalQty,
+                    totalAmount: parseFloat(totalAmount.toFixed(2))
+                  };
+
+                  if (isEdit) {
+                    const idx = _mock.billData.findIndex(b =>
+                      String(b.billNumber) === oldBillNum && String(b.vendor || '').trim().toLowerCase() === oldVendor.toLowerCase()
+                    );
+                    if (idx !== -1) {
+                      _mock.billData[idx] = billObj;
+                    }
+                  } else {
+                    _mock.billData.unshift(billObj);
+                  }
+
+                  _mockAsync({
+                    success: true,
+                    message: isEdit ? `Mock: Bill #${billNumber} updated!` : `Mock: Bill #${billNumber} recorded!`
+                  }).then(cb);
+                },
+                deleteBill(vendor, n) {
+                  const idx = _mock.billData.findIndex(b =>
+                    String(b.billNumber) === String(n) && String(b.vendor || '').trim().toLowerCase() === String(vendor || '').trim().toLowerCase()
+                  );
+                  if (idx !== -1) {
+                    _mock.billData.splice(idx, 1);
+                  }
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Bill #${n} deleted!`
+                  }).then(cb);
+                },
+                deleteBillsBulk(bills) {
+                  const targetSet = new Set(
+                    (bills || []).map(b => `${String((b && b.vendor) || '').trim().toLowerCase()}|${String((b && b.billNumber) || '').trim().toLowerCase()}`)
+                  );
+                  const deletedKeys = [];
+                  _mock.billData = _mock.billData.filter(b => {
+                    const key = `${String(b.vendor || '').trim().toLowerCase()}|${String(b.billNumber || '').trim().toLowerCase()}`;
+                    if (targetSet.has(key)) {
+                      deletedKeys.push(`${b.vendor || ''}|${b.billNumber || ''}`);
+                      return false;
+                    }
+                    return true;
+                  });
+                  _mockAsync({
+                    success: true,
+                    data: { deletedKeys },
+                    message: `Mock: Bulk deleted ${(bills || []).length} bill(s)!`
+                  }).then(cb);
+                },
+                getReturnData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.returnData)
+                  }).then(cb);
+                },
+                saveReturn(formData) {
+                  const oldReturnNum = String(formData.existingReturnNumber || '').trim();
+                  const isEdit = !!oldReturnNum;
+                  const returnNumber = String(formData.returnNumber || '').trim();
+
+                  let items = [];
+                  try {
+                    items = typeof formData.items === 'string' ? JSON.parse(formData.items) : (formData.items || []);
+                  } catch (e) { }
+
+                  let totalQty = 0;
+                  let totalAmount = 0;
+                  const formattedItems = items.map(item => {
+                    const qty = Number(item.qty || 0);
+                    const price = Number(item.price || 0);
+                    const lineTotal = qty * price;
+                    totalQty += qty;
+                    totalAmount += lineTotal;
+                    return {
+                      name: item.name,
+                      size: item.size || '',
+                      narration: item.narration || '',
+                      qty: qty,
+                      unit: item.unit || 'Pcs',
+                      price: price,
+                      lineTotal: parseFloat(lineTotal.toFixed(2)),
+                      reason: item.reason || ''
+                    };
+                  });
+
+                  let displayDate = 'N/A';
+                  let isoDate = '';
+                  if (formData.returnDate) {
+                    const parts = formData.returnDate.split('-');
+                    if (parts.length === 3) {
+                      displayDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+                      isoDate = formData.returnDate;
+                    } else {
+                      displayDate = formData.returnDate;
+                    }
+                  }
+
+                  const returnObj = {
+                    returnNumber: returnNumber,
+                    returnDate: displayDate,
+                    returnDateRaw: isoDate,
+                    vendor: formData.vendor || '',
+                    contact: formData.contact || '',
+                    billNumber: formData.billNumber || '',
+                    remarks: formData.remarks || '',
+                    items: formattedItems,
+                    totalQty: totalQty,
+                    totalAmount: parseFloat(totalAmount.toFixed(2))
+                  };
+
+                  if (isEdit) {
+                    const idx = _mock.returnData.findIndex(r => String(r.returnNumber) === oldReturnNum);
+                    if (idx !== -1) {
+                      _mock.returnData[idx] = returnObj;
+                    }
+                  } else {
+                    _mock.returnData.unshift(returnObj);
+                  }
+
+                  _mockAsync({
+                    success: true,
+                    message: isEdit ? `Mock: Return #${returnNumber} updated!` : `Mock: Return #${returnNumber} recorded!`
+                  }).then(cb);
+                },
+                deleteReturn(n) {
+                  const idx = _mock.returnData.findIndex(r => String(r.returnNumber) === String(n));
+                  if (idx !== -1) {
+                    _mock.returnData.splice(idx, 1);
+                  }
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Return #${n} deleted!`
+                  }).then(cb);
+                },
+                deleteReturnsBulk(returnNumbers) {
+                  const targetSet = new Set((returnNumbers || []).map(r => String(r).trim()));
+                  _mock.returnData = _mock.returnData.filter(r => !targetSet.has(String(r.returnNumber)));
+                  _mockAsync({
+                    success: true,
+                    data: { deletedIds: Array.from(targetSet) },
+                    message: `Mock: Bulk deleted ${(returnNumbers || []).length} return(s)!`
+                  }).then(cb);
+                },
+                saveItem() {
+                  _mockAsync({
+                    success: true,
+                    message: 'Mock: Item saved!'
+                  }).then(cb);
+                },
+                deleteItem(name, size) {
+                  const idx = _mock.itemData.findIndex(i => i.name === name && (i.size || '') === (size || ''));
+                  if (idx !== -1) _mock.itemData.splice(idx, 1);
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Item "${name}" deleted!`
+                  }).then(cb);
+                },
+                deleteItemsBulk(items) {
+                  const targetSet = new Set((items || []).map(i => `${i.name}|${i.size || ''}`));
+                  _mock.itemData = _mock.itemData.filter(i => !targetSet.has(`${i.name}|${i.size || ''}`));
+                  _mockAsync({
+                    success: true,
+                    data: { deletedItems: (items || []).map(i => ({ name: i.name, size: i.size || '' })) },
+                    message: `Mock: Bulk deleted ${items.length} item(s)!`
+                  }).then(cb);
+                },
+                getVendorsData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.vendorData)
+                  }).then(cb);
+                },
+                saveVendor() {
+                  _mockAsync({
+                    success: true,
+                    message: 'Mock: Vendor saved!'
+                  }).then(cb);
+                },
+                deleteVendor(name) {
+                  const idx = _mock.vendorData.findIndex(v => v.name === name);
+                  if (idx !== -1) _mock.vendorData.splice(idx, 1);
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Vendor "${name}" deleted!`
+                  }).then(cb);
+                },
+                getUnitsData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.unitData)
+                  }).then(cb);
+                },
+                saveUnit() {
+                  _mockAsync({
+                    success: true,
+                    message: 'Mock: Unit saved!'
+                  }).then(cb);
+                },
+                deleteUnit(name) {
+                  const idx = _mock.unitData.findIndex(u => u.unitName === name);
+                  if (idx !== -1) _mock.unitData.splice(idx, 1);
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Unit "${name}" deleted!`
+                  }).then(cb);
+                },
+                deleteVendorsBulk(names) {
+                  const targetSet = new Set((names || []).map(n => String(n)));
+                  _mock.vendorData = _mock.vendorData.filter(v => !targetSet.has(v.name));
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Bulk deleted ${(names || []).length} vendor(s)!`
+                  }).then(cb);
+                },
+                syncVendorsFromPOHistory() {
+                  _mockAsync({
+                    success: true,
+                    data: { vendorsAdded: 0, vendorsUpdated: 0, itemsAdded: 0, itemsUpdated: 0 },
+                    message: 'Mock: Sync complete (no PO history in mock mode).'
+                  }).then(cb);
+                },
+                getBOMData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.bomData)
+                  }).then(cb);
+                },
+                getBOMProductionData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.bomData).map(b => ({
+                      productId: b.productId,
+                      productName: b.productName,
+                      components: b.components.map(c => ({
+                        itemName: c.itemName,
+                        size: c.size,
+                        narration: c.narration,
+                        vendor: c.vendor,
+                        qtyPerProduct: c.qtyPerProduct,
+                        processGroup: c.processGroup,
+                        color: c.color
+                      }))
+                    }))
+                  }).then(cb);
+                },
+                verifyBOMAccess() {
+                  _mockAsync({ success: true, data: { token: 'mock-token' }, message: 'Mock: Access granted.' }).then(cb);
+                },
+                getNextProductId() {
+                  _mockAsync('PRD-1002').then(cb);
+                },
+                saveBOM() {
+                  _mockAsync({
+                    success: true,
+                    data: { productId: 'PRD-1002', productName: 'Mock Product' },
+                    message: 'Mock: Product BOM saved!'
+                  }).then(cb);
+                },
+                deleteBOM(productId) {
+                  const idx = _mock.bomData.findIndex(b => b.productId === productId);
+                  if (idx !== -1) _mock.bomData.splice(idx, 1);
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: BOM "${productId}" deleted!`
+                  }).then(cb);
+                },
+                deleteBOMsBulk(productIds) {
+                  const targetSet = new Set((productIds || []).map(p => String(p)));
+                  _mock.bomData = _mock.bomData.filter(b => !targetSet.has(b.productId));
+                  _mockAsync({
+                    success: true,
+                    data: { skipped: [] },
+                    message: `Mock: Bulk deleted ${(productIds || []).length} BOM(s)!`
+                  }).then(cb);
+                },
+                getProcessData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.processData)
+                  }).then(cb);
+                },
+                getProcessComponentsData(processId) {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.processComponentsData).filter(c => !processId || c.processId === processId)
+                  }).then(cb);
+                },
+                getNextProcessId() {
+                  _mockAsync('PRC-1005').then(cb);
+                },
+                saveProcess(formData) {
+                  const isEdit = !!formData.processId;
+                  const processId = isEdit ? formData.processId : 'PRC-1005';
+                  _mockAsync({
+                    success: true,
+                    data: { processId },
+                    message: isEdit ? 'Mock: Process updated successfully.' : 'Mock: Process created successfully.'
+                  }).then(cb);
+                },
+                deleteProcess(processId) {
+                  const idx = _mock.processData.findIndex(p => p.processId === processId);
+                  if (idx !== -1) _mock.processData.splice(idx, 1);
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Process "${processId}" deleted!`
+                  }).then(cb);
+                },
+                deleteProcessesBulk(processIds) {
+                  const targetSet = new Set((processIds || []).map(p => String(p)));
+                  _mock.processData = _mock.processData.filter(p => !targetSet.has(p.processId));
+                  _mockAsync({
+                    success: true,
+                    data: { skipped: [] },
+                    message: `Mock: Bulk deleted ${(processIds || []).length} process(es)!`
+                  }).then(cb);
+                },
+                getProductionData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.productionData)
+                  }).then(cb);
+                },
+                saveProduction() {
+                  _mockAsync({
+                    success: true,
+                    message: 'Mock: Production log saved!'
+                  }).then(cb);
+                },
+                deleteProduction(rowIdx) {
+                  const idx = _mock.productionData.findIndex(p => p.rowIdx === Number(rowIdx));
+                  if (idx !== -1) _mock.productionData.splice(idx, 1);
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Production record #${rowIdx} deleted!`
+                  }).then(cb);
+                },
+                deleteProductionBulk(rowIdxs) {
+                  const targetSet = new Set((rowIdxs || []).map(r => Number(r)));
+                  _mock.productionData = _mock.productionData.filter(p => !targetSet.has(p.rowIdx));
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Bulk deleted ${(rowIdxs || []).length} production record(s)!`
+                  }).then(cb);
+                },
+                saveProductionSheet(rowIdx, productId, qty, customComponentsJson, sheetRemarks) {
+                  const record = _mock.productionData.find(p => p.rowIdx === rowIdx);
+                  let components = [];
+                  try {
+                    components = JSON.parse(customComponentsJson) || [];
+                  } catch (e) { /* ignore */ }
+                  if (record) {
+                    record.customComponents = components;
+                    record.sheetRemarks = sheetRemarks || '';
+                  }
+                  _mockAsync({
+                    success: true,
+                    data: { customComponents: components, sheetRemarks: sheetRemarks || '' },
+                    message: 'Mock: Production sheet saved!'
+                  }).then(cb);
+                },
+                getStockData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.stockData)
+                  }).then(cb);
+                },
+                updateThreshold(name, size, val) {
+                  const item = _mock.stockData.find(i => i.name === name && i.size === size);
+                  if (item) {
+                    item.threshold = val;
+                    item.isLowStock = item.threshold > item.currentStock;
+                  }
+                  _mockAsync({
+                    success: true,
+                    message: 'Mock: Threshold updated!'
+                  }).then(cb);
+                },
+                importStockData(items) {
+                  items.forEach(item => {
+                    const existing = _mock.stockData.find(i => i.name === item.name && i.size === item.size);
+                    if (existing) {
+                      existing.initialStock = item.initialStock;
+                      existing.currentStock = item.initialStock;
+                      existing.isLowStock = existing.threshold > existing.currentStock;
+                    } else {
+                      _mock.stockData.push({
+                        name: item.name,
+                        size: item.size,
+                        initialStock: item.initialStock,
+                        currentStock: item.initialStock,
+                        threshold: 0,
+                        isLowStock: false
+                      });
+                    }
+                  });
+                  _mockAsync({
+                    success: true,
+                    message: 'Mock: Stock imported successfully!'
+                  }).then(cb);
+                },
+                getStockAdjustmentHistory() {
+                  _mockAsync({
+                    success: true,
+                    data: []
+                  }).then(cb);
+                },
+                adjustStockManually(name, size, newCurrentStock, reason) {
+                  const item = _mock.stockData.find(i => i.name === name && i.size === size);
+                  if (!item) {
+                    _mockAsync({ success: false, message: 'Mock: Item not found in Stock database.' }).then(cb);
+                    return;
+                  }
+                  const oldCurrentStock = item.currentStock;
+                  item.currentStock = newCurrentStock;
+                  item.isLowStock = item.threshold > item.currentStock;
+                  _mockAsync({
+                    success: true,
+                    data: { oldCurrentStock, newCurrentStock },
+                    message: 'Mock: Stock adjusted successfully!'
+                  }).then(cb);
+                },
+                getClientsData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.clientData)
+                  }).then(cb);
+                },
+                saveClient() {
+                  _mockAsync({
+                    success: true,
+                    message: 'Mock: Client saved!'
+                  }).then(cb);
+                },
+                deleteClient(name) {
+                  const idx = _mock.clientData.findIndex(c => c.name === name);
+                  if (idx !== -1) _mock.clientData.splice(idx, 1);
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Client "${name}" deleted!`
+                  }).then(cb);
+                },
+                deleteClientsBulk(names) {
+                  const targetSet = new Set((names || []).map(n => String(n)));
+                  _mock.clientData = _mock.clientData.filter(c => !targetSet.has(c.name));
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Bulk deleted ${(names || []).length} client(s)!`
+                  }).then(cb);
+                },
+                getClientOrdersData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.clientOrderData)
+                  }).then(cb);
+                },
+                saveClientOrder() {
+                  _mockAsync({
+                    success: true,
+                    message: 'Mock: PI / Estimate saved!'
+                  }).then(cb);
+                },
+                deleteClientOrder(orderNumber) {
+                  const idx = _mock.clientOrderData.findIndex(o => o.orderNumber === orderNumber);
+                  if (idx !== -1) _mock.clientOrderData.splice(idx, 1);
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: PI / Estimate "${orderNumber}" deleted!`
+                  }).then(cb);
+                },
+                deleteClientOrdersBulk(orderNumbers) {
+                  const targetSet = new Set((orderNumbers || []).map(n => String(n)));
+                  _mock.clientOrderData = _mock.clientOrderData.filter(o => !targetSet.has(o.orderNumber));
+                  _mockAsync({
+                    success: true,
+                    data: { skipped: [] },
+                    message: `Mock: Bulk deleted ${(orderNumbers || []).length} PI / Estimate(s)!`
+                  }).then(cb);
+                },
+                getReadyToDispatchData() {
+                  const map = {};
+                  _mock.productionData.forEach(p => {
+                    if (p.status !== 'Completed') return;
+                    const key = p.productId;
+                    if (!map[key]) map[key] = { productId: p.productId, productName: p.productName, producedQty: 0, dispatchedQty: 0 };
+                    map[key].producedQty += Number(p.qty) || 0;
+                  });
+                  _mock.dispatchData.forEach(d => {
+                    const key = d.productId;
+                    if (!map[key]) map[key] = { productId: d.productId, productName: d.productName, producedQty: 0, dispatchedQty: 0 };
+                    map[key].dispatchedQty += Number(d.qty) || 0;
+                  });
+                  const data = Object.values(map).map(r => ({ ...r, readyQty: r.producedQty - r.dispatchedQty }));
+                  _mockAsync({ success: true, data }).then(cb);
+                },
+                getDispatchData() {
+                  _mockAsync({
+                    success: true,
+                    data: structuredClone(_mock.dispatchData)
+                  }).then(cb);
+                },
+                saveDispatch() {
+                  _mockAsync({
+                    success: true,
+                    message: 'Mock: Dispatch recorded!'
+                  }).then(cb);
+                },
+                deleteDispatch(rowIdx) {
+                  const idx = _mock.dispatchData.findIndex(d => d.rowIdx === Number(rowIdx));
+                  if (idx !== -1) _mock.dispatchData.splice(idx, 1);
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Dispatch record #${rowIdx} deleted!`
+                  }).then(cb);
+                },
+                deleteDispatchBulk(rowIdxs) {
+                  const targetSet = new Set((rowIdxs || []).map(r => Number(r)));
+                  _mock.dispatchData = _mock.dispatchData.filter(d => !targetSet.has(d.rowIdx));
+                  _mockAsync({
+                    success: true,
+                    message: `Mock: Bulk deleted ${(rowIdxs || []).length} dispatch record(s)!`
+                  }).then(cb);
+                }
+              };
+              return runner;
+            }
+          }
+        }
+      };
+    }
+
+    // ================================================================
+    // HELPERS
+    // ================================================================
+    const $ = (sel, root = document) => root.querySelector(sel);
+    const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+    // Lazily injects a third-party <script> tag and caches the load promise so
+    // heavy libraries (PDF export, spreadsheet parsing) don't block initial
+    // page render and are only downloaded when the feature is actually used.
+    const _scriptLoadPromises = {};
+    function loadScript(src) {
+      if (!_scriptLoadPromises[src]) {
+        _scriptLoadPromises[src] = new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = src;
+          script.onload = () => resolve();
+          script.onerror = () => {
+            delete _scriptLoadPromises[src];
+            reject(new Error(`Failed to load script: ${src}`));
+          };
+          document.head.appendChild(script);
+        });
+      }
+      return _scriptLoadPromises[src];
+    }
+
+    const HTML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    function escapeHtml(value = '') {
+      return String(value).replace(/[&<>"']/g, ch => HTML_ESCAPE_MAP[ch]);
+    }
+
+    // Renders a PO/Bill line-item list as an HTML preview string. Handles
+    // both structured item objects and legacy plain-string item entries.
+    function formatItemsPreview(items) {
+      if (!Array.isArray(items)) return '';
+      return items
+        .map(i =>
+          typeof i === 'object' && i !== null
+            ? `${escapeHtml(i.name)}${i.size ? ` [${escapeHtml(i.size)}]` : ''} (${escapeHtml(i.qty)} ${escapeHtml(i.unit || 'Pcs')})`
+            : escapeHtml(i)
+        )
+        .join('<br>');
+    }
+
+    function toNumber(value, fallback = 0) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function formatCurrency(value) {
+      return `\u20B9${toNumber(value).toFixed(2)}`;
+    }
+
+    function todayIso() {
+      const d = new Date();
+      return [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, '0'),
+        String(d.getDate()).padStart(2, '0')
+      ].join('-');
+    }
+
+    // Converts a record's raw ISO timestamp (preferred) or DD/MM/YYYY display
+    // date into the YYYY-MM-DD format <input type="date"> expects/produces.
+    function dateToInputValue(rawIso, displayDate) {
+      if (rawIso) {
+        const iso = String(rawIso).split('T')[0];
+        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+      }
+
+      const d = String(displayDate || '');
+
+      if (d.includes('/')) {
+        const [day, month, year] = d.split('/');
+        if (day && month && year?.length === 4) {
+          return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        }
+      }
+
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+
+      return '';
+    }
+
+    function normalizeDateForInput(po) {
+      if (!po) return '';
+      return dateToInputValue(po.poDateRaw, po.poDate);
+    }
+
+    // Resolves a sortable Date from a record's ISO timestamp, falling back
+    // to its DD/MM/YYYY display date (e.g. PO/Bill poDate, billDate fields).
+    function parseRecordDate(rawIso, displayDate) {
+      if (rawIso) {
+        const fromRaw = new Date(rawIso);
+        if (!isNaN(fromRaw.getTime())) return fromRaw;
+      }
+
+      const parts = String(displayDate || '').split('/');
+      if (parts.length === 3) {
+        return new Date(parts.reverse().join('-'));
+      }
+
+      return new Date(NaN);
+    }
+
+    function safeModalShow(id) {
+      const el = document.getElementById(id);
+      if (!el || typeof bootstrap === 'undefined') return;
+
+      // Called from inside an already-open modal (e.g. Production's own
+      // "Issue Stock" button, or a "Manage Color Master" link on a form
+      // modal) — every Bootstrap modal shares the same z-index, so ties are
+      // broken by DOM order, not by which was opened last. Whichever modal
+      // happens to sit later in the page's markup would render on top
+      // regardless of which one the user actually just opened, and a second
+      // backdrop:static modal also freezes the page (same class of bug
+      // App.Utils.confirmAction already works around — mirrors its fix:
+      // drop this modal's own backdrop/keyboard-close and lift it above the
+      // modal(s) already open, same z-index confirmModal uses for this).
+      //
+      // Must exclude `el` itself from that check — a flow that re-shows the
+      // SAME modal while it's still open (e.g. Bill's "record another"
+      // re-opening #receiveBillModal right after a successful save, before
+      // its own confirmAction's confirmation dialog has finished its
+      // fade-out) would otherwise see its own '.show' class as "another
+      // modal is open", bump ITS OWN z-index to 1070 (tying with
+      // #confirmModal's static 1070), and then lose that tie to DOM order —
+      // #confirmModal sits earlier in Modals.html than most form modals, so
+      // every confirmation dialog for the rest of that "keep adding" session
+      // would render behind the form instead of on top of it.
+      const isNested = Array.from(document.querySelectorAll('.modal.show')).some(m => m !== el);
+      if (isNested) {
+        const existing = bootstrap.Modal.getInstance(el);
+        if (existing) existing.dispose();
+        el.style.zIndex = 1070;
+        new bootstrap.Modal(el, { backdrop: false, keyboard: true }).show();
+      } else {
+        el.style.zIndex = '';
+        bootstrap.Modal.getOrCreateInstance(el).show();
+      }
+    }
+
+    function safeModalHide(id) {
+      const el = document.getElementById(id);
+      if (el && typeof bootstrap !== 'undefined') {
+        bootstrap.Modal.getOrCreateInstance(el).hide();
+      }
+    }
+
+    // Bootstrap 5 doesn't support real nested modals: each modal's own
+    // hide() unconditionally strips <body>'s scroll-lock state (the
+    // 'modal-open' class plus the overflow/padding-right it applies) as
+    // soon as THAT modal finishes closing, regardless of whether another
+    // modal (opened on top of it via safeModalShow's isNested branch, e.g.
+    // Manage Color Master / Process Type Master from inside Edit Process)
+    // is still showing. That can leave the background page scrollable
+    // behind a still-open modal, or leave it stuck if cleanup ever races
+    // with a fast re-open. Re-sync the lock to reality every time any
+    // modal finishes hiding, instead of trusting Bootstrap's per-instance
+    // bookkeeping.
+    document.addEventListener('hidden.bs.modal', () => {
+      const stillOpen = document.querySelectorAll('.modal.show').length;
+      if (stillOpen === 0) {
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+      } else {
+        document.body.classList.add('modal-open');
+      }
+    });
+
+    function setDisabled(id, state) {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !!state;
+    }
+
+    // ================================================================
+    // GAS API WRAPPER
+    // ================================================================
+    const Api = {
+      call(method, ...args) {
+        return new Promise((resolve, reject) => {
+          try {
+            const runner = google.script.run
+              .withSuccessHandler(resolve)
+              .withFailureHandler(reject);
+
+            if (typeof runner[method] !== 'function') {
+              reject(new Error(`Backend method "${method}" is unavailable.`));
+              return;
+            }
+
+            runner[method](...args);
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+    };
+
+    // ================================================================
+    // APP
+    // ================================================================
+    const BRAND_COLOR = '#C0392B';
+
+    const App = {
+      BRAND_COLOR,
+      companyLogo: null,
+
+      State: {
+        rowSeq: 0,
+
+        globalPOs: [],
+        filteredPOs: [],
+        poCurrentPage: 1,
+        poRowsPerPage: 15,
+        poSearchTerm: '',
+        poDateFilter: '',
+        poStatusFilter: 'all',
+        allPendingPOs: [],
+        filteredPendingPOs: [],
+
+        globalBills: [],
+        filteredBills: [],
+        billCurrentPage: 1,
+        billRowsPerPage: 15,
+        billSearchTerm: '',
+        billDateFilter: '',
+
+        globalReturns: [],
+        filteredReturns: [],
+        returnCurrentPage: 1,
+        returnRowsPerPage: 15,
+        returnSearchTerm: '',
+        returnDateFilter: '',
+
+        globalWastage: [],
+        filteredWastage: [],
+        wastageCurrentPage: 1,
+        wastageRowsPerPage: 15,
+        wastageSearchTerm: '',
+        wastageDateFilter: '',
+        selectedWastage: [],
+
+        globalIssues: [],
+        filteredIssues: [],
+        issueCurrentPage: 1,
+        issueRowsPerPage: 15,
+        issueSearchTerm: '',
+        issueDateFilter: '',
+        selectedIssues: [],
+        productionAllSearchTerm: '',
+
+        globalItems: [],
+        filteredItems: [],
+        itemCurrentPage: 1,
+        itemRowsPerPage: 15,
+        itemSearchTerm: '',
+        itemColumnFilters: { name: [], size: [], narration: [], vendor: [], metadata: [] },
+
+        vendorCurrentPage: 1,
+        vendorRowsPerPage: 10,
+
+        stockCurrentPage: 1,
+        stockRowsPerPage: 20,
+
+        bomCurrentPage: 1,
+        bomRowsPerPage: 10,
+
+        productionCurrentPage: 1,
+        productionRowsPerPage: 15,
+        currentProductionSheet: null,
+
+        clientCurrentPage: 1,
+        clientRowsPerPage: 10,
+
+        orderCurrentPage: 1,
+        orderRowsPerPage: 10,
+
+        dispatchCurrentPage: 1,
+        dispatchRowsPerPage: 15,
+
+        globalDispatch: [],
+
+        selectedItems: [],
+        selectedSyncReview: [],
+        selectedPOs: [],
+        selectedBills: [],
+        selectedReturns: [],
+        selectedVendors: [],
+        selectedBOMs: [],
+        selectedProduction: [],
+        selectedStock: [],
+        selectedClients: [],
+        selectedOrders: [],
+        selectedDispatch: [],
+        selectedContractors: [],
+        confirmCallback: null
+      },
+
+      // ── Bulk Selection Helpers ───────────────────────────────────
+      // Generic helpers shared by every tab's "Delete Selected" /
+      // "Print Selected" checkbox columns. Selection state is stored as
+      // an array of plain string keys (e.g. PO numbers, bill numbers,
+      // vendor names, product IDs, row indexes, "name|size" stock keys).
+      Selection: {
+        toggle(arr, key, isSelected) {
+          const idx = arr.indexOf(key);
+          if (isSelected) {
+            if (idx === -1) arr.push(key);
+          } else if (idx !== -1) {
+            arr.splice(idx, 1);
+          }
+        },
+
+        isSelected(arr, key) {
+          return arr.indexOf(key) !== -1;
+        },
+
+        // Checks/unchecks every row checkbox of chkClass and syncs `arr`.
+        toggleAll(arr, chkClass, masterChk) {
+          const isChecked = masterChk.checked;
+          $$('.' + chkClass).forEach(chk => {
+            chk.checked = isChecked;
+            this.toggle(arr, chk.dataset.key, isChecked);
+          });
+        },
+
+        // Syncs `arr` from current checkbox states and updates the
+        // "select all" checkbox to reflect whether every visible row is checked.
+        syncFromRows(arr, chkClass, selectAllId) {
+          const checkboxes = $$('.' + chkClass);
+          checkboxes.forEach(chk => this.toggle(arr, chk.dataset.key, chk.checked));
+
+          const selectAllChk = document.getElementById(selectAllId);
+          if (selectAllChk) {
+            selectAllChk.checked = checkboxes.length > 0 && checkboxes.every(chk => chk.checked);
+          }
+        },
+
+        // Shows/hides + labels a bulk action button based on selection count.
+        updateButton(btnId, count, label) {
+          const btn = document.getElementById(btnId);
+          if (!btn) return;
+          if (count > 0) {
+            btn.classList.remove('d-none');
+            btn.innerHTML = `${label} (${count})`;
+          } else {
+            btn.classList.add('d-none');
+          }
+        }
+      },
+
+      // ── Utilities ────────────────────────────────────────────────
+      Utils: {
+        showToast(message, isError = false) {
+          const toastEl = document.getElementById('systemToast');
+          const msgEl = document.getElementById('toastMessage');
+          if (msgEl) msgEl.innerText = message || '';
+          if (!toastEl) {
+            console[isError ? 'error' : 'log'](message);
+            return;
+          }
+
+          toastEl.classList.remove('bg-success', 'bg-danger');
+          toastEl.classList.add(isError ? 'bg-danger' : 'bg-success');
+
+          if (typeof bootstrap !== 'undefined') {
+            bootstrap.Toast.getOrCreateInstance(toastEl).show();
+          }
+        },
+
+        confirmAction(message, callback) {
+          const msgText = document.getElementById('confirmMessageText');
+          if (msgText) msgText.innerText = message;
+          App.State.confirmCallback = callback;
+
+          const el = document.getElementById('confirmModal');
+          if (!el || typeof bootstrap === 'undefined') return;
+
+          // Dispose any stale instance so we can reconfigure options cleanly.
+          const existing = bootstrap.Modal.getInstance(el);
+          if (existing) existing.dispose();
+
+          // When called from inside an already-open modal (e.g. the BOM edit
+          // modal), skip creating a second backdrop — Bootstrap 5 does not
+          // support nested modals natively and the extra backdrop causes a
+          // focus-trap / static-backdrop conflict that freezes the page.
+          // Excludes `el` itself so a second confirmAction firing while this
+          // same confirm modal is still mid-fade-out from a prior one isn't
+          // mistaken for "another" modal being open (see safeModalShow's
+          // matching fix for why self-detection here is the wrong signal).
+          const isNested = Array.from(document.querySelectorAll('.modal.show')).some(m => m !== el);
+          new bootstrap.Modal(el, { backdrop: isNested ? false : true, keyboard: !isNested }).show();
+        },
+
+        setFieldValues(fields) {
+          Object.entries(fields).forEach(([id, val]) => {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+          });
+        },
+
+        removeRow(buttonEl) {
+          const row = buttonEl?.closest('tr');
+          const tbody = buttonEl?.closest('tbody');
+          if (row && tbody && $$('tr', tbody).length > 1) {
+            row.remove();
+          }
+        },
+
+        updateVendorContact(vendorName) {
+          const contactEl = document.getElementById('formContact');
+          if (!contactEl) return;
+          const vendor = (App.State.globalVendors || []).find(
+            v => App.Utils.sameText(v.name, vendorName) && v.contact
+          );
+          if (vendor) {
+            contactEl.value = vendor.contact;
+            return;
+          }
+          const match = App.State.globalPOs.find(
+            po => App.Utils.sameText(po.vendor, vendorName) && po.contact
+          );
+          contactEl.value = match?.contact || '';
+        },
+
+        filterTable(tbodyId, inputId) {
+          const input = document.getElementById(inputId);
+          const tbody = document.getElementById(tbodyId);
+          if (!input || !tbody) return;
+          const term = input.value.toLowerCase().trim();
+          const rows = tbody.querySelectorAll('tr');
+          rows.forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = term === '' || text.includes(term) ? '' : 'none';
+          });
+        },
+
+        // Renders a "Showing X-Y of Z" label + Bootstrap pagination control into containerId.
+        // actionName is the data-action value dispatched by the delegated click handler.
+        renderPagination(containerId, totalItems, currentPage, rowsPerPage, actionName, label = 'Records') {
+          const container = document.getElementById(containerId);
+          if (!container) return;
+
+          if (!totalItems) {
+            container.innerHTML = '';
+            return;
+          }
+
+          const totalPages = Math.ceil(totalItems / rowsPerPage);
+          const startItem = (currentPage - 1) * rowsPerPage + 1;
+          const endItem = Math.min(currentPage * rowsPerPage, totalItems);
+
+          let html = `<span class="text-secondary fw-bold">Showing ${startItem}–${endItem} of ${totalItems} ${label}</span>`;
+
+          if (totalPages > 1) {
+            html += `<ul class="pagination pagination-sm mb-0 shadow-sm">
+            <li class="page-item ${currentPage === 1 ? 'disabled' : ''}">
+              <button class="page-link text-dark" data-action="${actionName}" data-page="${currentPage - 1}">Prev</button>
+            </li>`;
+
+            let ellipsisLeft = false;
+            let ellipsisRight = false;
+
+            for (let i = 1; i <= totalPages; i++) {
+              if (
+                i === 1 ||
+                i === totalPages ||
+                (i >= currentPage - 1 && i <= currentPage + 1)
+              ) {
+                const active = currentPage === i;
+                html += `<li class="page-item ${active ? 'active' : ''}">
+                <button class="page-link ${active ? 'bg-info border-info text-dark' : 'text-dark'}"
+                        data-action="${actionName}" data-page="${i}">${i}</button>
+              </li>`;
+              } else if (currentPage > i && !ellipsisLeft) {
+                html +=
+                  '<li class="page-item disabled"><span class="page-link text-muted">…</span></li>';
+                ellipsisLeft = true;
+              } else if (i > currentPage && !ellipsisRight && totalPages > i) {
+                html +=
+                  '<li class="page-item disabled"><span class="page-link text-muted">…</span></li>';
+                ellipsisRight = true;
+              }
+            }
+
+            html += `<li class="page-item ${currentPage === totalPages ? 'disabled' : ''}">
+            <button class="page-link text-dark" data-action="${actionName}" data-page="${currentPage + 1}">Next</button>
+          </li></ul>`;
+          }
+
+          container.innerHTML = html;
+        },
+
+        // Clamps a requested page number to a valid range for the given item count.
+        clampPage(page, totalItems, rowsPerPage) {
+          const totalPages = Math.max(1, Math.ceil(totalItems / rowsPerPage));
+          return Math.max(1, Math.min(totalPages, toNumber(page, 1)));
+        },
+
+        // Case/whitespace-insensitive equality for name-like fields (item,
+        // vendor, contractor, color, model, process type, client names,
+        // sizes, etc.) — "SEAT", "seat" and "Seat" must all resolve to the
+        // same record wherever the app looks one up by name, not just where
+        // it happens to already lowercase both sides. Use this instead of
+        // === any time two user-typed/stored strings are compared for
+        // "is this the same real-world thing", as opposed to programmatic
+        // IDs/enums (status, sourceType, colorGroup) which stay as-typed.
+        sameText(a, b) {
+          return String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
+        },
+
+        // Keyword search: splits the search term on whitespace and checks that every
+        // resulting keyword appears somewhere in the haystack, regardless of order.
+        matchesKeywords(haystack, term) {
+          const keywords = String(term || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+          if (!keywords.length) return true;
+          const text = String(haystack || '').toLowerCase();
+          return keywords.every(kw => text.includes(kw));
+        },
+
+        // Select2 matcher using keyword search — pass as `matcher:` in any Select2 config
+        // to replace the default substring match with multi-word keyword matching.
+        select2Matcher(params, data) {
+          if (!params.term) return data;
+          return App.Utils.matchesKeywords(data.text, params.term) ? data : null;
+        },
+
+        // Sizes that actually exist for a given item name in Item Master, so PO/Bill
+        // size pickers can be filtered to valid sizes for the item just entered
+        // (e.g. a "Handle" used only in 14"/16" cycles shouldn't offer every size
+        // in the system). Returns [] if the name doesn't match any known item.
+        getSizesForItemName(name) {
+          const nameLower = String(name || '').trim().toLowerCase();
+          if (!nameLower) return [];
+          const sizes = new Set();
+          (App.State.globalItems || []).forEach(item => {
+            if (String(item.name || '').trim().toLowerCase() === nameLower && item.size) {
+              sizes.add(item.size);
+            }
+          });
+          return [...sizes];
+        },
+
+        // Every distinct, non-blank Size value across Item Master, sorted —
+        // reused as the Output Size choices on Production's Colors-to-Produce
+        // checklist (no separate Size Master; Item Master is already the
+        // source of truth for size values in this app).
+        getAllDistinctSizes() {
+          const sizes = new Set();
+          (App.State.globalItems || []).forEach(item => {
+            if (item.size) sizes.add(item.size);
+          });
+          return [...sizes].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        },
+
+        // Fixed bicycle-size categories a Process's Output Item Name may embed
+        // (e.g. "Painted Frame Ford 14 inch D/Gaddi"). Used to group/filter the
+        // Production form's Process picker by size — Output Item Name is the
+        // only place size is recorded on a Process, so it's matched as a
+        // substring rather than read from a dedicated column.
+        PROCESS_SIZE_LIST: ['12 inch', '14 inch', '16 inch', '20 inch', '24 inch', '26 inch'],
+
+        // Returns the size token found in text (e.g. a Process's Output Item
+        // Name), or 'General' if none of PROCESS_SIZE_LIST appears in it.
+        getSizeFromOutputItemName(text) {
+          const lower = String(text || '').toLowerCase();
+          return this.PROCESS_SIZE_LIST.find(s => lower.includes(s)) || 'General';
+        },
+
+        // Returns the Model Master name found in text (e.g. a Process's Output
+        // Item Name), or 'General' if none of the current models appears in it.
+        // Models are read live from App.State.globalModels (not a fixed list
+        // like PROCESS_SIZE_LIST) since new models can be added in Model Master
+        // at any time. Longest name first, so a multi-word model (e.g. "Eagle
+        // Pro") wins over a shorter one that's also a substring of it (e.g.
+        // "Eagle") — mirrors module_tags.js's _matchProcessTypeInName, which
+        // hit the same ambiguity for Process Type matching. Without this, a
+        // process misclassified under the shorter model silently disappears
+        // from the Production form's Process dropdown once the correct
+        // (longer) model is selected.
+        getModelFromOutputItemName(text) {
+          const lower = String(text || '').toLowerCase();
+          const models = [...(App.State.globalModels || [])].sort((a, b) => String(b.name || '').length - String(a.name || '').length);
+          const match = models.find(m => m.name && lower.includes(String(m.name).toLowerCase()));
+          return match ? match.name : 'General';
+        },
+
+        // Auto-selects a <select>'s only remaining real option (any option
+        // besides a blank-value placeholder like "Choose a Process...") once
+        // filtering/cascading has narrowed it down to exactly one choice —
+        // saves a redundant click on every filtered/cascading picker in the
+        // app (Production's Size/Model/Process Type/Process chain, Warehouse
+        // Opening's Process/Color, BOM Process Group imports, Dispatch's
+        // Client/Order pickers, etc.). Never overrides a value the select
+        // already holds (a preserved prior selection, or an Edit-mode
+        // prefill), and intentionally does NOT dispatch a 'change' event —
+        // callers that need to cascade into a dependent dropdown read
+        // select.value right after calling this and pass it along
+        // themselves, so programmatic prefill flows that populate a select
+        // directly (without going through a user-driven handler) are
+        // unaffected. Returns true if it changed the value.
+        autoSelectOnlyOption(selectEl) {
+          if (!selectEl || selectEl.value) return false;
+          const realOptions = Array.from(selectEl.options).filter(o => o.value !== '');
+          if (realOptions.length !== 1) return false;
+          selectEl.value = realOptions[0].value;
+          if (window.jQuery?.fn?.select2 && window.jQuery(selectEl).data('select2'))
+            window.jQuery(selectEl).trigger('change.select2');
+          return true;
+        },
+
+        // Filters a row's per-row size <datalist> to the sizes valid for the entered
+        // item name, falling back to the full size list for unrecognized item names
+        // (so registering a brand-new item via PO/Bill still works). Auto-fills the
+        // size input when only one valid size exists.
+        applyDependentSizeList(nameInput, sizeListSelector) {
+          const row = nameInput.closest('tr');
+          if (!row) return;
+          const sizeInput = row.querySelector(sizeListSelector);
+          const datalist = row.querySelector('datalist.row-size-list');
+          if (!sizeInput || !datalist) return;
+
+          const name = nameInput.value.trim();
+          let sizes = App.Utils.getSizesForItemName(name);
+          if (!sizes.length) {
+            sizes = [...new Set((App.State.globalItems || []).map(i => i.size).filter(Boolean))];
+          }
+
+          datalist.innerHTML = sizes.map(s => `<option value="${escapeHtml(s)}">`).join('');
+          if (sizes.length === 1 && !sizeInput.value.trim()) sizeInput.value = sizes[0];
+        },
+
+        // Defaults a PO/Bill row's Unit field to the matched item's Purchase
+        // Unit (e.g. 'Gross') so the market-quoted unit is pre-selected
+        // instead of the generic 'Pcs' placeholder every row starts with.
+        // Only overwrites when the field still holds that generic default —
+        // never clobbers a unit the user already picked deliberately.
+        // `triggerEl` may be the row's name OR size field — the row's own
+        // name/size inputs are always looked up fresh via the selectors.
+        applyDefaultPurchaseUnit(triggerEl, nameSelector, sizeSelector, unitSelector) {
+          const row = triggerEl.closest('tr');
+          if (!row) return;
+          const unitInput = row.querySelector(unitSelector);
+          const nameInput = row.querySelector(nameSelector);
+          if (!unitInput || !nameInput) return;
+
+          const name = nameInput.value.trim();
+          const sizeInput = row.querySelector(sizeSelector);
+          const size = sizeInput ? sizeInput.value.trim() : '';
+          if (!name) return;
+
+          const item = (App.State.globalItems || []).find(i =>
+            String(i.name || '').trim().toLowerCase() === name.toLowerCase() &&
+            String(i.size || '').trim().toLowerCase() === size.toLowerCase()
+          );
+          if (!item) return;
+
+          const purchaseUnit = item.purchaseUnit || item.baseUnit || 'Pcs';
+          const current = unitInput.value.trim();
+          if (!current || current === 'Pcs') {
+            unitInput.value = purchaseUnit;
+          }
+        },
+
+        // Aggregates outstanding (ordered - billed) quantity per item (name+size)
+        // across all open POs, so Item Master / Item Ledger / search can all share
+        // one source of truth instead of recomputing this per call site.
+        // Returns a Map keyed by "name|size" (lowercased) -> { qty, poNumbers: Set }.
+        getPendingByItem() {
+          const map = new Map();
+          (App.State.globalPOs || []).forEach(po => {
+            (po.items || []).forEach(line => {
+              const name = String(line.name || '').trim();
+              if (!name) return;
+              const size = String(line.size || '').trim();
+              // Base-unit qty, not the raw entered qty — a PO ordered in one
+              // purchase unit (e.g. "Gross") and billed in another (e.g.
+              // "Pcs") must be compared in the same unit, exactly like the
+              // server's own _aggregateBilledBaseQtyByPo/suggestPoAllocations
+              // reconciliation (module_bill.js/module_po.js) already does.
+              const ordered = Number(line.baseQty) || 0;
+              if (ordered <= 0) return;
+
+              const billed = App.Bill._getBilledQty(po.poNumber, name, size, line.narration);
+              const pending = ordered - billed;
+              if (pending <= 0.0001) return;
+
+              const key = `${name.toLowerCase()}|${size.toLowerCase()}`;
+              const entry = map.get(key) || { qty: 0, poNumbers: new Set() };
+              entry.qty += pending;
+              entry.poNumbers.add(String(po.poNumber));
+              map.set(key, entry);
+            });
+          });
+          return map;
+        }
+      },
+
+
+      // ── Navigation ───────────────────────────────────────────────
+      Navigation: {
+        showTab(id) {
+          $$('.tab-content').forEach(tab => {
+            tab.style.display = tab.id === id ? 'block' : 'none';
+          });
+
+          $$('#mainTabs .nav-link').forEach(btn => btn.classList.remove('active'));
+          document.getElementById(`btn-${id}`)?.classList.add('active');
+
+          if (typeof App.Unit !== 'undefined') App.Unit.ensureLoaded();
+          if (typeof App.Dashboard !== 'undefined') App.Dashboard.stopAutoRefresh();
+          if (id === 'dashboardTab' && typeof App.Dashboard !== 'undefined') {
+            App.Dashboard.loadData();
+            App.Dashboard.startAutoRefresh();
+          }
+          if (id === 'poLedger') App.PO.loadData();
+          if (id === 'billLedger') App.Bill.loadData();
+          if (id === 'returnLedger' && typeof App.Return !== 'undefined') App.Return.loadData();
+          if (id === 'itemMaster') App.Item.loadData();
+          if (id === 'vendorMaster' && typeof App.Vendor !== 'undefined') App.Vendor.loadData();
+          if (id === 'stockTab' && typeof App.Stock !== 'undefined') App.Stock.loadData();
+          if (id === 'productsTab' && typeof App.Products !== 'undefined') App.Products.enterTab();
+          if (id === 'contractorsTab' && typeof App.Contractor !== 'undefined') App.Contractor.loadData();
+          if (id === 'productionTab' && typeof App.Production !== 'undefined') App.Production.loadData();
+          if (id === 'dispatchTab' && typeof App.Dispatch !== 'undefined') App.Dispatch.enterTab();
+          if (id === 'clientsTab' && typeof App.Client !== 'undefined') App.Client.enterTab();
+        }
+      },
+
+
+      // ── Logo Management ──────────────────────────────────────────
+      Logo: {
+        async load() {
+          try {
+            const res = await Api.call('getLogo');
+            if (res?.success && res.data) {
+              App.companyLogo = res.data;
+              App.Print.injectLogo();
+              this._updateHeaderUI(res.data);
+            }
+          } catch (e) {
+            console.warn('[Logo] Failed to load saved logo:', e);
+          }
+        },
+
+        upload(file) {
+          if (!file || !file.type.startsWith('image/')) {
+            App.Utils.showToast('Please select an image file.', true);
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+              // Compress to max 300px wide, JPEG 0.75 to keep chunks small
+              const MAX_W = 300;
+              const scale = Math.min(1, MAX_W / img.width);
+              const canvas = document.createElement('canvas');
+              canvas.width = Math.round(img.width * scale);
+              canvas.height = Math.round(img.height * scale);
+              canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+              const dataUrl = canvas.toDataURL('image/png');
+
+              // Split into 8000-char chunks (safely under the 9KB property limit)
+              const CHUNK = 8000;
+              const chunks = [];
+              for (let i = 0; i < dataUrl.length; i += CHUNK) chunks.push(dataUrl.slice(i, i + CHUNK));
+
+              Api.call('saveLogo', chunks)
+                .then(res => {
+                  if (res?.success) {
+                    App.companyLogo = dataUrl;
+                    App.Print.injectLogo();
+                    this._updateHeaderUI(dataUrl);
+                    App.Utils.showToast('Logo saved — all print templates updated.');
+                  } else {
+                    App.Utils.showToast(res?.message || 'Failed to save logo.', true);
+                  }
+                })
+                .catch(err => App.Utils.showToast(err.message || 'Failed to save logo.', true));
+            };
+            img.src = e.target.result;
+          };
+          reader.readAsDataURL(file);
+        },
+
+        clear() {
+          Api.call('clearLogo')
+            .then(res => {
+              if (res?.success) {
+                App.companyLogo = null;
+                App.Print.injectLogo();
+                this._updateHeaderUI(null);
+                App.Utils.showToast('Logo removed.');
+              } else {
+                App.Utils.showToast(res?.message || 'Failed to remove logo.', true);
+              }
+            })
+            .catch(err => App.Utils.showToast(err.message || 'Failed to remove logo.', true));
+        },
+
+        _updateHeaderUI(dataUrl) {
+          const container = document.getElementById('brand-icon-container');
+          const svg = document.getElementById('brand-icon-svg');
+          const logoImg = document.getElementById('brand-icon-logo');
+          const clearBtn = document.getElementById('logo-clear-btn');
+
+          if (dataUrl) {
+            if (svg) svg.style.display = 'none';
+            if (logoImg) { logoImg.src = dataUrl; logoImg.style.display = 'block'; }
+            if (container) container.style.background = 'transparent';
+          } else {
+            if (svg) svg.style.display = '';
+            if (logoImg) { logoImg.src = ''; logoImg.style.display = 'none'; }
+            if (container) container.style.background = 'linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%)';
+          }
+
+          if (clearBtn) clearBtn.style.display = dataUrl ? 'inline-flex' : 'none';
+        }
+      },
+
+
+      async Init() {
+        // Load persisted company logo (non-blocking, best-effort)
+        this.Logo.load();
+
+        // Only load data needed for the default tab (Dashboard, plus PO for its
+        // shared form dropdowns) up front. Bill, Stock, BOM, Production are
+        // deferred until the user first clicks their tab (Navigation.showTab
+        // already triggers loadData on each tab visit).
+        const labels = ['PO', 'Item'];
+        const promises = [
+          this.PO.loadData(),
+          this.Item.loadData()
+        ];
+
+        if (this.Dashboard) {
+          labels.push('Dashboard');
+          promises.push(this.Dashboard.loadData());
+          this.Dashboard.startAutoRefresh();
+        }
+
+        if (this.Vendor) {
+          labels.push('Vendor');
+          promises.push(this.Vendor.loadData());
+        }
+
+        if (this.Unit) {
+          labels.push('Unit');
+          promises.push(this.Unit.ensureLoaded());
+        }
+
+        const results = await Promise.allSettled(promises);
+
+        // A rejected initial load used to only log to the console -- invisible
+        // to the user, who'd see an empty tab with no indication anything was
+        // ever wrong until they happened to click in and hit the SAME failure
+        // again. Mark the corresponding nav tab (where one exists) with a
+        // warning icon + explanatory tooltip instead, and summarize every
+        // failure in one toast, so a rejected module degrades visibly instead
+        // of silently -- the tab stays clickable so the user can retry.
+        const TAB_IDS = { PO: 'poLedger', Item: 'itemMaster', Dashboard: 'dashboardTab', Vendor: 'vendorMaster' };
+        const failedLabels = [];
+
+        results.forEach((r, i) => {
+          if (r.status !== 'rejected') return;
+          const label = labels[i];
+          failedLabels.push(label);
+          console.error(`[Init] ${label} data load failed:`, r.reason);
+
+          const tabId = TAB_IDS[label];
+          const navBtn = tabId && document.getElementById('btn-' + tabId);
+          if (navBtn && !navBtn.querySelector('.init-load-failed-icon')) {
+            const warnIcon = document.createElement('i');
+            warnIcon.className = 'bi bi-exclamation-triangle-fill text-warning init-load-failed-icon';
+            warnIcon.style.marginLeft = '4px';
+            navBtn.appendChild(warnIcon);
+            navBtn.title = `${navBtn.title} — failed to load on startup, click to retry`;
+          }
+        });
+
+        if (failedLabels.length > 0) {
+          this.Utils.showToast(
+            `Some data failed to load on startup: ${failedLabels.join(', ')}. Affected tabs are marked with a warning icon -- click one to retry.`,
+            true
+          );
+        }
+
+        if (this.PO && this.PO.populateVendorSelects) {
+          this.PO.populateVendorSelects();
+        }
+      }
+    };
+
+    window.App = App;
+
+    // ================================================================
+    // EVENT BINDING
+    // ================================================================
+    function bindEnhancements() {
+      // Logo upload input handler
+      const logoInput = document.getElementById('logo-upload-input');
+      if (logoInput) {
+        logoInput.addEventListener('change', function () {
+          if (this.files?.[0]) {
+            App.Logo.upload(this.files[0]);
+            this.value = ''; // reset so the same file can be re-selected
+          }
+        });
+      }
+
+      // Print Preview Toggles Preference & Dynamic Eye Icons
+      const ratesToggle = document.getElementById('printWithRates');
+      const totalToggle = document.getElementById('printWithTotal');
+
+      // Safe localStorage accessor to prevent DOMException crashes in Google Apps Script iframes
+      const safeGetItem = (key) => {
+        try {
+          return localStorage.getItem(key);
+        } catch (e) {
+          console.warn('[Storage] localStorage.getItem access denied:', e);
+          return null;
+        }
+      };
+
+      const safeSetItem = (key, val) => {
+        try {
+          localStorage.setItem(key, val);
+        } catch (e) {
+          console.warn('[Storage] localStorage.setItem access denied:', e);
+        }
+      };
+
+      function updateToggleIcon(toggle) {
+        if (!toggle) return;
+        const icon = toggle.nextElementSibling?.querySelector('.bi');
+        if (icon) {
+          if (toggle.checked) {
+            icon.classList.remove('bi-eye-slash');
+            icon.classList.add('bi-eye');
+          } else {
+            icon.classList.remove('bi-eye');
+            icon.classList.add('bi-eye-slash');
+          }
+        }
+      }
+
+      if (ratesToggle) {
+        const savedRates = safeGetItem('printWithRates');
+        ratesToggle.checked = savedRates === null ? true : (savedRates === 'true');
+        updateToggleIcon(ratesToggle);
+
+        ratesToggle.addEventListener('change', () => {
+          safeSetItem('printWithRates', ratesToggle.checked);
+          updateToggleIcon(ratesToggle);
+        });
+      }
+
+      if (totalToggle) {
+        const savedTotal = safeGetItem('printWithTotal');
+        totalToggle.checked = savedTotal === null ? true : (savedTotal === 'true');
+        updateToggleIcon(totalToggle);
+
+        totalToggle.addEventListener('change', () => {
+          safeSetItem('printWithTotal', totalToggle.checked);
+          updateToggleIcon(totalToggle);
+        });
+      }
+
+      // Scroll to the selected item whenever any Select2 dropdown opens.
+      // setTimeout(0) defers until after Select2 finishes rendering the list.
+      window.jQuery?.(document).on('select2:open', () => {
+        setTimeout(() => {
+          const selected = document.querySelector(
+            '.select2-results__option--selected, .select2-results__option--highlighted'
+          );
+          if (selected) selected.scrollIntoView({ block: 'nearest' });
+        }, 0);
+      });
+
+      // Select2 tagging for vendor dropdowns
+      if (
+        typeof window.jQuery !== 'undefined' &&
+        typeof window.jQuery.fn?.select2 !== 'undefined'
+      ) {
+        window.jQuery('.select2-vendor').each(function () {
+          const $el = window.jQuery(this);
+          const parentModal = $el.closest('.modal');
+          const select2Options = {
+            tags: true,
+            placeholder: 'Select or type new vendor…',
+            width: '100%',
+            matcher: App.Utils.select2Matcher
+          };
+          if (parentModal.length) {
+            select2Options.dropdownParent = parentModal;
+          }
+          $el.select2(select2Options).on('change', function () {
+            App.Utils.updateVendorContact(this.value);
+            if (this.id === 'billVendor') {
+              App.Bill.updateBillContactForVendor(this.value);
+              App.Bill.refreshRowNarrationLists();
+              $$('#billItemsBody tr').forEach(row => {
+                const priceInput = $('.b-item-price', row);
+                if (priceInput && (!Number(priceInput.value) || Number(priceInput.value) === 0)) {
+                  App.Bill.autoFillRate(row);
+                }
+              });
+              App.Bill.runAutoMatch();
+            }
+            if (this.id === 'formVendor') {
+              $$('#itemsBody tr').forEach(row => App.PO.autoFillRate(row));
+            }
+            if (this.id === 'returnVendor') {
+              App.Return.updateReturnContactForVendor(this.value);
+            }
+          });
+        });
+      }
+
+      document
+        .getElementById('billVendor')
+        ?.addEventListener('change', function () {
+          App.Bill.updateBillContactForVendor(this.value);
+          App.Bill.refreshRowNarrationLists();
+          $$('#billItemsBody tr').forEach(row => {
+            const priceInput = $('.b-item-price', row);
+            if (priceInput && (!Number(priceInput.value) || Number(priceInput.value) === 0)) {
+              App.Bill.autoFillRate(row);
+            }
+          });
+          App.Bill.runAutoMatch();
+        });
+
+      document
+        .getElementById('returnVendor')
+        ?.addEventListener('change', function () {
+          App.Return.updateReturnContactForVendor(this.value);
+        });
+
+      // Filter each return row's size choices to sizes valid for the entered item name.
+      document.addEventListener('input', e => {
+        if (e.target.matches('#returnItemsBody .r-item-name')) {
+          App.Utils.applyDependentSizeList(e.target, '.r-item-size');
+        }
+        if (e.target.matches('#wastageItemsBody .w-item-name')) {
+          App.Utils.applyDependentSizeList(e.target, '.w-item-size');
+        }
+        if (e.target.matches('#issueItemsBody .i-item-name')) {
+          App.Utils.applyDependentSizeList(e.target, '.i-item-size');
+        }
+      });
+
+      document
+        .getElementById('billDateInput')
+        ?.addEventListener('change', () => App.Bill.runAutoMatch());
+
+      document
+        .getElementById('formVendor')
+        ?.addEventListener('change', function () {
+          $$('#itemsBody tr').forEach(row => App.PO.autoFillRate(row));
+        });
+
+      // Delegated events for dynamic item input changes in the receive bill form
+      let billAutoMatchTimer = null;
+      const handleBillItemFieldChange = e => {
+        if (e.target.matches('.b-item-name')) {
+          App.Utils.applyDependentSizeList(e.target, '.b-item-size');
+        }
+
+        if (e.target.matches('.b-item-name, .b-item-size')) {
+          App.Utils.applyDefaultPurchaseUnit(e.target, '.b-item-name', '.b-item-size', '.item-unit');
+          const row = e.target.closest('tr');
+          if (row) App.Bill.refreshNarrationList(row);
+        }
+
+        if (e.target.matches('.b-item-name, .b-item-size, .b-item-narration')) {
+          const row = e.target.closest('tr');
+          if (row) {
+            App.Bill.autoFillRate(row);
+          }
+        }
+
+        // Re-suggest PO matches when a DIRECT row's identifying fields settle.
+        // Only for rows the user hasn't explicitly linked (manually or via
+        // the PO multiselect) — see App.Bill.runAutoMatch().
+        if (e.target.matches('.b-item-name, .b-item-size, .b-item-narration, .b-item-qty, .b-item-price')) {
+          const row = e.target.closest('tr');
+          if (row && (row.dataset.po || 'DIRECT') === 'DIRECT' && row.dataset.autoMatched !== 'manual') {
+            clearTimeout(billAutoMatchTimer);
+            billAutoMatchTimer = setTimeout(() => App.Bill.runAutoMatch(), 400);
+          }
+        }
+      };
+      document.addEventListener('input', handleBillItemFieldChange);
+      document.addEventListener('change', handleBillItemFieldChange);
+
+      // Click-to-override the suggested/DIRECT PO badge on any bill row.
+      document.addEventListener('click', e => {
+        const badge = e.target.closest('.po-badge');
+        if (!badge) return;
+        const row = badge.closest('tr');
+        if (row) App.Bill.openPoOverride(row);
+      });
+
+      // Resolve a "rate differs from PO" notice: keep the bill rate (default,
+      // just dismisses the notice) or adopt the PO's quoted rate instead.
+      document.addEventListener('click', e => {
+        const link = e.target.closest('[data-action="use-po-rate"], [data-action="keep-bill-rate"]');
+        if (!link) return;
+        e.preventDefault();
+        const row = link.closest('tr');
+        if (row) App.Bill.resolveRateConflict(row, link.dataset.action);
+      });
+
+      document
+        .getElementById('formVendor')
+        ?.addEventListener('change', function () {
+          App.Utils.updateVendorContact(this.value);
+        });
+
+      document
+        .getElementById('confirmActionBtn')
+        ?.addEventListener('click', () => {
+          safeModalHide('confirmModal');
+          const cb = App.State.confirmCallback;
+          App.State.confirmCallback = null;
+          if (typeof cb === 'function') cb();
+        });
+
+      // M-13: Null-out stale confirm callback when modal is dismissed without action
+      const confirmModalEl = document.getElementById('confirmModal');
+      if (confirmModalEl) {
+        confirmModalEl.addEventListener('hidden.bs.modal', () => {
+          App.State.confirmCallback = null;
+        });
+      }
+
+      // Clicking anywhere in an Item Master row (other than checkboxes/buttons)
+      // opens that item's ledger. Interactive controls inside the row keep their
+      // own dedicated [data-action] handler below, so bail out if the click landed
+      // on one of those.
+      document.addEventListener('click', e => {
+        const row = e.target.closest('#itemTableBody tr.item-row-clickable');
+        if (!row) return;
+        if (e.target.closest('input, button, a, [data-action]')) return;
+
+        App.Item.openLedgerModal(
+          decodeURIComponent(row.dataset.rowName || ''),
+          decodeURIComponent(row.dataset.rowSize || '')
+        );
+      });
+
+      // Delegated click handler
+      document.addEventListener('click', e => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+
+        switch (btn.dataset.action) {
+          case 'show-tab':
+            App.Navigation.showTab(btn.dataset.tab);
+            break;
+          case 'remove-row':
+            App.Utils.removeRow(btn);
+            break;
+          case 'po-print':
+            App.PO.print(toNumber(btn.dataset.index));
+            break;
+          case 'po-edit':
+            App.PO.openEditModal(toNumber(btn.dataset.index));
+            break;
+          case 'po-pdf':
+            App.PO.downloadPDF(toNumber(btn.dataset.index));
+            break;
+          case 'po-delete':
+            App.PO.delete(btn.dataset.poNumber);
+            break;
+          case 'bill-print':
+            App.Bill.print(toNumber(btn.dataset.index));
+            break;
+          case 'bill-edit':
+            App.Bill.openEditModal(toNumber(btn.dataset.index));
+            break;
+          case 'bill-delete':
+            App.Bill.delete(btn.dataset.vendor, btn.dataset.billNumber);
+            break;
+          case 'return-print':
+            App.Return.print(toNumber(btn.dataset.index));
+            break;
+          case 'return-edit':
+            App.Return.openEditModal(toNumber(btn.dataset.index));
+            break;
+          case 'return-delete':
+            App.Return.delete(btn.dataset.returnNumber);
+            break;
+          case 'return-page':
+            App.Return.changePage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'wastage-page':
+            App.Wastage.changePage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'item-ledger':
+            App.Item.openLedgerModal(
+              decodeURIComponent(btn.dataset.name || ''),
+              decodeURIComponent(btn.dataset.size || '')
+            );
+            break;
+          case 'item-edit':
+            App.Item.openEditModal(
+              decodeURIComponent(btn.dataset.name || ''),
+              decodeURIComponent(btn.dataset.size || '')
+            );
+            break;
+          case 'item-delete':
+            App.Item.delete(
+              decodeURIComponent(btn.dataset.name || ''),
+              decodeURIComponent(btn.dataset.size || '')
+            );
+            break;
+          case 'item-page':
+            App.Item.changePage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'po-page':
+            App.PO.changePage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'bill-page':
+            App.Bill.changePage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'vendor-page':
+            App.Vendor.changePage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'stock-page':
+            App.Stock.changePage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'bom-page':
+            App.BOM.changePage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'production-page':
+            App.Production.changePage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'client-page':
+            App.Client.changeClientsPage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'order-page':
+            App.Client.changeOrdersPage(toNumber(btn.dataset.page, 1));
+            break;
+          case 'dispatch-page':
+            App.Dispatch.changeDispatchPage(toNumber(btn.dataset.page, 1));
+            break;
+        }
+      });
+
+      // Rate comparison on item-name or item-size blur (capture phase)
+      document.addEventListener(
+        'blur',
+        e => {
+          if (e.target.matches('.item-name') || e.target.matches('.item-size'))
+            App.PO.checkRate(e.target);
+        },
+        true
+      );
+
+      // Filter each PO row's size choices to sizes valid for the entered item name,
+      // suggest a Narration from this item + size's PO/Bill history, default the
+      // row's Unit to that item's Purchase Unit, and auto-fill the Unit Price
+      // from the last known rate for this item + size + vendor.
+      document.addEventListener('input', e => {
+        if (e.target.matches('#itemsBody .item-name')) {
+          App.Utils.applyDependentSizeList(e.target, '.item-size');
+          App.Utils.applyDefaultPurchaseUnit(e.target, '.item-name', '.item-size', '.item-unit');
+          App.PO.refreshNarrationList(e.target.closest('tr'));
+          App.PO.autoFillRate(e.target.closest('tr'));
+        }
+        if (e.target.matches('#itemsBody .item-size')) {
+          App.Utils.applyDefaultPurchaseUnit(e.target, '.item-name', '.item-size', '.item-unit');
+          App.PO.refreshNarrationList(e.target.closest('tr'));
+          App.PO.autoFillRate(e.target.closest('tr'));
+        }
+        if (e.target.matches('#itemsBody .item-narration')) {
+          App.PO.autoFillRate(e.target.closest('tr'));
+        }
+      });
+
+      // Form submit handlers
+      document.getElementById('poForm')?.addEventListener('submit', async e => {
+        e.preventDefault();
+        const { formData, items } = App.PO.serializeForm();
+
+        // Select2 hides the native <select>, so the browser's "required"
+        // validation never fires on the vendor field — check it explicitly.
+        if (!String(formData.vendor || '').trim()) {
+          App.Utils.showToast('Please select a vendor.', true);
+          return;
+        }
+        if (!items.length) {
+          App.Utils.showToast(
+            'Please add at least one item to the PO.',
+            true
+          );
+          return;
+        }
+
+        const isEdit = !!formData.existingPoNumber;
+        setDisabled('poSubmitBtn', true);
+        try {
+          const res = await Api.call('savePO', formData);
+          if (res?.success) await App.PO.loadData();
+          if (res?.success && !isEdit) {
+            App.PO.openCreateModal();
+          } else {
+            safeModalHide('editPoModal');
+          }
+          App.Utils.showToast(res?.message || 'PO saved.', !res?.success);
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to save PO.', true);
+        } finally {
+          setDisabled('poSubmitBtn', false);
+        }
+      });
+
+      document
+        .getElementById('billForm')
+        ?.addEventListener('submit', e => {
+          e.preventDefault();
+          const { formData, items } = App.Bill.serializeForm();
+          if (!items.length) {
+            App.Utils.showToast(
+              'Please add at least one item to the bill.',
+              true
+            );
+            return;
+          }
+
+          const isEdit = !!formData.existingBillNumber;
+          const confirmMsg = isEdit
+            ? `Are you sure you want to update Bill #${formData.billNumber} and automatically update the Items and Vendors master lists?`
+            : `Are you sure you want to record Bill #${formData.billNumber} and automatically update the Items and Vendors master lists?`;
+
+          App.Utils.confirmAction(
+            confirmMsg,
+            async () => {
+              setDisabled('billSubmitBtn', true);
+              try {
+                const res = await Api.call('saveBill', formData);
+                if (res?.success) {
+                  await App.Bill.loadData();
+                }
+                if (res?.success && !isEdit) {
+                  App.Bill.openReceiveModal();
+                } else {
+                  safeModalHide('receiveBillModal');
+                }
+                App.Utils.showToast(res?.message || 'Bill saved.', !res?.success);
+              } catch (err) {
+                App.Utils.showToast(err.message || 'Failed to save bill.', true);
+              } finally {
+                setDisabled('billSubmitBtn', false);
+              }
+            }
+          );
+        });
+
+      document
+        .getElementById('returnForm')
+        ?.addEventListener('submit', e => {
+          e.preventDefault();
+          const { formData, items } = App.Return.serializeForm();
+          if (!items.length) {
+            App.Utils.showToast(
+              'Please add at least one item to the return.',
+              true
+            );
+            return;
+          }
+
+          const isEdit = !!formData.existingReturnNumber;
+          const confirmMsg = isEdit
+            ? `Are you sure you want to update Return #${formData.returnNumber}?`
+            : `Are you sure you want to record Return #${formData.returnNumber}? This will be debited from Stock.`;
+
+          App.Utils.confirmAction(
+            confirmMsg,
+            async () => {
+              setDisabled('returnSubmitBtn', true);
+              try {
+                const res = await Api.call('saveReturn', formData);
+                if (res?.success) {
+                  await App.Return.loadData();
+                }
+                if (res?.success && !isEdit) {
+                  App.Return.openReturnModal();
+                } else {
+                  safeModalHide('returnGoodsModal');
+                }
+                App.Utils.showToast(res?.message || 'Return saved.', !res?.success);
+              } catch (err) {
+                App.Utils.showToast(err.message || 'Failed to save return.', true);
+              } finally {
+                setDisabled('returnSubmitBtn', false);
+              }
+            }
+          );
+        });
+
+      document
+        .getElementById('wastageForm')
+        ?.addEventListener('submit', e => App.Wastage.submit(e));
+
+      document
+        .getElementById('issueStockForm')
+        ?.addEventListener('submit', e => App.Issue.submit(e));
+
+      document
+        .getElementById('itemForm')
+        ?.addEventListener('submit', async e => {
+          e.preventDefault();
+          const { formData } = App.Item.serializeForm();
+
+          setDisabled('itemSubmitBtn', true);
+          try {
+            const res = await Api.call('saveItem', formData);
+
+            if (!res?.success && res?.data?.mergeable) {
+              const { targetName, targetSize, targetStock, targetVendorCount } = res.data;
+              App.Utils.confirmAction(
+                `Item "${targetName}" (size: ${targetSize || '-'}) already exists with ` +
+                `Stock: ${targetStock} and ${targetVendorCount} vendor(s) mapped. ` +
+                `Merge this edit into it? Stock will combine and this edit's vendors will be added.`,
+                async () => {
+                  setDisabled('itemSubmitBtn', true);
+                  try {
+                    const mergeRes = await Api.call('mergeItemEdit', formData);
+                    safeModalHide('itemModal');
+                    App.Utils.showToast(mergeRes?.message || 'Item merged.', !mergeRes?.success);
+                    if (mergeRes?.success) {
+                      App.State.globalStock = [];
+                      await App.Item.loadData();
+                    }
+                  } catch (mergeErr) {
+                    App.Utils.showToast(mergeErr.message || 'Failed to merge item.', true);
+                  } finally {
+                    setDisabled('itemSubmitBtn', false);
+                  }
+                }
+              );
+              return;
+            }
+
+            const isEdit = !!formData.originalName;
+            if (res?.success) {
+              const thresholdInput = document.getElementById('formItemThreshold');
+              const thresholdVal = thresholdInput ? parseInt(thresholdInput.value, 10) : NaN;
+              if (!isNaN(thresholdVal) && thresholdVal >= 0) {
+                const savedName = formData.itemName?.trim() || '';
+                const savedSize = formData.itemSize?.trim() || '';
+                try {
+                  await Api.call('updateThreshold', savedName, savedSize, thresholdVal);
+                } catch (_) {}
+              }
+              App.State.globalStock = [];
+              await App.Item.loadData();
+            }
+            if (res?.success && !isEdit) {
+              App.Item.openCreateModal();
+            } else {
+              safeModalHide('itemModal');
+            }
+            App.Utils.showToast(res?.message || 'Item saved.', !res?.success);
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to save item.', true);
+          } finally {
+            setDisabled('itemSubmitBtn', false);
+          }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      bindEnhancements();
+      await App.Init();
+    });
+</script>

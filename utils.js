@@ -24,6 +24,53 @@
  */
 
 // ─────────────────────────────────────────────────────────────────────────
+// LOGGING
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Log.info/warn/error — the one path for server-side diagnostics.
+ *
+ * console.log/warn/error output is NOT reliably visible for anonymous or
+ * triggered web-app executions in the Apps Script Executions panel;
+ * Logger.log always is. Logger.log() is also NOT a drop-in replacement on
+ * its own: it treats its first argument as a printf-style format string and
+ * only substitutes further arguments into "%s" placeholders — a second raw
+ * argument (e.g. a caught error object) is silently dropped if the message
+ * has none, unlike console.*, which space-joins and stringifies every
+ * argument it's given. Log.* mimics that console.* multi-arg behavior
+ * (stringifying Error objects to their stack, objects to JSON) and adds a
+ * severity prefix, then writes through Logger.log so nothing is lost.
+ *
+ * The existing convention of a leading "[FunctionName]" tag inside the
+ * message itself (unchanged by this migration) doubles as the module/call
+ * -site tag — Log.* does not add a second one.
+ *
+ * @example
+ * Log.error('[sanitizeString] Error sanitizing field "x":', error);
+ * // -> Logger.log: "[ERROR] [sanitizeString] Error sanitizing field \"x\": <stack>"
+ */
+const Log = {
+  _stringifyArg(arg) {
+    // Duck-typed stack check (not just `instanceof Error`) so an error
+    // thrown across a different execution context still prints its stack
+    // instead of falling through to an uninformative "{}".
+    if (arg && typeof arg === 'object' && (arg instanceof Error || typeof arg.stack === 'string')) {
+      return arg.stack || arg.message || String(arg);
+    }
+    if (arg !== null && typeof arg === 'object') {
+      try { return JSON.stringify(arg); } catch (e) { return String(arg); }
+    }
+    return String(arg);
+  },
+  _write(level, args) {
+    Logger.log(`[${level}] ${args.map(a => Log._stringifyArg(a)).join(' ')}`);
+  },
+  info(...args) { Log._write('INFO', args); },
+  warn(...args) { Log._write('WARN', args); },
+  error(...args) { Log._write('ERROR', args); }
+};
+
+// ─────────────────────────────────────────────────────────────────────────
 // SHEET OPERATIONS
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -54,7 +101,7 @@ function getSheet(sheetName) {
     return sheet;
   } catch (error) {
     logAction('ERROR', 'getSheet', sheetName, error.message, 'ERROR');
-    console.error(`[getSheet] Error fetching sheet "${sheetName}":`, error);
+    Log.error(`[getSheet] Error fetching sheet "${sheetName}":`, error);
     throw error;
   }
 }
@@ -81,7 +128,7 @@ function getRange(sheet, row, column, numRows = 1, numColumns = 1) {
 
     return sheet.getRange(row, column, numRows, numColumns);
   } catch (error) {
-    console.error('[getRange] Error:', error);
+    Log.error('[getRange] Error:', error);
     throw error;
   }
 }
@@ -95,7 +142,7 @@ function getLastRowWithData(sheet) {
   try {
     return sheet.getLastRow() || 0;
   } catch (error) {
-    console.error('[getLastRowWithData] Error:', error);
+    Log.error('[getLastRowWithData] Error:', error);
     return 0;
   }
 }
@@ -109,7 +156,7 @@ function getLastColumnWithData(sheet) {
   try {
     return sheet.getLastColumn() || 0;
   } catch (error) {
-    console.error('[getLastColumnWithData] Error:', error);
+    Log.error('[getLastColumnWithData] Error:', error);
     return 0;
   }
 }
@@ -223,7 +270,7 @@ function getDriveImageBase64(fileId) {
     Logger.log(`[getDriveImageBase64] Successfully cached file ${fileId}`);
     return dataUri;
   } catch (error) {
-    console.error(`[getDriveImageBase64] Error fetching/encoding image from Drive [ID: ${fileId}]:`, error);
+    Log.error(`[getDriveImageBase64] Error fetching/encoding image from Drive [ID: ${fileId}]:`, error);
     logAction('ERROR', 'getDriveImageBase64', fileId, error.message, 'ERROR');
     return null;
   }
@@ -241,7 +288,7 @@ function clearImageCache(fileId) {
     cache.remove(fileId);
     Logger.log(`[clearImageCache] Cache cleared for file ${fileId}`);
   } catch (error) {
-    console.error('[clearImageCache] Error clearing cache:', error);
+    Log.error('[clearImageCache] Error clearing cache:', error);
   }
 }
 
@@ -255,7 +302,7 @@ function clearAllImageCache() {
     cache.removeAll();
     Logger.log('[clearAllImageCache] All cache cleared');
   } catch (error) {
-    console.error('[clearAllImageCache] Error clearing all cache:', error);
+    Log.error('[clearAllImageCache] Error clearing all cache:', error);
   }
 }
 
@@ -417,7 +464,7 @@ function deleteRowsById(targetId, sheet, startRow, colIndex) {
 
     return rowsDeleted;
   } catch (error) {
-    console.error('[deleteRowsById] Error:', error);
+    Log.error('[deleteRowsById] Error:', error);
     logAction('ERROR', 'deleteRowsById', targetId, error.message, 'ERROR');
     throw error;
   }
@@ -522,7 +569,7 @@ function sanitizeString(value, fieldLabel = '') {
 
     return s;
   } catch (error) {
-    console.error(`[sanitizeString] Error sanitizing field "${fieldLabel}":`, error);
+    Log.error(`[sanitizeString] Error sanitizing field "${fieldLabel}":`, error);
     return '';
   }
 }
@@ -607,7 +654,7 @@ function validateNumber(value, min = -Infinity, max = Infinity) {
     if (num < min || num > max) return 0;
     return num;
   } catch (error) {
-    console.error('[validateNumber] Error:', error);
+    Log.error('[validateNumber] Error:', error);
     return 0;
   }
 }
@@ -775,7 +822,7 @@ function handleError(functionName, error, context = '') {
   const errorMessage = error instanceof Error ? error.message : String(error);
   const fullMessage = `[${functionName}] ${errorMessage}${context ? ` (${context})` : ''}`;
 
-  console.error(fullMessage);
+  Log.error(fullMessage);
   logAction('ERROR', functionName, context, errorMessage, 'ERROR');
 
   return buildErrorResponse(ERROR_CODES.UNKNOWN_ERROR, fullMessage);

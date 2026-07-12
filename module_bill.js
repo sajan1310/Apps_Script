@@ -162,7 +162,7 @@ function _computeLineTotals(qty, price, gstRatePct) {
       lineTotal: parseFloat(lineTotal.toFixed(2))
     };
   } catch (error) {
-    console.error('[_computeLineTotals] Error:', error.message);
+    Log.error('[_computeLineTotals] Error:', error.message);
     throw error;
   }
 }
@@ -304,7 +304,7 @@ function getBillData() {
 
         // Log unparseable dates for debugging
         if (!parsedDate && rawDate) {
-          console.warn(
+          Log.warn(
             `[getBillData] Unparseable date in bill #${billNum}: "${rawDate}"`
           );
         }
@@ -372,7 +372,7 @@ function getBillData() {
 
     return buildResponse(true, sorted);
   } catch (error) {
-    console.error('[getBillData] Error:', error.message);
+    Log.error('[getBillData] Error:', error.message);
     logAction('ERROR', 'getBillData', 'module_bill', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to load bills: ' + error.message);
   }
@@ -686,7 +686,7 @@ function saveBill(formData) {
 
     return buildResponse(true, { billNumber }, msg);
   } catch (error) {
-    console.error('[saveBill] Error:', error.message);
+    Log.error('[saveBill] Error:', error.message);
     logAction('ERROR', 'saveBill', formData.billNumber, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save bill: ' + error.message);
   } finally {
@@ -765,7 +765,7 @@ function deleteBill(vendor, billNumber) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[deleteBill] Error:', error.message);
+    Log.error('[deleteBill] Error:', error.message);
     logAction('ERROR', 'deleteBill', billNumber, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete bill: ' + error.message);
   } finally {
@@ -832,7 +832,7 @@ function deleteBillsBulk(bills) {
 
     return buildResponse(true, { deletedKeys }, msg);
   } catch (error) {
-    console.error('[deleteBillsBulk] Error:', error.message);
+    Log.error('[deleteBillsBulk] Error:', error.message);
     logAction('ERROR', 'deleteBillsBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete bills: ' + error.message);
   } finally {

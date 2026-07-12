@@ -208,6 +208,25 @@ makeBill(po4, [{ name: 'Widget', size: '', narration: '', qty: 10, unit: 'Pcs', 
 const po5 = makePO([{ name: 'Spoke', size: '110mm', narration: '', qty: 2, unit: 'Gross', price: 99 }]);
 makeBill(po5, [{ name: 'Spoke', size: '110mm', narration: '', qty: 144, unit: 'Pcs', price: 99 / 144 }]);
 
+// PO-6: a LEGACY row written directly to the sheet (bypassing savePO, which
+// always populates BASE_QTY/BASE_RATE) to simulate a PO created before those
+// columns existed -- BASE_QTY (col 16) and BASE_RATE (col 17) left genuinely
+// blank, same as a real pre-existing sheet row. Ordered 8 Pcs of Widget
+// (already its own base unit), billed 3 -> must still produce sane,
+// non-NaN receivedQty/pendingQty and a correct status, not leak the billed
+// BASE unit qty unconverted into a mismatched entered unit.
+const po6 = 'PO-LEGACY-1';
+{
+  const row = poSheet.getLastRow() + 1;
+  const cols = [
+    po6, new Date(2026, 0, 1), 'Acme Vendor', '', 'Widget', '', '', 8, 'Pcs',
+    '', '', 50, 400, 8, ''
+  ];
+  cols.forEach((v, i) => poSheet._set(row, i + 1, v));
+  // BASE_QTY (16) / BASE_RATE (17) intentionally left unset (blank cell).
+}
+makeBill(po6, [{ name: 'Widget', size: '', narration: '', qty: 3, unit: 'Pcs', price: 50 }]);
+
 const data = getPOData().data;
 const byNum = Object.fromEntries(data.map(po => [po.poNumber, po]));
 
@@ -232,6 +251,13 @@ assert(approx(po4Spoke.pendingQty, 1), 'PO-4 Spoke line untouched (pendingQty 1 
 assert(byNum[po5].status === 'Partially Received', `PO-5 (cross-unit partial) status = 'Partially Received' (got ${byNum[po5].status})`);
 assert(approx(byNum[po5].items[0].receivedQty, 1), `PO-5 receivedQty converts 144 Pcs back to 1 Gross (got ${byNum[po5].items[0].receivedQty})`);
 assert(approx(byNum[po5].items[0].pendingQty, 1), `PO-5 pendingQty = 1 Gross remaining (got ${byNum[po5].items[0].pendingQty})`);
+
+assert(!!byNum[po6], 'PO-6 (legacy row, blank BASE_QTY) found via getPOData');
+assert(byNum[po6].status === 'Partially Received', `PO-6 status = 'Partially Received' (got ${byNum[po6].status})`);
+const po6Item = byNum[po6] && byNum[po6].items[0];
+assert(!!po6Item && Number.isFinite(po6Item.receivedQty), `PO-6 receivedQty is a finite number, not NaN (got ${po6Item && po6Item.receivedQty})`);
+assert(!!po6Item && approx(po6Item.receivedQty, 3), `PO-6 receivedQty = 3 (entered unit treated as base unit) (got ${po6Item && po6Item.receivedQty})`);
+assert(!!po6Item && approx(po6Item.pendingQty, 5), `PO-6 pendingQty = 5 (got ${po6Item && po6Item.pendingQty})`);
 
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);
 process.exitCode = failures === 0 ? 0 : 1;

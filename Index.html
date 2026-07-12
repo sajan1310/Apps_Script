@@ -477,9 +477,32 @@
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        CUSTOM APPLICATION LOGIC
-       Injected from script.html
+       Formerly one 1MB+ Script.html monolith (a single script block);
+       split into per-module includes, one script block each. Script_Core
+       MUST load first -- it defines Api/escapeHtml/the shared helpers/
+       App.State/Selection/Utils/Navigation/Logo/Init and does
+       `window.App = App`, then every later file just extends that same
+       App object (`App.PO = {...}`, etc.). Classic, non-module script
+       blocks on one page share a single top-level scope, so this works
+       without any explicit passing between files -- order is the only
+       thing that matters. Verified byte-for-byte equivalent to the
+       original monolith (every function's source compared, see git
+       history for the split).
        ═══════════════════════════════════════════════════════════════════════ -->
-  <?!= include('Script'); ?>
+  <?!= include('Script_Core'); ?>
+  <?!= include('Script_Dashboard'); ?>
+  <?!= include('Script_Print'); ?>
+  <?!= include('Script_PO'); ?>
+  <?!= include('Script_Bill'); ?>
+  <?!= include('Script_Items'); ?>
+  <?!= include('Script_Stock'); ?>
+  <?!= include('Script_Production'); ?>
+  <?!= include('Script_Process'); ?>
+  <?!= include('Script_Dispatch'); ?>
+  <?!= include('Script_Return'); ?>
+  <?!= include('Script_Vendors'); ?>
+  <?!= include('Script_Clients'); ?>
+  <?!= include('Script_Contractors'); ?>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        PAGE LOAD INITIALIZATION

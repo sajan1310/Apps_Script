@@ -65,13 +65,13 @@ function _getSpreadsheetTimeZone() {
     const tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
     if (tz) return tz;
   } catch (error) {
-    console.warn('[_getSpreadsheetTimeZone] Error getting spreadsheet TZ:', error);
+    Log.warn('[_getSpreadsheetTimeZone] Error getting spreadsheet TZ:', error);
   }
 
   try {
     return Session.getScriptTimeZone();
   } catch (error) {
-    console.warn('[_getSpreadsheetTimeZone] Error getting script TZ:', error);
+    Log.warn('[_getSpreadsheetTimeZone] Error getting script TZ:', error);
     return 'UTC';  // Final fallback
   }
 }
@@ -834,11 +834,20 @@ function _attachPoStatus(po, billedMap) {
   items.forEach(function(item) {
     const key = _buildPoLineKey(po.poNumber, item.name, item.size, item.narration);
     const billedBaseQty = billedMap[key] || 0;
-    const orderedBaseQty = item.baseQty || item.qty || 0;
+
+    // Legacy rows (created before the BASE_QTY column existed) or a unit
+    // config that never populated it arrive with baseQty 0/missing. Rather
+    // than let billed base qty (in the TRUE base unit) leak straight into
+    // receivedQty (expressed in THIS line's entered unit) via two separately
+    // -computed fallbacks that could drift apart, explicitly assume the
+    // entered unit IS this line's base unit in that case (1:1) — one value,
+    // used for both the completion check and the qty conversion below.
+    const effectiveBaseQty = item.baseQty > 0 ? item.baseQty : item.qty;
+    const orderedBaseQty = effectiveBaseQty || 0;
 
     // Convert the billed base qty back to the unit this line was entered in,
     // using the same qty/baseQty ratio the line itself was converted with.
-    const ratio = item.baseQty > 0 ? item.qty / item.baseQty : 1;
+    const ratio = effectiveBaseQty > 0 ? item.qty / effectiveBaseQty : 1;
     item.receivedQty = billedBaseQty * ratio;
     item.pendingQty = Math.max(0, item.qty - item.receivedQty);
 
@@ -995,7 +1004,7 @@ function getPOData(preloadedBilledMap) {
       try {
         billedMap = _aggregateBilledBaseQtyByPo();
       } catch (e) {
-        console.warn('[getPOData] Could not aggregate billed qty for status:', e.message);
+        Log.warn('[getPOData] Could not aggregate billed qty for status:', e.message);
       }
     }
     Object.values(poMap).forEach(function(po) {
@@ -1011,7 +1020,7 @@ function getPOData(preloadedBilledMap) {
 
     return buildResponse(true, sorted);
   } catch (error) {
-    console.error('[getPOData] Error:', error.message);
+    Log.error('[getPOData] Error:', error.message);
     logAction('ERROR', 'getPOData', 'module_po', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to load PO data: ' + error.message);
   }
@@ -1199,7 +1208,7 @@ function suggestPoAllocations(vendor, items, billDate) {
 
     return buildResponse(true, results);
   } catch (error) {
-    console.error('[suggestPoAllocations] Error:', error.message);
+    Log.error('[suggestPoAllocations] Error:', error.message);
     return buildResponse(true, []); // fail open — never block bill entry on a suggestion error
   }
 }
@@ -1301,7 +1310,7 @@ function savePO(formData) {
       }
     } else if (isEdit) {
       // Edit without new date: preserve existing date
-      console.warn(
+      Log.warn(
         `[savePO] Edit for PO #${oldPoNum} received empty poDate. Preserving existing date.`
       );
 
@@ -1355,7 +1364,7 @@ function savePO(formData) {
 
     return buildResponse(true, { poNumber: poNumToSave }, msg);
   } catch (error) {
-    console.error('[savePO] Error:', error.message);
+    Log.error('[savePO] Error:', error.message);
     logAction('ERROR', 'savePO', formData.poNumber, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save PO: ' + error.message);
   } finally {
@@ -1431,7 +1440,7 @@ function deletePO(poNumber) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[deletePO] Error:', error.message);
+    Log.error('[deletePO] Error:', error.message);
 
     const errorMsg = 'Failed to delete PO: ' + error.message;
     logAction('ERROR', 'deletePO', poNumber, errorMsg, 'ERROR');
@@ -1489,7 +1498,7 @@ function deletePOsBulk(poNumbers) {
 
     return buildResponse(true, { deletedIds }, msg);
   } catch (error) {
-    console.error('[deletePOsBulk] Error:', error.message);
+    Log.error('[deletePOsBulk] Error:', error.message);
     logAction('ERROR', 'deletePOsBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete POs: ' + error.message);
   } finally {

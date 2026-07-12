@@ -300,7 +300,7 @@ function _parseVendorPairsFromRow(row) {
  * @example
  * // Find existing item
  * const result = findItemRow(sheet, 'Brake Pads', 'Standard');
- * if (result.matchRow !== -1) console.log('Found at row', result.matchRow);
+ * if (result.matchRow !== -1) Log.info('Found at row', result.matchRow);
  * 
  * // Check for duplicates when renaming (exclude original row)
  * const result = findItemRow(sheet, newName, newSize, existingRow);
@@ -433,7 +433,7 @@ function _writeItemHeaders(sheet, maxVendorCount) {
       `[_writeItemHeaders] Created headers for ${maxVendorCount} vendor slots`
     );
   } catch (error) {
-    console.error('[_writeItemHeaders] Error:', error.message);
+    Log.error('[_writeItemHeaders] Error:', error.message);
     throw error;
   }
 }
@@ -602,7 +602,7 @@ function _getItemsDataUncached() {
 
         // Warn if rate is non-numeric but not empty
         if (rateRaw !== '' && rateRaw !== null && isNaN(rate)) {
-          console.warn(
+          Log.warn(
             `[getItemsData] Non-numeric rate "${rateRaw}" for vendor "${vendorName}" ` +
             `on item "${name}" (sheet row ${i + 2}) — skipped.`
           );
@@ -615,7 +615,7 @@ function _getItemsDataUncached() {
           try {
             ratePerBaseUnit = convertRateToBaseUnit(rate, purchaseUnit, itemRecord, unitsMap);
           } catch (e) {
-            console.warn(
+            Log.warn(
               `[getItemsData] Could not convert rate for vendor "${vendorName}" on item ` +
               `"${name}" (sheet row ${i + 2}): ${e.message}`
             );
@@ -637,7 +637,7 @@ function _getItemsDataUncached() {
 
     return buildResponse(true, items);
   } catch (error) {
-    console.error('[getItemsData] Error:', error.message);
+    Log.error('[getItemsData] Error:', error.message);
     logAction('ERROR', 'getItemsData', 'module_items', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to load items: ' + error.message);
   }
@@ -914,7 +914,7 @@ function saveItem(formData) {
 
     return buildResponse(true, { name: newName, size: newSize }, msg);
   } catch (error) {
-    console.error('[saveItem] Error:', error.message);
+    Log.error('[saveItem] Error:', error.message);
     logAction('ERROR', 'saveItem', formData.itemName, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save item: ' + error.message);
   } finally {
@@ -1073,7 +1073,7 @@ function deleteItem(name, size) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[deleteItem] Error:', error.message);
+    Log.error('[deleteItem] Error:', error.message);
     logAction('ERROR', 'deleteItem', name, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete item: ' + error.message);
   } finally {
@@ -1116,7 +1116,7 @@ function _propagateItemIdentityChange(oldName, oldSize, newName, newSize) {
     try {
       fn(oldName, oldSize, newName, newSize);
     } catch (error) {
-      console.error(`[_propagateItemIdentityChange] ${label} backfill failed:`, error.message);
+      Log.error(`[_propagateItemIdentityChange] ${label} backfill failed:`, error.message);
       logAction(
         'ERROR',
         '_propagateItemIdentityChange',
@@ -1286,7 +1286,7 @@ function mergeItemEdit(formData) {
 
     return buildResponse(true, { name: newName, size: newSize }, msg);
   } catch (error) {
-    console.error('[mergeItemEdit] Error:', error.message);
+    Log.error('[mergeItemEdit] Error:', error.message);
     logAction('ERROR', 'mergeItemEdit', formData.itemName, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to merge items: ' + error.message);
   } finally {
@@ -1450,7 +1450,7 @@ function autoMergeDuplicateItems() {
     logAction('MERGE', APP_CONFIG.SHEETS.ITEMS, 'AUTO_MERGE_DUPLICATES', msg, 'SUCCESS');
     return buildResponse(true, { groupsMerged, rowsRemoved }, msg);
   } catch (error) {
-    console.error('[autoMergeDuplicateItems] Error:', error.message);
+    Log.error('[autoMergeDuplicateItems] Error:', error.message);
     logAction('ERROR', 'autoMergeDuplicateItems', 'AUTO_MERGE_DUPLICATES', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to auto-merge duplicate items: ' + error.message);
   } finally {
@@ -1576,7 +1576,7 @@ function mergeSelectedItems(items) {
     logAction('MERGE', APP_CONFIG.SHEETS.ITEMS, `${sourceName}|${sourceSize} -> ${targetName}|${targetSize}`, msg, 'SUCCESS');
     return buildResponse(true, { from: sourceName, to: targetName, size: targetSize }, msg);
   } catch (error) {
-    console.error('[mergeSelectedItems] Error:', error.message);
+    Log.error('[mergeSelectedItems] Error:', error.message);
     logAction('ERROR', 'mergeSelectedItems', JSON.stringify(items), error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to merge selected items: ' + error.message);
   } finally {
@@ -1675,7 +1675,7 @@ function autoFixTruncatedDuplicateItems() {
     logAction('MERGE', APP_CONFIG.SHEETS.ITEMS, 'AUTO_FIX_TRUNCATED_NAMES', msg + ' ' + JSON.stringify(fixed), 'SUCCESS');
     return buildResponse(true, { fixed, skippedAmbiguous }, msg);
   } catch (error) {
-    console.error('[autoFixTruncatedDuplicateItems] Error:', error.message);
+    Log.error('[autoFixTruncatedDuplicateItems] Error:', error.message);
     logAction('ERROR', 'autoFixTruncatedDuplicateItems', 'AUTO_FIX_TRUNCATED_NAMES', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to auto-fix truncated duplicate items: ' + error.message);
   } finally {
@@ -1780,7 +1780,7 @@ function initItemsSheet(vendorSlots = DEFAULT_VENDOR_SLOTS) {
       `Items sheet initialized successfully.`
     );
   } catch (error) {
-    console.error('[initItemsSheet] Error:', error.message);
+    Log.error('[initItemsSheet] Error:', error.message);
     return buildResponse(
       false,
       null,
@@ -1841,7 +1841,7 @@ function migrateItemsMasterUnitColumns() {
     logAction('UPDATE', APP_CONFIG.SHEETS.ITEMS, 'MIGRATE_UNIT_COLUMNS', msg, 'SUCCESS');
     return buildResponse(true, { migrated: true, rowsUpdated: Math.max(lastRow - 1, 0) }, msg);
   } catch (error) {
-    console.error('[migrateItemsMasterUnitColumns] Error:', error.message);
+    Log.error('[migrateItemsMasterUnitColumns] Error:', error.message);
     logAction('ERROR', 'migrateItemsMasterUnitColumns', 'MIGRATE_UNIT_COLUMNS', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to migrate Items Master unit columns: ' + error.message);
   }
@@ -1970,7 +1970,7 @@ function importItemsFromStock() {
     logAction('CREATE', APP_CONFIG.SHEETS.ITEMS, 'SYNC_FROM_STOCK', msg, 'SUCCESS');
     return buildResponse(true, { added, skipped }, msg);
   } catch (error) {
-    console.error('[importItemsFromStock] Error:', error.message);
+    Log.error('[importItemsFromStock] Error:', error.message);
     logAction('ERROR', 'importItemsFromStock', 'SYNC_FROM_STOCK', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to import from Stock: ' + error.message);
   } finally {
@@ -2028,7 +2028,7 @@ function renameItemMasterForStockEdit(oldName, oldSize, newName, newSize) {
       'SUCCESS'
     );
   } catch (error) {
-    console.error('[renameItemMasterForStockEdit] Error:', error.message);
+    Log.error('[renameItemMasterForStockEdit] Error:', error.message);
     logAction('ERROR', 'renameItemMasterForStockEdit', `${oldName}|${oldSize} -> ${newName}|${newSize}`, error.message, 'ERROR');
   } finally {
     lock.releaseLock();
@@ -2062,7 +2062,7 @@ function keepOrphanItem(name, size, initialStock) {
     logAction('CREATE', APP_CONFIG.SHEETS.STOCK, validName, msg, 'SUCCESS');
     return buildResponse(true, { name: validName, size: validSize, initialStock: qty }, msg);
   } catch (error) {
-    console.error('[keepOrphanItem] Error:', error.message);
+    Log.error('[keepOrphanItem] Error:', error.message);
     logAction('ERROR', 'keepOrphanItem', name, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to create Stock row: ' + error.message);
   } finally {
@@ -2098,7 +2098,7 @@ function keepOrphanItemsBulk(items) {
     logAction('CREATE', APP_CONFIG.SHEETS.STOCK, 'BULK', msg, 'SUCCESS');
     return buildResponse(true, { created }, msg);
   } catch (error) {
-    console.error('[keepOrphanItemsBulk] Error:', error.message);
+    Log.error('[keepOrphanItemsBulk] Error:', error.message);
     logAction('ERROR', 'keepOrphanItemsBulk', '', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to create Stock rows: ' + error.message);
   } finally {
@@ -2152,7 +2152,7 @@ function syncAllItemsToStock() {
     SpreadsheetApp.flush();
     return buildResponse(true, { checked }, 'Stock sheet synced with Item Master.');
   } catch (error) {
-    console.error('[syncAllItemsToStock] Error:', error.message);
+    Log.error('[syncAllItemsToStock] Error:', error.message);
     return buildResponse(false, null, 'Failed to sync stock: ' + error.message);
   } finally {
     lock.releaseLock();
@@ -2230,7 +2230,7 @@ function deleteItemsBulk(items) {
     logAction('BULK_DELETE', APP_CONFIG.SHEETS.ITEMS, 'multiple', msg, 'SUCCESS');
     return buildResponse(true, { deletedItems, skipped }, msg);
   } catch (error) {
-    console.error('[deleteItemsBulk] Error:', error.message);
+    Log.error('[deleteItemsBulk] Error:', error.message);
     logAction('ERROR', 'deleteItemsBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete items: ' + error.message);
   } finally {

@@ -58,7 +58,7 @@ function initStockSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Stock sheet initialized successfully.');
   } catch (error) {
-    console.error('[initStockSheet] Error:', error.message);
+    Log.error('[initStockSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Stock sheet: ' + error.message);
   }
 }
@@ -230,7 +230,7 @@ function _getBilledAndConsumedQtyMaps(ss) {
 function recalculateStock() {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(STOCK_LOCK_TIMEOUT_MS)) {
-    console.warn('[recalculateStock] Could not acquire lock. Skipping.');
+    Log.warn('[recalculateStock] Could not acquire lock. Skipping.');
     return;
   }
 
@@ -276,7 +276,7 @@ function recalculateStock() {
     SpreadsheetApp.flush();
     Logger.log('[recalculateStock] Successfully updated stock values.');
   } catch (error) {
-    console.error('[recalculateStock] Error:', error.message);
+    Log.error('[recalculateStock] Error:', error.message);
   } finally {
     lock.releaseLock();
   }
@@ -335,7 +335,7 @@ function getStockData() {
     
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getStockData] Error:', error.message);
+    Log.error('[getStockData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load stock data: ' + error.message);
   }
 }
@@ -386,7 +386,7 @@ function updateThreshold(itemName, size, threshold) {
     logAction('UPDATE', APP_CONFIG.SHEETS.STOCK, `${itemName} (${size})`, `Updated threshold to ${thresholdVal}`, 'SUCCESS');
     return buildResponse(true, null, 'Threshold updated successfully.');
   } catch (error) {
-    console.error('[updateThreshold] Error:', error.message);
+    Log.error('[updateThreshold] Error:', error.message);
     return buildResponse(false, null, 'Failed to update threshold: ' + error.message);
   } finally {
     lock.releaseLock();
@@ -436,7 +436,7 @@ function updateDeadStock(itemName, size, isDeadStock) {
       `Dead Stock marked as ${deadStockVal}`, 'SUCCESS');
     return buildResponse(true, { deadStock: deadStockVal }, 'Dead stock status updated.');
   } catch (error) {
-    console.error('[updateDeadStock] Error:', error.message);
+    Log.error('[updateDeadStock] Error:', error.message);
     return buildResponse(false, null, 'Failed to update dead stock status: ' + error.message);
   } finally {
     lock.releaseLock();
@@ -530,7 +530,7 @@ function adjustStockManually(itemName, size, newCurrentStock, reason) {
 
     return buildResponse(true, { oldCurrentStock, newCurrentStock: newStockVal }, 'Stock adjusted successfully.');
   } catch (error) {
-    console.error('[adjustStockManually] Error:', error.message);
+    Log.error('[adjustStockManually] Error:', error.message);
     logAction('ERROR', 'adjustStockManually', `${itemName} (${size})`, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to adjust stock: ' + error.message);
   } finally {
@@ -649,7 +649,7 @@ function importStockData(items) {
     logAction('CREATE', APP_CONFIG.SHEETS.STOCK, 'IMPORT', msg, 'SUCCESS');
     return buildResponse(true, { updatedCount, addedCount }, msg);
   } catch (error) {
-    console.error('[importStockData] Error:', error.message);
+    Log.error('[importStockData] Error:', error.message);
     logAction('ERROR', 'importStockData', 'IMPORT', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to import stock data: ' + error.message);
   } finally {
@@ -702,7 +702,7 @@ function getStockAdjustmentHistory() {
 
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getStockAdjustmentHistory] Error:', error.message);
+    Log.error('[getStockAdjustmentHistory] Error:', error.message);
     return buildResponse(false, null, 'Failed to load stock adjustment history: ' + error.message);
   }
 }
@@ -813,7 +813,7 @@ function syncStockForItem(action, payload) {
 
     SpreadsheetApp.flush();
   } catch (error) {
-    console.error('[syncStockForItem] Error:', error.message);
+    Log.error('[syncStockForItem] Error:', error.message);
     logAction('ERROR', 'syncStockForItem', JSON.stringify(payload), error.message, 'ERROR');
   }
 }
@@ -915,7 +915,7 @@ function backfillPoAndBillBaseQty() {
     logAction('UPDATE', 'PO_BILL', 'BACKFILL_BASE_QTY', msg, 'SUCCESS');
     return buildResponse(true, { poRowsUpdated, billRowsUpdated }, msg);
   } catch (error) {
-    console.error('[backfillPoAndBillBaseQty] Error:', error.message);
+    Log.error('[backfillPoAndBillBaseQty] Error:', error.message);
     logAction('ERROR', 'backfillPoAndBillBaseQty', 'BACKFILL_BASE_QTY', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to backfill Base Qty/Rate: ' + error.message);
   } finally {

@@ -48,7 +48,7 @@ function initIssueSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Issued Stock Log sheet initialized successfully.');
   } catch (error) {
-    console.error('[initIssueSheet] Error:', error.message);
+    Log.error('[initIssueSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Issued Stock Log sheet: ' + error.message);
   }
 }
@@ -149,7 +149,7 @@ function getIssueData() {
 
     return buildResponse(true, sorted);
   } catch (error) {
-    console.error('[getIssueData] Error:', error.message);
+    Log.error('[getIssueData] Error:', error.message);
     logAction('ERROR', 'getIssueData', 'module_issue', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to load issued stock records: ' + error.message);
   }
@@ -252,7 +252,7 @@ function saveIssueStock(formData) {
     logAction('CREATE', APP_CONFIG.SHEETS.ISSUE, issueId, `Items: ${items.length}`, 'SUCCESS');
     return buildResponse(true, { issueId }, `Stock issue ${issueId} logged successfully.`);
   } catch (error) {
-    console.error('[saveIssueStock] Error:', error.message);
+    Log.error('[saveIssueStock] Error:', error.message);
     logAction('ERROR', 'saveIssueStock', '', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save stock issue: ' + error.message);
   } finally {
@@ -300,7 +300,7 @@ function deleteIssueBulk(issueIds) {
 
     return buildResponse(true, { deletedIds }, msg);
   } catch (error) {
-    console.error('[deleteIssueBulk] Error:', error.message);
+    Log.error('[deleteIssueBulk] Error:', error.message);
     logAction('ERROR', 'deleteIssueBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete issued stock records: ' + error.message);
   } finally {

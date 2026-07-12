@@ -85,7 +85,7 @@ function getClientsData() {
 
     return buildResponse(true, clients);
   } catch (error) {
-    console.error('[getClientsData] Error:', error.message);
+    Log.error('[getClientsData] Error:', error.message);
     return buildResponse(false, null, "Failed to load clients: " + error.message);
   }
 }
@@ -340,7 +340,7 @@ function deleteClientsBulk(clientNames) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[deleteClientsBulk] Error:', error.message);
+    Log.error('[deleteClientsBulk] Error:', error.message);
     logAction('ERROR', 'deleteClientsBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete clients: ' + error.message);
   } finally {
@@ -384,7 +384,7 @@ function initClientOrdersSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Client Orders sheet initialized successfully.');
   } catch (error) {
-    console.error('[initClientOrdersSheet] Error:', error.message);
+    Log.error('[initClientOrdersSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Client Orders sheet: ' + error.message);
   }
 }
@@ -420,7 +420,7 @@ function getNextOrderNumber() {
 
     return 'ORD-' + (maxNum + 1);
   } catch (error) {
-    console.error('[getNextOrderNumber] Error:', error.message);
+    Log.error('[getNextOrderNumber] Error:', error.message);
     return 'ORD-1001';
   }
 }
@@ -487,7 +487,7 @@ function getClientOrdersData() {
 
     return buildResponse(true, orders);
   } catch (error) {
-    console.error('[getClientOrdersData] Error:', error.message);
+    Log.error('[getClientOrdersData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load PI / Estimates: ' + error.message);
   }
 }
@@ -683,7 +683,7 @@ function saveClientOrder(formData) {
 
     return buildResponse(true, { orderNumber: orderNumber }, successMsg);
   } catch (error) {
-    console.error('[saveClientOrder] Error:', error.message);
+    Log.error('[saveClientOrder] Error:', error.message);
     logAction('ERROR', 'saveClientOrder', formData.orderNumber || 'NEW', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save PI / Estimate: ' + error.message);
   } finally {
@@ -834,7 +834,7 @@ function deleteClientOrder(orderNumber) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[deleteClientOrder] Error:', error.message);
+    Log.error('[deleteClientOrder] Error:', error.message);
     logAction('ERROR', 'deleteClientOrder', orderNumber, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete PI / Estimate: ' + error.message);
   } finally {
@@ -903,7 +903,7 @@ function deleteClientOrdersBulk(orderNumbers) {
     // accomplished nothing and must not present as a green "success" toast.
     return buildResponse(toDelete.length > 0, { deletedIds, skipped: Array.from(inUseSet) }, msg);
   } catch (error) {
-    console.error('[deleteClientOrdersBulk] Error:', error.message);
+    Log.error('[deleteClientOrdersBulk] Error:', error.message);
     logAction('ERROR', 'deleteClientOrdersBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete PI / Estimates: ' + error.message);
   } finally {

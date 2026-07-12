@@ -1,0 +1,2140 @@
+<script>
+  'use strict';
+  // Script_Stock.html -- App.Unit, App.Color, App.Model, App.ProcessType, App.Stock
+
+    // ==========================================
+    // UNIT MASTER NAMESPACE
+    // ==========================================
+    App.State.globalUnits = [];
+
+    App.Unit = {
+      _loaded: false,
+
+      // Fetches the Unit Master once and caches it — called on every tab
+      // switch (cheap no-op once loaded) so the unitList datalist and the
+      // Item modal's Base/Purchase Unit fields always have data, without
+      // every caller needing to know whether it's the first load.
+      async ensureLoaded() {
+        if (this._loaded) return;
+        await this.loadData();
+      },
+
+      async loadData() {
+        const tbody = document.getElementById('unitTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-center p-3">Loading units...</td></tr>';
+
+        try {
+          const response = await Api.call('getUnitsData');
+          if (!response.success) {
+            App.Utils.showToast(response.message, true);
+            return;
+          }
+          App.State.globalUnits = response.data || [];
+          this._loaded = true;
+          this.populateDatalists();
+          this.renderTable();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load units', true);
+        }
+      },
+
+      populateDatalists() {
+        const unitNames = new Set();
+        const families = new Set();
+        App.State.globalUnits.forEach(u => {
+          if (u.unitName) unitNames.add(u.unitName);
+          if (u.family) families.add(u.family);
+        });
+
+        const fill = (id, values) => {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = [...values].map(v => `<option value="${escapeHtml(v)}">`).join('');
+        };
+
+        fill('unitList', unitNames);
+        fill('unitFamilyList', families);
+      },
+
+      renderTable() {
+        const tbody = document.getElementById('unitTableBody');
+        if (!tbody) return;
+
+        const searchEl = document.getElementById('unitMasterSearch');
+        const term = (searchEl?.value || '').toLowerCase().trim();
+        const units = [...App.State.globalUnits].sort((a, b) => a.unitName.localeCompare(b.unitName));
+        const rows = term
+          ? units.filter(u => App.Utils.matchesKeywords(`${u.unitName} ${u.family} ${u.remarks || ''}`, term))
+          : units;
+
+        let html = '';
+        rows.forEach(u => {
+          html += `<tr>
+            <td><strong>${escapeHtml(u.unitName)}</strong></td>
+            <td>${escapeHtml(u.family)}</td>
+            <td>${escapeHtml(String(u.factorToBase))}</td>
+            <td>${escapeHtml(u.remarks || '')}</td>
+            <td>
+              <button type="button" class="btn btn-sm btn-outline-dark" onclick="App.Unit.edit('${escapeHtml(u.unitName)}')"><i class="bi bi-pencil"></i></button>
+              <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Unit.delete('${escapeHtml(u.unitName)}')"><i class="bi bi-trash"></i></button>
+            </td>
+          </tr>`;
+        });
+        tbody.innerHTML = html || `<tr><td colspan="5" class="text-center text-muted p-3">${term ? 'No units match your search.' : 'No units defined yet.'}</td></tr>`;
+      },
+
+      openModal() {
+        this.resetForm();
+        const searchEl = document.getElementById('unitMasterSearch');
+        if (searchEl) searchEl.value = '';
+        this.ensureLoaded().then(() => this.renderTable());
+        safeModalShow('unitModal');
+      },
+
+      resetForm() {
+        const form = document.getElementById('unitForm');
+        if (form) form.reset();
+        document.getElementById('originalUnitName').value = '';
+        document.getElementById('unitFormTitle').textContent = 'Add Unit';
+      },
+
+      edit(unitName) {
+        const u = App.State.globalUnits.find(x => x.unitName === unitName);
+        if (!u) return;
+        document.getElementById('originalUnitName').value = u.unitName;
+        document.getElementById('formUnitName').value = u.unitName;
+        document.getElementById('formUnitFamily').value = u.family;
+        document.getElementById('formUnitFactor').value = u.factorToBase;
+        document.getElementById('formUnitRemarks').value = u.remarks || '';
+        document.getElementById('unitFormTitle').textContent = `Edit Unit: ${u.unitName}`;
+      },
+
+      async delete(unitName) {
+        App.Utils.confirmAction(`Delete unit "${unitName}"? Items already using it as a Base/Purchase Unit will keep the text, but it will no longer appear in suggestions.`, async () => {
+          try {
+            const res = await Api.call('deleteUnit', unitName);
+            App.Utils.showToast(res.message, !res.success);
+            if (res.success) this.loadData();
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to delete unit', true);
+          }
+        });
+      }
+    };
+
+    document.addEventListener('DOMContentLoaded', function () {
+      const unitForm = document.getElementById('unitForm');
+      if (unitForm) {
+        unitForm.onsubmit = async function (e) {
+          e.preventDefault();
+          const formData = Object.fromEntries(new FormData(this));
+          const submitBtn = document.getElementById('unitSubmitBtn');
+          if (submitBtn) submitBtn.disabled = true;
+          try {
+            const res = await Api.call('saveUnit', formData);
+            App.Utils.showToast(res.message, !res.success);
+            if (res.success) {
+              App.Unit.resetForm();
+              App.Unit.loadData();
+            }
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to save unit', true);
+          } finally {
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        };
+      }
+    });
+
+    // ==========================================
+    // COLOR MASTER NAMESPACE
+    // ==========================================
+    App.State.globalColors = [];
+
+    App.Color = {
+      _loaded: false,
+
+      // Fetches the Color Master once and caches it — called whenever a tab
+      // with a Color field (BOM, Production) is entered, so the colorList
+      // datalist always has data without every caller needing to know
+      // whether it's the first load.
+      async ensureLoaded() {
+        if (this._loaded) return;
+        await this.loadData();
+      },
+
+      async loadData() {
+        const tbody = document.getElementById('colorMasterTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-center p-3">Loading colors...</td></tr>';
+
+        try {
+          const response = await Api.call('getColors');
+          if (!response.success) {
+            App.Utils.showToast(response.message, true);
+            return;
+          }
+          App.State.globalColors = response.data || [];
+          this._loaded = true;
+          this.populateDatalist();
+          this.renderTable();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load colors', true);
+        }
+      },
+
+      populateDatalist() {
+        const el = document.getElementById('colorList');
+        if (el) el.innerHTML = App.State.globalColors.map(c => `<option value="${escapeHtml(c.name)}">`).join('');
+      },
+
+      renderTable() {
+        const tbody = document.getElementById('colorMasterTableBody');
+        if (!tbody) return;
+
+        const searchEl = document.getElementById('colorMasterSearch');
+        const term = (searchEl?.value || '').toLowerCase().trim();
+        const rows = term
+          ? App.State.globalColors.filter(c => App.Utils.matchesKeywords(`${c.name} ${c.remarks || ''}`, term))
+          : App.State.globalColors;
+
+        let html = '';
+        rows.forEach((c, i) => {
+          html += `<tr>
+            <td class="text-muted">${i + 1}</td>
+            <td><strong>${escapeHtml(c.name)}</strong></td>
+            <td>${escapeHtml(c.remarks || '')}</td>
+            <td>
+              <button type="button" class="btn btn-sm btn-outline-dark" onclick="App.Color.edit('${escapeHtml(c.name)}')"><i class="bi bi-pencil"></i></button>
+              <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Color.delete('${escapeHtml(c.name)}')"><i class="bi bi-trash"></i></button>
+            </td>
+          </tr>`;
+        });
+        tbody.innerHTML = html || `<tr><td colspan="4" class="text-center text-muted p-3">${term ? 'No colors match your search.' : 'No colors defined yet.'}</td></tr>`;
+      },
+
+      openModal() {
+        this.resetForm();
+        const searchEl = document.getElementById('colorMasterSearch');
+        if (searchEl) searchEl.value = '';
+        this.ensureLoaded().then(() => this.renderTable());
+        safeModalShow('colorMasterModal');
+      },
+
+      resetForm() {
+        const form = document.getElementById('colorMasterForm');
+        if (form) form.reset();
+        document.getElementById('originalColorName').value = '';
+        document.getElementById('colorMasterFormTitle').textContent = 'Add Color';
+      },
+
+      edit(name) {
+        const c = App.State.globalColors.find(x => App.Utils.sameText(x.name, name));
+        if (!c) return;
+        document.getElementById('originalColorName').value = c.name;
+        document.getElementById('formColorName').value = c.name;
+        document.getElementById('formColorRemarks').value = c.remarks || '';
+        document.getElementById('colorMasterFormTitle').textContent = `Edit Color: ${c.name}`;
+      },
+
+      async delete(name) {
+        App.Utils.confirmAction(`Delete color "${name}"? Components already tagged with it keep the text, but it will no longer appear in suggestions.`, async () => {
+          try {
+            const res = await Api.call('deleteColor', name);
+            App.Utils.showToast(res.message, !res.success);
+            if (res.success) this.loadData();
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to delete color', true);
+          }
+        });
+      },
+
+      // Scans Item Name/Narration/Specification on Items Master for
+      // hyphen-joined combinations of existing Color Master colors (e.g.
+      // "Red-White") not yet in Color Master, then asks before adding them.
+      async autoExtract() {
+        try {
+          const res = await Api.call('extractColorsFromItemMaster');
+          if (!res.success) {
+            App.Utils.showToast(res.message, true);
+            return;
+          }
+
+          const { newColors, scannedCount } = res.data;
+          if (!newColors.length) {
+            App.Utils.showToast(res.message || `Scanned ${scannedCount} item(s) — no new color combinations found.`);
+            return;
+          }
+
+          App.Utils.confirmAction(
+            `Found ${newColors.length} new color combination(s) in Item Master not yet in Color Master: ${newColors.join(', ')}. Add them now?`,
+            async () => {
+              try {
+                for (const name of newColors) {
+                  await Api.call('saveColor', { name });
+                }
+                App.Utils.showToast(`Added ${newColors.length} new color(s).`);
+                this.loadData();
+              } catch (err) {
+                App.Utils.showToast(err.message || 'Failed to add extracted colors', true);
+              }
+            }
+          );
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to scan Item Master for colors', true);
+        }
+      }
+    };
+
+    document.addEventListener('DOMContentLoaded', function () {
+      const colorForm = document.getElementById('colorMasterForm');
+      if (colorForm) {
+        colorForm.onsubmit = async function (e) {
+          e.preventDefault();
+          const formData = Object.fromEntries(new FormData(this));
+          const submitBtn = document.getElementById('colorMasterSubmitBtn');
+          if (submitBtn) submitBtn.disabled = true;
+          try {
+            const res = await Api.call('saveColor', formData);
+            App.Utils.showToast(res.message, !res.success);
+            if (res.success) {
+              App.Color.resetForm();
+              App.Color.loadData();
+            }
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to save color', true);
+          } finally {
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        };
+      }
+    });
+
+    // ==========================================
+    // MODEL MASTER NAMESPACE
+    // ==========================================
+    App.State.globalModels = [];
+
+    App.Model = {
+      _loaded: false,
+
+      // Fetches the Model Master once and caches it — called whenever the
+      // BOM tab is entered, so the modelList datalist on Product Name
+      // always has data without every caller needing to know whether it's
+      // the first load.
+      async ensureLoaded() {
+        if (this._loaded) return;
+        await this.loadData();
+      },
+
+      async loadData() {
+        const tbody = document.getElementById('modelMasterTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-center p-3">Loading models...</td></tr>';
+
+        try {
+          const response = await Api.call('getModels');
+          if (!response.success) {
+            App.Utils.showToast(response.message, true);
+            return;
+          }
+          App.State.globalModels = response.data || [];
+          this._loaded = true;
+          this.populateDatalist();
+          this.renderTable();
+          // Process table grouping keys off the live model list (see
+          // App.Utils.getModelFromOutputItemName) — if Process finished
+          // loading first, its rows were grouped under 'General' for models;
+          // re-render now that the real model names are available.
+          if (App.Process && App.Process.renderTable) App.Process.renderTable();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load models', true);
+        }
+      },
+
+      populateDatalist() {
+        const el = document.getElementById('modelList');
+        if (el) el.innerHTML = App.State.globalModels.map(m => `<option value="${escapeHtml(m.name)}">`).join('');
+      },
+
+      renderTable() {
+        const tbody = document.getElementById('modelMasterTableBody');
+        if (!tbody) return;
+
+        const searchEl = document.getElementById('modelMasterSearch');
+        const term = (searchEl?.value || '').toLowerCase().trim();
+        const rows = term
+          ? App.State.globalModels.filter(m => App.Utils.matchesKeywords(`${m.name} ${m.remarks || ''}`, term))
+          : App.State.globalModels;
+
+        let html = '';
+        rows.forEach(m => {
+          html += `<tr>
+            <td><strong>${escapeHtml(m.name)}</strong></td>
+            <td>${escapeHtml(m.remarks || '')}</td>
+            <td>
+              <button type="button" class="btn btn-sm btn-outline-dark" onclick="App.Model.edit('${escapeHtml(m.name)}')"><i class="bi bi-pencil"></i></button>
+              <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Model.delete('${escapeHtml(m.name)}')"><i class="bi bi-trash"></i></button>
+            </td>
+          </tr>`;
+        });
+        tbody.innerHTML = html || `<tr><td colspan="3" class="text-center text-muted p-3">${term ? 'No models match your search.' : 'No models defined yet.'}</td></tr>`;
+      },
+
+      openModal() {
+        this.resetForm();
+        const searchEl = document.getElementById('modelMasterSearch');
+        if (searchEl) searchEl.value = '';
+        this.ensureLoaded().then(() => this.renderTable());
+        safeModalShow('modelMasterModal');
+      },
+
+      resetForm() {
+        const form = document.getElementById('modelMasterForm');
+        if (form) form.reset();
+        document.getElementById('originalModelName').value = '';
+        document.getElementById('modelMasterFormTitle').textContent = 'Add Model';
+      },
+
+      edit(name) {
+        const m = App.State.globalModels.find(x => App.Utils.sameText(x.name, name));
+        if (!m) return;
+        document.getElementById('originalModelName').value = m.name;
+        document.getElementById('formModelName').value = m.name;
+        document.getElementById('formModelRemarks').value = m.remarks || '';
+        document.getElementById('modelMasterFormTitle').textContent = `Edit Model: ${m.name}`;
+      },
+
+      async delete(name) {
+        App.Utils.confirmAction(`Delete model "${name}"? Products already using it keep the text, but it will no longer appear in suggestions.`, async () => {
+          try {
+            const res = await Api.call('deleteModel', name);
+            App.Utils.showToast(res.message, !res.success);
+            if (res.success) this.loadData();
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to delete model', true);
+          }
+        });
+      }
+    };
+    document.addEventListener('DOMContentLoaded', function () {
+      const modelForm = document.getElementById('modelMasterForm');
+      if (modelForm) {
+        modelForm.onsubmit = async function (e) {
+          e.preventDefault();
+          const formData = Object.fromEntries(new FormData(this));
+          const submitBtn = document.getElementById('modelMasterSubmitBtn');
+          if (submitBtn) submitBtn.disabled = true;
+          try {
+            const res = await Api.call('saveModel', formData);
+            App.Utils.showToast(res.message, !res.success);
+            if (res.success) {
+              App.Model.resetForm();
+              App.Model.loadData();
+            }
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to save model', true);
+          } finally {
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        };
+      }
+    });
+
+    // ==========================================
+    // PROCESS TYPE MASTER NAMESPACE
+    // ==========================================
+    App.State.globalProcessTypes = [];
+
+    App.ProcessType = {
+      _loaded: false,
+
+      // Fetches the Process Type Master once and caches it — called whenever
+      // the Products & Processes tab is entered, so the Process Type select
+      // on the Process form always has data.
+      async ensureLoaded() {
+        if (this._loaded) return;
+        await this.loadData();
+      },
+
+      async loadData() {
+        const tbody = document.getElementById('processTypeMasterTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-center p-3">Loading process types...</td></tr>';
+
+        try {
+          const response = await Api.call('getProcessTypes');
+          if (!response.success) {
+            App.Utils.showToast(response.message, true);
+            return;
+          }
+          App.State.globalProcessTypes = response.data || [];
+          this._loaded = true;
+          this.populateSelect();
+          this.renderTable();
+          // Process table grouping keys off the live process type list — if
+          // Process finished loading first, its rows were grouped under
+          // 'General' for type; re-render now that real types are available.
+          if (App.Process && App.Process.renderTable) App.Process.renderTable();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load process types', true);
+        }
+      },
+
+      populateSelect() {
+        const el = document.getElementById('processFormProcessType');
+        if (!el) return;
+        const current = el.value;
+        el.innerHTML = '<option value="">General (none)</option>' +
+          App.State.globalProcessTypes.map(t => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)}</option>`).join('');
+        el.value = current;
+        if (window.jQuery?.fn?.select2) {
+          const $el = window.jQuery(el);
+          if ($el.data('select2')) $el.select2('destroy');
+          const $modal = $el.closest('.modal');
+          $el.select2({
+            placeholder: 'General (none)',
+            width: '100%',
+            allowClear: true,
+            matcher: App.Utils.select2Matcher,
+            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+          });
+        }
+      },
+
+      renderTable() {
+        const tbody = document.getElementById('processTypeMasterTableBody');
+        if (!tbody) return;
+
+        const searchEl = document.getElementById('processTypeMasterSearch');
+        const term = (searchEl?.value || '').toLowerCase().trim();
+        const rows = term
+          ? App.State.globalProcessTypes.filter(t => App.Utils.matchesKeywords(`${t.name} ${t.remarks || ''}`, term))
+          : App.State.globalProcessTypes;
+
+        let html = '';
+        rows.forEach(t => {
+          html += `<tr>
+            <td><strong>${escapeHtml(t.name)}</strong></td>
+            <td>${escapeHtml(t.remarks || '')}</td>
+            <td>
+              <button type="button" class="btn btn-sm btn-outline-dark" onclick="App.ProcessType.edit('${escapeHtml(t.name)}')"><i class="bi bi-pencil"></i></button>
+              <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.ProcessType.delete('${escapeHtml(t.name)}')"><i class="bi bi-trash"></i></button>
+            </td>
+          </tr>`;
+        });
+        tbody.innerHTML = html || `<tr><td colspan="3" class="text-center text-muted p-3">${term ? 'No process types match your search.' : 'No process types defined yet.'}</td></tr>`;
+      },
+
+      openModal() {
+        this.resetForm();
+        const searchEl = document.getElementById('processTypeMasterSearch');
+        if (searchEl) searchEl.value = '';
+        this.ensureLoaded().then(() => this.renderTable());
+        safeModalShow('processTypeMasterModal');
+      },
+
+      resetForm() {
+        const form = document.getElementById('processTypeMasterForm');
+        if (form) form.reset();
+        document.getElementById('originalProcessTypeName').value = '';
+        document.getElementById('processTypeMasterFormTitle').textContent = 'Add Process Type';
+      },
+
+      edit(name) {
+        const t = App.State.globalProcessTypes.find(x => App.Utils.sameText(x.name, name));
+        if (!t) return;
+        document.getElementById('originalProcessTypeName').value = t.name;
+        document.getElementById('formProcessTypeName').value = t.name;
+        document.getElementById('formProcessTypeRemarks').value = t.remarks || '';
+        document.getElementById('processTypeMasterFormTitle').textContent = `Edit Process Type: ${t.name}`;
+      },
+
+      async delete(name) {
+        App.Utils.confirmAction(`Delete process type "${name}"? Processes already using it keep the text, but it will no longer appear in suggestions.`, async () => {
+          try {
+            const res = await Api.call('deleteProcessType', name);
+            App.Utils.showToast(res.message, !res.success);
+            if (res.success) this.loadData();
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to delete process type', true);
+          }
+        });
+      },
+
+      // Re-matches every Process Master row's Process Type against this
+      // master's names — whichever name is a substring of the Process Name
+      // (same matching style as App.Utils.getModelFromOutputItemName) wins.
+      // Overwrites whatever is currently stored, including stale values left
+      // over from a type that's since been renamed/removed here, clearing to
+      // blank (-> "General") when nothing matches. Done server-side since it
+      // writes back to Process Master.
+      importFromProcessNames() {
+        App.Utils.confirmAction(
+          'This re-matches every Process\'s Process Type against the names defined here (whichever is a substring of its Process Name), overwriting the current value — including clearing it to "General" if nothing matches. No new types are created. Continue?',
+          async () => {
+            try {
+              const res = await Api.call('importProcessTypesFromProcessNames');
+              App.Utils.showToast(res.message, !res.success);
+              if (res.success) {
+                this.loadData();
+                if (App.Process && App.Process.loadData) App.Process.loadData();
+              }
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to import process types', true);
+            }
+          }
+        );
+      }
+    };
+    document.addEventListener('DOMContentLoaded', function () {
+      const processTypeForm = document.getElementById('processTypeMasterForm');
+      if (processTypeForm) {
+        processTypeForm.onsubmit = async function (e) {
+          e.preventDefault();
+          const formData = Object.fromEntries(new FormData(this));
+          const submitBtn = document.getElementById('processTypeMasterSubmitBtn');
+          if (submitBtn) submitBtn.disabled = true;
+          try {
+            const res = await Api.call('saveProcessType', formData);
+            App.Utils.showToast(res.message, !res.success);
+            if (res.success) {
+              App.ProcessType.resetForm();
+              App.ProcessType.loadData();
+            }
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to save process type', true);
+          } finally {
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        };
+      }
+    });
+
+    // ==========================================
+    // STOCK MASTER NAMESPACE
+    // ==========================================
+    App.State.globalStock = [];
+    App.State.filteredStock = [];
+    App.State.stockSearchTerm = '';
+    App.State.globalWarehousePool = [];
+    App.State.globalWarehousePoolOpening = [];
+    App.State.globalWarehousePoolAdjustments = [];
+    App.State.warehousePoolColorsByProcess = {};
+    App.State.selectedStock = [];
+    App.State.globalStockAdjustments = [];
+    // Warehouse Pool table grouping (see App.Stock.renderWarehousePoolTable):
+    // groups every Process — even ones with zero stock yet — by Size/Process
+    // Type/Model (same 3-tier picker as App.Process.GROUP_DIMENSIONS on the
+    // Processes sub-tab), rendering ONE row per Process with its Total
+    // Available Qty summed across every Color/Product-Tag bucket.
+    // computeLeafRowsForProcess fills in a zero-qty placeholder row for every
+    // color variant (warehousePoolColorsByProcess, from
+    // getAllProcessColorGroups) that doesn't have a bucket yet, so a
+    // process's totals include variants that haven't been stocked yet.
+    // Clicking a Process row opens openWarehousePoolProcessModal(), which
+    // lists (and lets you edit) every one of those combinations individually.
+    App.State.warehousePoolSearchTerm = '';
+    App.State.warehousePoolGroupOrder = ['size', 'type', 'model'];
+    App.State.selectedWarehousePool = [];
+
+    App.Stock = {
+      async loadData() {
+        const tbody = document.getElementById('stockTableBody');
+        if (tbody) {
+          tbody.innerHTML = '<tr><td colspan="9" class="text-center p-4">Loading Stock Database…</td></tr>';
+        }
+
+        try {
+          const res = await Api.call('getStockData');
+          if (!res?.success) {
+            App.Utils.showToast(res?.message || 'Failed to load stock data.', true);
+            return;
+          }
+
+          App.State.globalStock = Array.isArray(res.data) ? res.data : [];
+          App.State.filteredStock = [...App.State.globalStock];
+          App.State.stockCurrentPage = 1;
+          App.State.selectedStock = [];
+
+          this.renderAlerts();
+          this.renderTable();
+
+          // If the Warehouse Pool sub-tab is the one currently showing,
+          // refresh it too — otherwise returning to this tab after an
+          // action elsewhere (e.g. completing a Production lot that
+          // consumes/produces against a pool bucket) leaves its Available
+          // Qty numbers stale, which then makes correct-to-0 edits fail as
+          // "already this value" against the server's fresher truth.
+          const poolTab = document.getElementById('warehousePoolSubTab');
+          if (poolTab && poolTab.style.display !== 'none') {
+            this.loadWarehousePoolData();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load stock data.', true);
+        }
+      },
+
+      switchSubTab(id) {
+        $$('.stock-sub-tab').forEach(t => t.style.display = 'none');
+        const target = document.getElementById(id);
+        if (target) target.style.display = 'block';
+
+        $$('#stockSubTabs .nav-link').forEach(btn => btn.classList.remove('active'));
+        document.getElementById('btn-' + id)?.classList.add('active');
+
+        if (id === 'warehousePoolSubTab') {
+          App.Process.ensureLoaded().then(() => this.loadWarehousePoolData());
+        }
+      },
+
+      // ── Warehouse Pool (intermediate/finished process outputs) ─────────
+      // Table is grouped by Process — every Process the user has created,
+      // even ones with zero stock yet — using the same Size/Process Type/
+      // Model "Group by" tiers as the Processes sub-tab (see
+      // App.Process.GROUP_DIMENSIONS, reused here rather than duplicated).
+      // Each Process is a single row showing its Total Available Qty summed
+      // across every Warehouse Pool bucket (one per Color/Product-Tag
+      // combination) it has; a Process with no bucket yet still gets a
+      // single zero-qty placeholder so it shows up with a Total of 0.
+      // Clicking a Process row opens openWarehousePoolProcessModal(), which
+      // lists every one of those combinations with an editable Available Qty.
+      initGroupDropdowns() {
+        let saved = null;
+        try {
+          const raw = localStorage.getItem('warehousePoolGroupOrder');
+          if (raw) saved = JSON.parse(raw);
+        } catch (e) {
+          // Ignored — falls back to the default order below.
+        }
+        if (Array.isArray(saved) && saved.length === 3) App.State.warehousePoolGroupOrder = saved;
+
+        const order = App.State.warehousePoolGroupOrder;
+        for (let i = 0; i < 3; i++) {
+          const select = document.getElementById(`warehousePoolGroupTier${i + 1}`);
+          if (!select) continue;
+          const usedElsewhere = order.filter((dim, idx) => idx !== i && dim);
+          let optionsHtml = '<option value="">None</option>';
+          Object.keys(App.Process.GROUP_DIMENSIONS).forEach(dim => {
+            if (usedElsewhere.includes(dim)) return;
+            optionsHtml += `<option value="${dim}">${escapeHtml(App.Process.GROUP_DIMENSIONS[dim].label)}</option>`;
+          });
+          select.innerHTML = optionsHtml;
+          select.value = order[i] || '';
+        }
+      },
+
+      onGroupOrderChange() {
+        const order = [1, 2, 3].map(i => document.getElementById(`warehousePoolGroupTier${i}`).value);
+        App.State.warehousePoolGroupOrder = order;
+        try {
+          localStorage.setItem('warehousePoolGroupOrder', JSON.stringify(order));
+        } catch (e) {
+          // Ignored — the order just won't persist across reloads.
+        }
+        this.initGroupDropdowns();
+        this.renderWarehousePoolTable();
+      },
+
+      async loadWarehousePoolData() {
+        this.initGroupDropdowns();
+        const tbody = document.getElementById('warehousePoolTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="11" class="text-center p-4">Loading Warehouse Pool...</td></tr>';
+
+        try {
+          const [poolRes, colorsRes] = await Promise.all([
+            Api.call('getWarehousePoolData'),
+            Api.call('getAllProcessColorGroups')
+          ]);
+          if (!poolRes?.success) {
+            App.Utils.showToast(poolRes?.message || 'Failed to load Warehouse Pool data.', true);
+            return;
+          }
+          App.State.globalWarehousePool = Array.isArray(poolRes.data) ? poolRes.data : [];
+          App.State.warehousePoolColorsByProcess = colorsRes?.success ? (colorsRes.data || {}) : {};
+          App.State.selectedWarehousePool = [];
+          this.renderWarehousePoolTable();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load Warehouse Pool data.', true);
+        }
+      },
+
+      filterWarehousePool(searchTerm) {
+        App.State.warehousePoolSearchTerm = (searchTerm || '').toLowerCase().trim();
+        this.renderWarehousePoolTable();
+      },
+
+      toggleSelectAllWarehousePool(masterChk) {
+        App.Selection.toggleAll(App.State.selectedWarehousePool, 'warehousepool-select-chk', masterChk);
+        this.updateWarehousePoolBulkButtons();
+      },
+
+      // Selects (or, if every currently-filtered Process is already selected,
+      // deselects) every Process matching the active search — mirrors
+      // selectAllFiltered() for the Items Stock table above.
+      selectAllFilteredWarehousePool() {
+        const term = App.State.warehousePoolSearchTerm || '';
+        const keys = (App.State.globalProcesses || [])
+          .filter(p => this.computeLeafRowsForProcess(p, term).length > 0)
+          .map(p => p.processId);
+        const allSelected = keys.length > 0 &&
+          keys.every(key => App.Selection.isSelected(App.State.selectedWarehousePool, key));
+        App.State.selectedWarehousePool = allSelected ? [] : keys;
+        this.renderWarehousePoolTable();
+        this.updateWarehousePoolBulkButtons();
+      },
+
+      onWarehousePoolRowSelectChange() {
+        App.Selection.syncFromRows(App.State.selectedWarehousePool, 'warehousepool-select-chk', 'selectAllWarehousePool');
+        this.updateWarehousePoolBulkButtons();
+      },
+
+      updateWarehousePoolBulkButtons() {
+        const count = App.State.selectedWarehousePool.length;
+        App.Selection.updateButton('btnBulkPrintWarehousePool', count, '<i class="bi bi-printer"></i> Print Selected');
+      },
+
+      // Prints every leaf bucket (Color/Product-Tag combination) belonging to
+      // the checked Process rows, as the same pivot table (one row per item/
+      // color/tag, one column per size) printFullStockList() uses — but
+      // scoped to just the selected Processes instead of the whole pool.
+      bulkPrintWarehousePool() {
+        const selected = App.State.selectedWarehousePool;
+        if (selected.length === 0) return;
+
+        const poolItems = (App.State.globalWarehousePool || [])
+          .filter(r => App.Selection.isSelected(selected, r.processId));
+        if (poolItems.length === 0) return;
+
+        const term = App.State.warehousePoolSearchTerm;
+        this.printStockPivot([], poolItems, {
+          subtitle: 'Selected Warehouse Pool Register',
+          reportType: term
+            ? `Selected Warehouse Pool — Search: "${term}"`
+            : 'Selected Warehouse Pool (Available Qty by Size)',
+          fileNamePrefix: term
+            ? `Warehouse_Pool_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
+            : 'Warehouse_Pool_Selected',
+          emptyMessage: 'No Warehouse Pool buckets selected.'
+        });
+      },
+
+      // Returns the bucket rows to render under one Process: every existing
+      // bucket, plus a zero-qty placeholder row for any color variant the
+      // Process is known to produce (per getAllProcessColorGroups) that
+      // doesn't have a bucket yet — so every variant is visible and its
+      // Available Qty can be set inline to seed initial stock. If the
+      // Process has no buckets and no known color variants, falls back to
+      // one untagged placeholder. A search term then filters this combined
+      // list down (or passes it through whole if the Process itself
+      // matches).
+      computeLeafRowsForProcess(process, term) {
+        const buckets = (App.State.globalWarehousePool || []).filter(r => r.processId === process.processId);
+        const knownColors = (App.State.warehousePoolColorsByProcess || {})[process.processId] || [];
+        const existingColors = new Set(buckets.map(r => r.color));
+        const missingColorRows = knownColors
+          .filter(c => !existingColors.has(c))
+          .map(c => this._placeholderBucket(process, c));
+        const rows = buckets.concat(missingColorRows)
+          .sort((a, b) => a.color.localeCompare(b.color) || a.productTag.localeCompare(b.productTag));
+        if (!rows.length) rows.push(this._placeholderBucket(process));
+
+        if (!term) return rows;
+        const processMatches = App.Utils.matchesKeywords([process.processName, process.outputItemName].join(' '), term);
+        if (processMatches) return rows;
+        return rows.filter(r => App.Utils.matchesKeywords([r.outputItemName, r.productTag, r.color].join(' '), term));
+      },
+
+      _placeholderBucket(process, color) {
+        return {
+          outputItemName: process.outputItemName || '',
+          processId: process.processId,
+          productTag: '',
+          color: color || '',
+          producedQty: 0,
+          consumedQty: 0,
+          availableQty: 0,
+          isPlaceholder: true
+        };
+      },
+
+      renderWarehousePoolTable() {
+        const tbody = document.getElementById('warehousePoolTableBody');
+        if (!tbody) return;
+        const emptyState = document.getElementById('warehousePoolEmptyState');
+
+        const term = App.State.warehousePoolSearchTerm || '';
+        const entries = (App.State.globalProcesses || [])
+          .map(p => ({ process: p, leafRows: this.computeLeafRowsForProcess(p, term) }))
+          .filter(e => e.leafRows.length > 0);
+
+        if (entries.length === 0) {
+          tbody.innerHTML = '';
+          if (emptyState) emptyState.style.display = 'block';
+          this.updateWarehousePoolBulkButtons();
+          return;
+        }
+        if (emptyState) emptyState.style.display = 'none';
+
+        const tiers = (App.State.warehousePoolGroupOrder || []).filter(dim => dim && App.Process.GROUP_DIMENSIONS[dim]);
+        this.renderWarehousePoolHeader(tiers);
+
+        const selectAllChk = document.getElementById('selectAllWarehousePool');
+        if (selectAllChk) {
+          selectAllChk.checked = entries.length > 0 &&
+            entries.every(e => App.Selection.isSelected(App.State.selectedWarehousePool, e.process.processId));
+        }
+
+        const sorted = [...entries].sort((a, b) => {
+          for (const dim of tiers) {
+            const def = App.Process.GROUP_DIMENSIONS[dim];
+            const valA = def.getValue(a.process);
+            const valB = def.getValue(b.process);
+            if (valA !== valB) {
+              // See the matching comment in App.Process.renderTable — two
+              // different values can tie on rank, and returning "equal" here
+              // would make the comparator non-transitive and scatter same-
+              // value rows apart. Tie-break on the raw value.
+              const rankDiff = def.rank(valA) - def.rank(valB);
+              if (rankDiff !== 0) return rankDiff;
+              return valA < valB ? -1 : 1;
+            }
+          }
+          return a.process.sequence - b.process.sequence;
+        });
+
+        // One row per Process: tier dimensions (Size/Process Type/Model, per
+        // the Group-by pickers) plus the Process itself, with its Total
+        // Produced/Consumed/Available summed across every leaf row (Color/
+        // Product-Tag combination) computed above. The row opens
+        // openWarehousePoolProcessModal() for the per-combination breakdown.
+        let html = '';
+        sorted.forEach(entry => {
+          const p = entry.process;
+          const tierValues = tiers.map(dim => App.Process.GROUP_DIMENSIONS[dim].getValue(p));
+          const outputBadge = p.outputItemName
+            ? `<span class="badge bg-secondary ms-2">${escapeHtml(p.outputItemName)}</span>`
+            : '<span class="badge bg-warning text-dark ms-2">No Output Item configured</span>';
+          const statusBadge = p.active ? '' : ' <span class="badge bg-danger ms-2">Inactive</span>';
+          const tierCells = tierValues.map(v => `<td class="align-middle fw-semibold text-secondary bg-light">${escapeHtml(v)}</td>`).join('');
+          const processCell = `<td class="align-middle fw-bold">${escapeHtml(p.processName)}${outputBadge}${statusBadge}</td>`;
+
+          const totals = entry.leafRows.reduce((acc, r) => {
+            acc.produced += r.producedQty || 0;
+            acc.consumed += r.consumedQty || 0;
+            acc.available += r.availableQty || 0;
+            return acc;
+          }, { produced: 0, consumed: 0, available: 0 });
+
+          const encProcessId = encodeURIComponent(p.processId);
+          const comboLabel = entry.leafRows.length === 1 ? '1 combination' : `${entry.leafRows.length} combinations`;
+          const checked = App.Selection.isSelected(App.State.selectedWarehousePool, p.processId) ? 'checked' : '';
+
+          html += `<tr class="pool-process-row" style="cursor:pointer;" onclick="App.Stock.openWarehousePoolProcessModal('${encProcessId}')">
+            <td class="text-center" onclick="event.stopPropagation();">
+              <input type="checkbox" class="form-check-input warehousepool-select-chk" data-key="${escapeHtml(p.processId)}" ${checked} onchange="App.Stock.onWarehousePoolRowSelectChange()">
+            </td>
+            ${tierCells}
+            ${processCell}
+            <td class="text-center">${App.Production.formatQty(totals.produced)}</td>
+            <td class="text-center">${App.Production.formatQty(totals.consumed)}</td>
+            <td class="text-center fw-bold">${App.Production.formatQty(totals.available)}</td>
+            <td class="text-center">
+              <button type="button" class="btn btn-outline-primary btn-sm" title="View / Edit Breakdown">
+                <i class="bi bi-list-ul me-1"></i>${comboLabel}
+              </button>
+            </td>
+          </tr>`;
+        });
+
+        tbody.innerHTML = html;
+        this.updateWarehousePoolBulkButtons();
+      },
+
+      // Builds the dynamic <thead> row: one column per active Group-by tier
+      // (label from App.Process.GROUP_DIMENSIONS), then the fixed columns.
+      renderWarehousePoolHeader(tiers) {
+        const headerRow = document.getElementById('warehousePoolTableHeaderRow');
+        if (!headerRow) return;
+        const tierHeaders = tiers.map(dim => `<th>${escapeHtml(App.Process.GROUP_DIMENSIONS[dim].label)}</th>`).join('');
+        headerRow.innerHTML = `
+          <th class="text-center" style="width: 4%;"><input type="checkbox" id="selectAllWarehousePool" class="form-check-input" onclick="App.Stock.toggleSelectAllWarehousePool(this)"></th>
+          ${tierHeaders}
+          <th>Process</th>
+          <th class="text-center">Total Produced</th>
+          <th class="text-center">Total Consumed</th>
+          <th class="text-center">Total Available</th>
+          <th class="text-center">Actions</th>`;
+      },
+
+      // Opens the per-Process breakdown dialog: every known Color/Product-Tag
+      // combination for this process (including zero-qty placeholders for
+      // variants that haven't been stocked yet — same rows
+      // renderWarehousePoolTable() summed into the Total columns), each with
+      // the same click-to-edit Available Qty cell the old flat table had.
+      // Always computed with no search term so the full breakdown is visible
+      // even if the main table is currently filtered.
+      openWarehousePoolProcessModal(encProcessId) {
+        const processId = decodeURIComponent(encProcessId || '');
+        const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+        if (!process) return;
+
+        const leafRows = this.computeLeafRowsForProcess(process, '');
+
+        const titleEl = document.getElementById('warehousePoolProcessModalTitle');
+        if (titleEl) {
+          const outputBadge = process.outputItemName
+            ? ` <span class="badge bg-secondary ms-2">${escapeHtml(process.outputItemName)}</span>`
+            : '';
+          titleEl.innerHTML = `<i class="bi bi-boxes me-2"></i>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}`;
+        }
+
+        const body = document.getElementById('warehousePoolProcessModalBody');
+        if (body) {
+          body.innerHTML = leafRows.length
+            ? leafRows.map(r => `<tr>${this.renderWarehousePoolLeafCells(process, r)}</tr>`).join('')
+            : '<tr><td colspan="6" class="text-center text-muted p-4">No Warehouse Pool buckets found for this process.</td></tr>';
+        }
+
+        safeModalShow('warehousePoolProcessModal');
+      },
+
+      renderWarehousePoolLeafCells(process, r) {
+        const encName = encodeURIComponent(r.outputItemName || '');
+        const encTag = encodeURIComponent(r.productTag || '');
+        const encColor = encodeURIComponent(r.color || '');
+        const encProcessId = encodeURIComponent(r.processId || process.processId || '');
+        const availableCell = r.outputItemName
+          ? `<span class="pool-stock-display" data-qty="${r.availableQty}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
+              onclick="App.Stock.editPoolStockCell(this, '${encName}', '${encProcessId}', '${encTag}', '${encColor}')">${App.Production.formatQty(r.availableQty)}</span>`
+          : '<span class="text-muted">—</span>';
+
+        return `
+        <td>${r.productTag ? `<span class="badge bg-dark">${escapeHtml(r.productTag)}</span>` : '<span class="text-muted">—</span>'}</td>
+        <td class="text-center" data-pool-field="produced">${App.Production.formatQty(r.producedQty)}</td>
+        <td class="text-center">${App.Production.formatQty(r.consumedQty)}</td>
+        <td>${r.color ? `<span class="badge bg-info text-dark">${escapeHtml(r.color)}</span>` : '<span class="text-muted">—</span>'}</td>
+        <td class="text-center fw-bold">${availableCell}</td>
+        <td class="text-center">
+          <button type="button" class="btn btn-outline-info btn-sm" title="View Ledger"
+                  onclick="App.Stock.openPoolLedgerModal('${encName}', '${encTag}', '${encColor}')">
+            <i class="bi bi-journal-text"></i>
+          </button>
+        </td>`;
+      },
+
+      // Click-to-edit Available Qty cell. Saves by SETTING the bucket's
+      // Available Qty to the typed value (adjustWarehousePoolManually —
+      // same overwrite semantics as the old per-row correction modal this
+      // replaces), using a fixed reason since there's no separate field for
+      // one in this inline flow; use "Add Opening Stock" instead when a
+      // specific dated remark needs to be recorded.
+      editPoolStockCell(spanEl, encName, encProcessId, encTag, encColor) {
+        const td = spanEl.closest('td');
+        if (!td) return;
+        const tr = td.closest('tr');
+        const oldQty = parseFloat(spanEl.dataset.qty) || 0;
+
+        // This cell lives inside the per-Process breakdown modal (see
+        // openWarehousePoolProcessModal), not the main table, so "revert"
+        // and "commit" both act on this td directly rather than re-rendering
+        // the whole Warehouse Pool table (which wouldn't touch the modal).
+        const renderSpan = (qty) => `<span class="pool-stock-display" data-qty="${qty}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
+          onclick="App.Stock.editPoolStockCell(this, '${encName}', '${encProcessId}', '${encTag}', '${encColor}')">${App.Production.formatQty(qty)}</span>`;
+        const revert = () => { td.innerHTML = renderSpan(oldQty); };
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'form-control form-control-sm text-center d-inline-block';
+        input.style.width = '110px';
+        input.step = 'any';
+        input.value = oldQty;
+        td.innerHTML = '';
+        td.appendChild(input);
+        input.focus();
+        input.select();
+
+        let settled = false;
+        const finish = async () => {
+          if (settled) return;
+          settled = true;
+
+          const newQty = parseFloat(input.value);
+          if (isNaN(newQty)) {
+            App.Utils.showToast('Available Qty must be a valid number.', true);
+            revert();
+            return;
+          }
+          if (newQty === oldQty) {
+            revert();
+            return;
+          }
+
+          const outputItemName = decodeURIComponent(encName || '');
+          const processId = decodeURIComponent(encProcessId || '');
+          const productTag = decodeURIComponent(encTag || '');
+          const color = decodeURIComponent(encColor || '');
+          try {
+            const res = await Api.call('adjustWarehousePoolManually', outputItemName, processId, productTag, color, newQty, 'Inline edit via Warehouse Pool table');
+            if (!res?.success) {
+              App.Utils.showToast(res?.message || 'Failed to update stock.', true);
+              // The server's "nothing to adjust" rejection means its fresh
+              // read of Available Qty already equals newQty — i.e. our
+              // on-screen oldQty was stale (e.g. another user's change
+              // landed after this table last loaded). Reconcile the display
+              // to that authoritative value instead of reverting to the
+              // stale one, or the cell would keep showing a wrong number
+              // and every retry of the same edit would fail the same way.
+              const serverQty = res?.data?.oldAvailableQty;
+              if (typeof serverQty === 'number' && !isNaN(serverQty) && serverQty !== oldQty) {
+                if (!App.State.globalWarehousePool) App.State.globalWarehousePool = [];
+                let staleBucket = App.State.globalWarehousePool.find(b =>
+                  App.Utils.sameText(b.outputItemName, outputItemName) && b.processId === processId &&
+                  App.Utils.sameText(b.productTag || '', productTag || '') && App.Utils.sameText(b.color || '', color || ''));
+                if (staleBucket) staleBucket.availableQty = serverQty;
+                td.innerHTML = renderSpan(serverQty);
+              } else {
+                revert();
+              }
+              return;
+            }
+            App.State.globalWarehousePoolAdjustments = [];
+
+            // Patch this one bucket locally instead of re-fetching —
+            // recalculateWarehousePool only ever touches the single bucket
+            // we just adjusted (it adds the delta to producedQty;
+            // consumedQty is untouched), so the server's returned newQty is
+            // authoritative for this bucket alone.
+            if (!App.State.globalWarehousePool) App.State.globalWarehousePool = [];
+            let bucket = App.State.globalWarehousePool.find(b =>
+              App.Utils.sameText(b.outputItemName, outputItemName) && b.processId === processId &&
+              App.Utils.sameText(b.productTag || '', productTag || '') && App.Utils.sameText(b.color || '', color || ''));
+            if (bucket) {
+              bucket.producedQty = (bucket.producedQty || 0) + (newQty - oldQty);
+              bucket.availableQty = newQty;
+            } else {
+              bucket = { outputItemName, processId, productTag, color, producedQty: newQty, consumedQty: 0, availableQty: newQty };
+              App.State.globalWarehousePool.push(bucket);
+            }
+
+            if (tr) {
+              const producedCell = tr.querySelector('[data-pool-field="produced"]');
+              if (producedCell) producedCell.textContent = App.Production.formatQty(bucket.producedQty);
+            }
+            td.innerHTML = renderSpan(bucket.availableQty);
+
+            // Refresh the Process row's totals in the main table underneath
+            // the modal so they stay in sync with this bucket's new qty.
+            this.renderWarehousePoolTable();
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to update stock.', true);
+            revert();
+          }
+        };
+
+        input.addEventListener('blur', finish);
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+          } else if (e.key === 'Escape') {
+            settled = true;
+            revert();
+          }
+        });
+      },
+
+      // ── Warehouse Pool Opening Stock ────────────────────────────
+      // Seeds stock that already existed before this app went live (or a
+      // one-off correction) into a Warehouse Pool bucket, via the same
+      // Process/Product-tag/Color shape a Production lot uses.
+      async openWarehouseOpeningModal() {
+        await App.Process.ensureLoaded();
+        if (!App.State.globalBOMs || !App.State.globalBOMs.length) {
+          try {
+            const res = await Api.call('getBOMProductionData');
+            if (res.success) App.State.globalBOMs = res.data;
+          } catch (err) { /* Ignored — Product dropdown stays empty until BOMs load elsewhere. */ }
+        }
+
+        const form = document.getElementById('warehouseOpeningForm');
+        if (form) form.reset();
+        document.getElementById('woOutputItemName').value = '';
+        document.getElementById('woProductTagWrapper').style.display = 'none';
+        document.getElementById('woColorWrapper').style.display = 'none';
+        document.getElementById('woDate').value = todayIso();
+
+        this.populateWarehouseOpeningProcessSelect();
+        const processSelect = document.getElementById('woProcessId');
+        if (processSelect) App.Utils.autoSelectOnlyOption(processSelect);
+        await this.handleWarehouseOpeningProcessChange(processSelect ? processSelect.value : '');
+        await this.loadWarehouseOpeningData();
+
+        safeModalShow('warehouseOpeningModal');
+      },
+
+      populateWarehouseOpeningProcessSelect() {
+        const select = document.getElementById('woProcessId');
+        if (!select) return;
+
+        let html = '<option value="">Choose a Process...</option>';
+        (App.State.globalProcesses || [])
+          .filter(p => p.active)
+          .forEach(p => {
+            html += `<option value="${escapeHtml(p.processId)}">${escapeHtml(p.processName)} (Seq ${escapeHtml(String(p.sequence))})</option>`;
+          });
+        select.innerHTML = html;
+      },
+
+      // Mirrors App.Production.handleProcessChange's Product-tag and
+      // multi-color handling, minus the components/quantity UI this form
+      // doesn't need.
+      async handleWarehouseOpeningProcessChange(processId) {
+        const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+        document.getElementById('woOutputItemName').value = process ? (process.outputItemName || '') : '';
+
+        const tagWrapper = document.getElementById('woProductTagWrapper');
+        if (tagWrapper) tagWrapper.style.display = (process && process.isFinalStage) ? '' : 'none';
+        if (process && process.isFinalStage) {
+          this.populateWarehouseOpeningProductSelect();
+        } else {
+          const tagSelect = document.getElementById('woProductTag');
+          if (tagSelect) tagSelect.value = '';
+        }
+
+        const colorWrapper = document.getElementById('woColorWrapper');
+        const colorSelect = document.getElementById('woColor');
+        let colors = [];
+        if (processId) {
+          try {
+            const res = await Api.call('getProcessColorGroups', processId);
+            colors = res.success ? (res.data || []) : [];
+          } catch (err) {
+            colors = [];
+          }
+        }
+        if (colorSelect) {
+          // "— No Color —" is a deliberate, valid final choice here (e.g. a
+          // non-color-specific opening balance) even when real colors exist
+          // — unlike "Choose a Process..." it's never just an unfilled
+          // placeholder, so it must NOT be auto-selected away from.
+          let html = '<option value="">— No Color —</option>';
+          colors.forEach(c => { html += `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`; });
+          colorSelect.innerHTML = html;
+        }
+        if (colorWrapper) colorWrapper.style.display = colors.length > 0 ? '' : 'none';
+      },
+
+      populateWarehouseOpeningProductSelect() {
+        const select = document.getElementById('woProductTag');
+        if (!select) return;
+
+        const currentValue = select.value;
+        let html = '<option value="">— Untagged (stays in Warehouse Pool only) —</option>';
+        (App.State.globalBOMs || []).forEach(bom => {
+          html += `<option value="${escapeHtml(bom.productId)}">${escapeHtml(bom.productId)} (${escapeHtml(bom.productName)})</option>`;
+        });
+        select.innerHTML = html;
+        select.value = currentValue;
+      },
+
+      async handleWarehouseOpeningSubmit(e) {
+        e.preventDefault();
+
+        const processId = document.getElementById('woProcessId').value;
+        if (!processId) {
+          App.Utils.showToast('Please choose a Process.', true);
+          return;
+        }
+
+        const formData = {
+          processId: processId,
+          productTag: document.getElementById('woProductTag')?.value || '',
+          color: document.getElementById('woColor')?.value || '',
+          qty: document.getElementById('woQty').value,
+          date: document.getElementById('woDate').value,
+          remarks: document.getElementById('woRemarks').value
+        };
+
+        const submitBtn = document.getElementById('warehouseOpeningSubmitBtn');
+        try {
+          if (submitBtn) { submitBtn.disabled = true; submitBtn.innerText = 'Saving...'; }
+          const res = await Api.call('saveWarehousePoolOpening', formData);
+          App.Utils.showToast(res?.message, !res?.success);
+          if (res?.success) {
+            document.getElementById('warehouseOpeningForm').reset();
+            document.getElementById('woOutputItemName').value = '';
+            document.getElementById('woProductTagWrapper').style.display = 'none';
+            document.getElementById('woColorWrapper').style.display = 'none';
+            document.getElementById('woDate').value = todayIso();
+            await this.loadWarehouseOpeningData();
+            await this.loadWarehousePoolData();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to record opening stock.', true);
+        } finally {
+          if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = '+ Record Opening Stock'; }
+        }
+      },
+
+      async loadWarehouseOpeningData() {
+        const tbody = document.getElementById('warehouseOpeningTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-center p-3">Loading...</td></tr>';
+
+        try {
+          const res = await Api.call('getWarehousePoolOpeningData');
+          App.State.globalWarehousePoolOpening = res?.success ? (res.data || []) : [];
+          this.renderWarehouseOpeningTable();
+        } catch (err) {
+          if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-center p-3 text-danger">Failed to load opening stock.</td></tr>';
+        }
+      },
+
+      renderWarehouseOpeningTable() {
+        const tbody = document.getElementById('warehouseOpeningTableBody');
+        if (!tbody) return;
+
+        const rows = App.State.globalWarehousePoolOpening || [];
+        if (rows.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted p-3">No opening stock recorded yet.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = rows.map(r => `<tr>
+        <td>${escapeHtml(r.date)}</td>
+        <td><strong>${escapeHtml(r.outputItemName)}</strong></td>
+        <td>${escapeHtml(r.processName)}</td>
+        <td>${r.productTag ? escapeHtml(r.productTag) : '<span class="text-muted">—</span>'}</td>
+        <td>${r.color ? escapeHtml(r.color) : '<span class="text-muted">—</span>'}</td>
+        <td class="text-end fw-bold">${App.Production.formatQty(r.qty)}</td>
+        <td><small>${escapeHtml(r.remarks || '-')}</small></td>
+        <td class="text-center">
+          <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Stock.deleteWarehouseOpeningEntry(${r.rowIdx})"><i class="bi bi-trash"></i></button>
+        </td>
+      </tr>`).join('');
+      },
+
+      deleteWarehouseOpeningEntry(rowIdx) {
+        const entry = (App.State.globalWarehousePoolOpening || []).find(r => r.rowIdx === rowIdx);
+        const label = entry
+          ? `${entry.outputItemName}${entry.color ? ` (${entry.color})` : ''} — Qty ${App.Production.formatQty(entry.qty)} dated ${entry.date}`
+          : 'this opening stock entry';
+
+        App.Utils.confirmAction(
+          `Delete ${label}? This will reduce the Warehouse Pool bucket by that quantity.`,
+          async () => {
+            try {
+              const res = await Api.call('deleteWarehousePoolOpening', rowIdx);
+              App.Utils.showToast(res?.message, !res?.success);
+              if (res?.success) {
+                await this.loadWarehouseOpeningData();
+                await this.loadWarehousePoolData();
+              }
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete opening stock entry.', true);
+            }
+          }
+        );
+      },
+
+      // ── Warehouse Pool Ledger ───────────────────────────────────
+      // Builds a transaction history (Production credits/debits, Dispatch
+      // debits, Opening Stock seeds, and manual corrections) for one
+      // specific bucket (Output Item Name + Product Tag + Color), mirroring
+      // the Item Ledger's "Transaction Ledger History" for raw-material Stock.
+      async ensurePoolLedgerSourceDataLoaded() {
+        const fetches = [];
+        if (!App.State.globalProduction.length) {
+          fetches.push(Api.call('getProductionData').then(res => {
+            if (res?.success) App.State.globalProduction = Array.isArray(res.data) ? res.data : [];
+          }));
+        }
+        if (!App.State.globalDispatch.length) {
+          fetches.push(Api.call('getDispatchData').then(res => {
+            if (res?.success) App.State.globalDispatch = Array.isArray(res.data) ? res.data : [];
+          }));
+        }
+        if (!App.State.globalWarehousePoolOpening.length) {
+          fetches.push(Api.call('getWarehousePoolOpeningData').then(res => {
+            if (res?.success) App.State.globalWarehousePoolOpening = Array.isArray(res.data) ? res.data : [];
+          }));
+        }
+        if (!App.State.globalWarehousePoolAdjustments.length) {
+          fetches.push(Api.call('getWarehousePoolAdjustmentHistory').then(res => {
+            if (res?.success) App.State.globalWarehousePoolAdjustments = Array.isArray(res.data) ? res.data : [];
+          }));
+        }
+        if (fetches.length) await Promise.all(fetches);
+      },
+
+      buildPoolLedgerRows(outputItemName, productTag, color) {
+        const nameLower = (outputItemName || '').toLowerCase();
+        const tagLower = (productTag || '').toLowerCase();
+        const colorLower = (color || '').toLowerCase();
+        const entries = [];
+
+        // Opening Stock seeds (credits)
+        (App.State.globalWarehousePoolOpening || []).forEach(o => {
+          if ((o.outputItemName || '').toLowerCase() !== nameLower) return;
+          if ((o.productTag || '').toLowerCase() !== tagLower) return;
+          if ((o.color || '').toLowerCase() !== colorLower) return;
+          entries.push({
+            dateObj: o.dateRaw ? new Date(o.dateRaw) : new Date(0),
+            dateStr: o.date,
+            type: 'Opening Stock',
+            badgeClass: 'bg-info',
+            ref: '-',
+            remarks: o.remarks || '-',
+            inQty: o.qty,
+            outQty: 0
+          });
+        });
+
+        // Production lots: credit this bucket's own output, debit POOL-sourced
+        // consumption of an untagged/uncolored upstream bucket sharing this name.
+        (App.State.globalProduction || []).forEach(lot => {
+          if (String(lot.status || '').trim().toLowerCase() !== 'completed') return;
+
+          if ((lot.outputItemName || '').toLowerCase() === nameLower && (lot.productId || '').toLowerCase() === tagLower) {
+            let credited = false;
+            (lot.colorBreakdown || []).forEach(entry => {
+              if ((entry.color || '').toLowerCase() !== colorLower) return;
+              const qty = Number(entry.qty) || 0;
+              if (qty <= 0) return;
+              credited = true;
+              entries.push({
+                dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
+                dateStr: lot.date,
+                type: 'Production Credit',
+                badgeClass: 'bg-success',
+                ref: lot.lotNumber || '-',
+                remarks: lot.remarks || '-',
+                inQty: qty,
+                outQty: 0
+              });
+            });
+            if (!credited && !colorLower && !(lot.colorBreakdown || []).length) {
+              entries.push({
+                dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
+                dateStr: lot.date,
+                type: 'Production Credit',
+                badgeClass: 'bg-success',
+                ref: lot.lotNumber || '-',
+                remarks: lot.remarks || '-',
+                inQty: Number(lot.qty) || 0,
+                outQty: 0
+              });
+            }
+          }
+
+          if (!tagLower) {
+            (lot.componentsConsumed || []).forEach(comp => {
+              if (String(comp.sourceType || '').trim().toUpperCase() !== 'POOL') return;
+              if ((comp.itemName || '').toLowerCase() !== nameLower) return;
+              const colorGroup = String(comp.colorGroup || '').trim();
+              const compColor = colorGroup && colorGroup.toUpperCase() !== 'COMMON' ? colorGroup.toLowerCase() : '';
+              if (compColor !== colorLower) return;
+              const qty = Number(comp.qty) || 0;
+              if (qty <= 0) return;
+              entries.push({
+                dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
+                dateStr: lot.date,
+                type: 'Production Consumption',
+                badgeClass: 'bg-danger',
+                ref: lot.lotNumber || '-',
+                remarks: lot.remarks || '-',
+                inQty: 0,
+                outQty: qty
+              });
+            });
+          }
+        });
+
+        // Dispatch debits (final-stage tagged or untagged buckets only)
+        const process = (App.State.globalProcesses || []).find(p =>
+          (p.outputItemName || '').toLowerCase() === nameLower && p.isFinalStage
+        );
+        const dispatchKey = tagLower || (process ? nameLower : null);
+        if (dispatchKey) {
+          (App.State.globalDispatch || []).forEach(d => {
+            if ((d.productId || '').toLowerCase() !== dispatchKey) return;
+            const qty = Number(d.qty) || 0;
+            if (qty <= 0) return;
+            entries.push({
+              dateObj: d.dateRaw ? new Date(d.dateRaw) : new Date(0),
+              dateStr: d.dispatchDate,
+              type: 'Dispatch',
+              badgeClass: 'bg-danger',
+              ref: d.dispatchNumber || '-',
+              remarks: d.clientName || '-',
+              inQty: 0,
+              outQty: qty
+            });
+          });
+        }
+
+        // Manual corrections
+        (App.State.globalWarehousePoolAdjustments || []).forEach(adj => {
+          if ((adj.outputItemName || '').toLowerCase() !== nameLower) return;
+          if ((adj.productTag || '').toLowerCase() !== tagLower) return;
+          if ((adj.color || '').toLowerCase() !== colorLower) return;
+          const delta = adj.newValue - adj.oldValue;
+          entries.push({
+            dateObj: new Date(adj.date),
+            dateStr: new Date(adj.date).toLocaleDateString('en-GB'),
+            type: 'Manual Correction',
+            badgeClass: 'bg-warning text-dark',
+            ref: '-',
+            remarks: adj.reason || '-',
+            inQty: delta > 0 ? delta : 0,
+            outQty: delta < 0 ? -delta : 0
+          });
+        });
+
+        entries.sort((a, b) => a.dateObj - b.dateObj);
+
+        let balance = 0;
+        entries.forEach(e => {
+          balance += (e.inQty || 0) - (e.outQty || 0);
+          e.balance = balance;
+        });
+
+        entries.reverse();
+        return entries;
+      },
+
+      async openPoolLedgerModal(encName, encTag, encColor) {
+        const outputItemName = decodeURIComponent(encName || '');
+        const productTag = decodeURIComponent(encTag || '');
+        const color = decodeURIComponent(encColor || '');
+
+        const titleEl = document.getElementById('poolLedgerTitle');
+        if (titleEl) {
+          let label = outputItemName;
+          if (productTag) label += ` (Tag: ${productTag})`;
+          if (color) label += ` [${color}]`;
+          titleEl.innerHTML = `<i class="bi bi-journal-text me-2"></i>Warehouse Pool Ledger: ${escapeHtml(label)}`;
+        }
+
+        await this.ensurePoolLedgerSourceDataLoaded();
+        const entries = this.buildPoolLedgerRows(outputItemName, productTag, color);
+
+        const body = document.getElementById('poolLedgerBody');
+        if (body) {
+          body.innerHTML = entries.length
+            ? entries.map(e => `<tr>
+              <td>${escapeHtml(e.dateStr || '-')}</td>
+              <td><span class="badge ${e.badgeClass}">${e.type}</span></td>
+              <td><strong class="text-dark">${escapeHtml(e.ref)}</strong></td>
+              <td><small class="text-muted">${escapeHtml(e.remarks)}</small></td>
+              <td class="text-center text-success fw-bold">${e.inQty ? App.Production.formatQty(e.inQty) : '-'}</td>
+              <td class="text-center text-danger fw-bold">${e.outQty ? App.Production.formatQty(e.outQty) : '-'}</td>
+              <td class="text-center fw-bold">${App.Production.formatQty(e.balance)}</td>
+            </tr>`).join('')
+            : '<tr><td colspan="7" class="text-center text-muted p-4">No transaction history found for this bucket.</td></tr>';
+        }
+
+        safeModalShow('poolLedgerModal');
+      },
+
+      renderTable() {
+        const tbody = document.getElementById('stockTableBody');
+        if (!tbody) return;
+
+        const emptyState = document.getElementById('stockEmptyState');
+        if (!App.State.filteredStock.length) {
+          tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted p-4">No stock records found.</td></tr>';
+          if (emptyState) emptyState.style.display = 'block';
+          App.Utils.renderPagination('stockPagination', 0, 1, App.State.stockRowsPerPage, 'stock-page', 'Items');
+          this.updateBulkButtons();
+          return;
+        }
+        if (emptyState) emptyState.style.display = 'none';
+
+        const { filteredStock, stockCurrentPage: cur, stockRowsPerPage: rpp } = App.State;
+        const start = (cur - 1) * rpp;
+        const pageItems = filteredStock.slice(start, start + rpp);
+
+        const selectAllChk = document.getElementById('selectAllStock');
+        if (selectAllChk) {
+          selectAllChk.checked = pageItems.length > 0 &&
+            pageItems.every(item => App.Selection.isSelected(App.State.selectedStock, this.stockKey(item)));
+        }
+
+        tbody.innerHTML = pageItems.map(item => {
+          const statusBadge = item.isLowStock
+            ? '<span class="badge bg-danger px-2 py-1 shadow-sm">Low Stock</span>'
+            : '<span class="badge bg-success px-2 py-1 shadow-sm">Well Stocked</span>';
+
+          const rowClass = item.isLowStock ? 'low-stock-row' : '';
+          const key = this.stockKey(item);
+          const checked = App.Selection.isSelected(App.State.selectedStock, key) ? 'checked' : '';
+          const encName = encodeURIComponent(item.name);
+          const encSize = encodeURIComponent(item.size || '');
+          const deadChecked = item.deadStock ? 'checked' : '';
+          const deadRowStyle = item.deadStock ? 'opacity: 0.6;' : '';
+
+          return `
+      <tr class="${rowClass}" style="${deadRowStyle}">
+        <td class="text-center"><input type="checkbox" class="form-check-input stock-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Stock.onRowSelectChange()"></td>
+        <td><strong class="text-dark">${escapeHtml(item.name)}</strong></td>
+        <td><span class="badge bg-secondary">${escapeHtml(item.size || 'GENERAL')}</span></td>
+        <td class="text-center fw-bold">${item.initialStock}</td>
+        <td class="text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}">${item.currentStock}</td>
+        <td class="text-center">
+          <input type="number"
+                 class="form-control form-control-sm mx-auto text-center threshold-input"
+                 data-name="${escapeHtml(item.name)}"
+                 data-size="${escapeHtml(item.size)}"
+                 value="${item.threshold}"
+                 min="0"
+                 onchange="App.Stock.saveThreshold(this)"
+                 style="width: 80px; font-weight: bold; border-color: #ced4da;">
+        </td>
+        <td class="text-center">${statusBadge}</td>
+        <td class="text-center">
+          <div class="form-check d-flex justify-content-center mb-0">
+            <input type="checkbox" class="form-check-input dead-stock-chk" ${deadChecked}
+                   data-enc-name="${encName}" data-enc-size="${encSize}"
+                   onchange="App.Stock.toggleDeadStock(this)"
+                   title="${item.deadStock ? 'Unmark as dead stock' : 'Mark as dead stock'}">
+          </div>
+        </td>
+        <td class="text-center">
+          <button type="button" class="btn btn-outline-warning btn-sm" title="Correct stock manually"
+                  onclick="App.Stock.openAdjustModal('${escapeHtml(item.name).replace(/'/g, "\\'")}', '${escapeHtml(item.size || '').replace(/'/g, "\\'")}', ${item.currentStock})">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+        </td>
+      </tr>`;
+        }).join('');
+
+        App.Utils.renderPagination('stockPagination', filteredStock.length, cur, rpp, 'stock-page', 'Items');
+        this.updateBulkButtons();
+      },
+
+      // Builds a stable string key for a stock row (Item Name + Size).
+      stockKey(item) {
+        return `${item.name}|${item.size || ''}`;
+      },
+
+      toggleSelectAll(masterChk) {
+        App.Selection.toggleAll(App.State.selectedStock, 'stock-select-chk', masterChk);
+        this.updateBulkButtons();
+      },
+
+      // Selects (or, if every currently-filtered/searched item is already
+      // selected, deselects) every item matching the active search — not
+      // just the ones visible on the current page — so "Print Selected"
+      // can bulk-print an entire search result spanning multiple pages.
+      selectAllFiltered() {
+        const keys = App.State.filteredStock.map(item => this.stockKey(item));
+        const allSelected = keys.length > 0 &&
+          keys.every(key => App.Selection.isSelected(App.State.selectedStock, key));
+        App.State.selectedStock = allSelected ? [] : keys;
+        this.renderTable();
+      },
+
+      onRowSelectChange() {
+        App.Selection.syncFromRows(App.State.selectedStock, 'stock-select-chk', 'selectAllStock');
+        this.updateBulkButtons();
+      },
+
+      updateBulkButtons() {
+        const count = App.State.selectedStock.length;
+        App.Selection.updateButton('btnBulkPrintStock', count, '<i class="bi bi-printer"></i> Print Selected');
+      },
+
+      bulkPrint() {
+        const selected = App.State.selectedStock;
+        if (selected.length === 0) return;
+
+        const items = App.State.globalStock.filter(item => App.Selection.isSelected(selected, this.stockKey(item)));
+        if (items.length === 0) return;
+
+        const term = App.State.stockSearchTerm;
+        this.printStockPivot(items, [], {
+          subtitle: 'Selected Item & Stock Register',
+          reportType: term
+            ? `Selected Stock Items — Search: "${term}"`
+            : 'Selected Stock Items (Current Stock by Size)',
+          fileNamePrefix: term
+            ? `Stock_Report_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
+            : 'Stock_Report_Selected',
+          emptyMessage: 'No stock items selected.'
+        });
+      },
+
+      changePage(page) {
+        App.State.stockCurrentPage = App.Utils.clampPage(page, App.State.filteredStock.length, App.State.stockRowsPerPage);
+        this.renderTable();
+      },
+
+      renderAlerts() {
+        const alertSection = document.getElementById('lowStockAlertSection');
+        if (!alertSection) return;
+
+        const lowStockItems = App.State.globalStock.filter(item => item.isLowStock);
+
+        if (lowStockItems.length > 0) {
+          alertSection.innerHTML = `
+      <div class="card border-danger shadow-sm mb-3">
+        <div class="card-header bg-danger text-white py-2 fw-bold d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-exclamation-triangle-fill me-2"></i>Low Stock Warnings (${lowStockItems.length} Items)</span>
+          <span class="badge bg-white text-danger font-monospace">${lowStockItems.length}</span>
+        </div>
+        <div class="card-body py-2 px-3 bg-white">
+          <div class="row g-2" style="max-height: 180px; overflow-y: auto;">
+            ${lowStockItems.map(item => `
+              <div class="col-md-4 col-sm-6">
+                <div class="p-2 border rounded bg-light d-flex justify-content-between align-items-center shadow-xs">
+                  <div style="min-width: 0;">
+                    <strong class="text-dark text-truncate d-block" style="font-size: 13px;" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
+                    <div class="text-muted" style="font-size: 11px;">Size: ${escapeHtml(item.size || 'GENERAL')}</div>
+                  </div>
+                  <div class="text-end ps-2 flex-shrink-0">
+                    <span class="badge bg-danger fs-6">${item.currentStock}</span>
+                    <div class="text-muted" style="font-size: 10px;">Min: ${item.threshold}</div>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>`;
+        } else {
+          alertSection.innerHTML = `
+      <div class="alert alert-success border-0 shadow-sm d-flex align-items-center mb-0 py-3" role="alert">
+        <i class="bi bi-check-circle-fill fs-4 text-success me-3"></i>
+        <div>
+          <h6 class="alert-heading mb-0 fw-bold">All items are well stocked!</h6>
+          <p class="mb-0" style="font-size: 12px; opacity: 0.9;">No inventory items have fallen below their minimum threshold levels.</p>
+        </div>
+      </div>`;
+        }
+      },
+
+      filterData(term) {
+        App.State.stockSearchTerm = String(term || '').trim();
+        const cleanTerm = App.State.stockSearchTerm.toLowerCase();
+        if (!cleanTerm) {
+          App.State.filteredStock = [...App.State.globalStock];
+        } else {
+          App.State.filteredStock = App.State.globalStock.filter(item =>
+            App.Utils.matchesKeywords(`${item.name} ${item.size}`, cleanTerm)
+          );
+        }
+        App.State.stockCurrentPage = 1;
+        this.renderTable();
+      },
+
+      async toggleDeadStock(chk) {
+        const encName = chk.getAttribute('data-enc-name');
+        const encSize = chk.getAttribute('data-enc-size');
+        const name = decodeURIComponent(encName || '');
+        const size = decodeURIComponent(encSize || '');
+        const isDeadStock = chk.checked;
+
+        chk.disabled = true;
+        try {
+          const res = await Api.call('updateDeadStock', name, size, isDeadStock);
+          if (!res?.success) {
+            App.Utils.showToast(res?.message || 'Failed to update dead stock status.', true);
+            chk.checked = !isDeadStock;
+            chk.disabled = false;
+            return;
+          }
+
+          // Patch local state — only update this single item, no full reload
+          const item = App.State.globalStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+          if (item) item.deadStock = isDeadStock;
+          const filteredItem = App.State.filteredStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+          if (filteredItem) filteredItem.deadStock = isDeadStock;
+
+          // Update the row's visual style locally
+          const tr = chk.closest('tr');
+          if (tr) tr.style.opacity = isDeadStock ? '0.6' : '';
+          chk.title = isDeadStock ? 'Unmark as dead stock' : 'Mark as dead stock';
+          App.Utils.showToast(isDeadStock ? `${name} marked as dead stock.` : `${name} removed from dead stock.`);
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to update dead stock status.', true);
+          chk.checked = !isDeadStock;
+        } finally {
+          chk.disabled = false;
+        }
+      },
+
+      openDeadStockDialog() {
+        const deadItems = (App.State.globalStock || []).filter(i => i.deadStock);
+        const tbody = document.getElementById('deadStockModalBody');
+        if (tbody) {
+          if (deadItems.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted p-4">No items are currently marked as dead stock.</td></tr>';
+          } else {
+            tbody.innerHTML = deadItems.map(item => {
+              const encName = encodeURIComponent(item.name);
+              const encSize = encodeURIComponent(item.size || '');
+              return `<tr>
+                <td><strong>${escapeHtml(item.name)}</strong></td>
+                <td><span class="badge bg-secondary">${escapeHtml(item.size || 'GENERAL')}</span></td>
+                <td class="text-center fw-bold">${item.currentStock}</td>
+                <td class="text-center">
+                  <button type="button" class="btn btn-sm btn-outline-danger"
+                          onclick="App.Stock.unmarkDeadStockFromDialog('${encName}', '${encSize}', this)"
+                          title="Remove from dead stock">
+                    <i class="bi bi-x-circle me-1"></i>Remove
+                  </button>
+                </td>
+              </tr>`;
+            }).join('');
+          }
+        }
+        safeModalShow('deadStockModal');
+      },
+
+      async unmarkDeadStockFromDialog(encName, encSize, btn) {
+        const name = decodeURIComponent(encName || '');
+        const size = decodeURIComponent(encSize || '');
+        if (btn) btn.disabled = true;
+        try {
+          const res = await Api.call('updateDeadStock', name, size, false);
+          if (!res?.success) {
+            App.Utils.showToast(res?.message || 'Failed to update dead stock status.', true);
+            if (btn) btn.disabled = false;
+            return;
+          }
+          const item = App.State.globalStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+          if (item) item.deadStock = false;
+          const filteredItem = App.State.filteredStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+          if (filteredItem) filteredItem.deadStock = false;
+
+          // Uncheck the checkbox in the main table if visible
+          document.querySelectorAll('.dead-stock-chk').forEach(chk => {
+            if (chk.getAttribute('data-enc-name') === encName && chk.getAttribute('data-enc-size') === encSize) {
+              chk.checked = false;
+              const tr = chk.closest('tr');
+              if (tr) tr.style.opacity = '';
+            }
+          });
+
+          App.Utils.showToast(`${name} removed from dead stock.`);
+          this.openDeadStockDialog();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to update dead stock status.', true);
+          if (btn) btn.disabled = false;
+        }
+      },
+
+      async saveThreshold(inputEl) {
+        if (!inputEl) return;
+        const name = inputEl.getAttribute('data-name');
+        const size = inputEl.getAttribute('data-size');
+        const thresholdVal = parseInt(inputEl.value, 10);
+
+        if (isNaN(thresholdVal) || 0 > thresholdVal) {
+          App.Utils.showToast('Threshold must be a non-negative number.', true);
+          return;
+        }
+
+        try {
+          inputEl.disabled = true;
+          const res = await Api.call('updateThreshold', name, size, thresholdVal);
+          if (res?.success) {
+            App.Utils.showToast('Threshold updated successfully.');
+            // Refresh stock data to recalculate isLowStock status and alert lists
+            await this.loadData();
+          } else {
+            App.Utils.showToast(res?.message || 'Failed to update threshold.', true);
+            inputEl.disabled = false;
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Error updating threshold.', true);
+          inputEl.disabled = false;
+        }
+      },
+
+      openImportModal() {
+        const form = document.getElementById('stockImportForm');
+        if (form) form.reset();
+        safeModalShow('importStockModal');
+      },
+
+      openAdjustModal(name, size, currentStock) {
+        const form = document.getElementById('adjustStockForm');
+        if (form) form.reset();
+
+        document.getElementById('adjustStockName').value = name;
+        document.getElementById('adjustStockSize').value = size;
+        document.getElementById('adjustStockItemLabel').value = `${name} (${size || 'GENERAL'})`;
+        document.getElementById('adjustStockOldValue').value = currentStock;
+        document.getElementById('adjustStockNewValue').value = currentStock;
+
+        safeModalShow('adjustStockModal');
+      },
+
+      async handleAdjustSubmit(e) {
+        e.preventDefault();
+
+        const name = document.getElementById('adjustStockName').value;
+        const size = document.getElementById('adjustStockSize').value;
+        const newValue = parseFloat(document.getElementById('adjustStockNewValue').value);
+        const reason = document.getElementById('adjustStockReason').value.trim();
+
+        if (isNaN(newValue)) {
+          App.Utils.showToast('Corrected stock must be a valid number.', true);
+          return;
+        }
+        if (!reason) {
+          App.Utils.showToast('Please provide a reason for this adjustment.', true);
+          return;
+        }
+
+        const submitBtn = document.getElementById('adjustStockSubmitBtn');
+        try {
+          if (submitBtn) { submitBtn.disabled = true; submitBtn.innerText = 'Saving...'; }
+          const res = await Api.call('adjustStockManually', name, size, newValue, reason);
+          App.Utils.showToast(res?.message || 'Stock adjusted.', !res?.success);
+          if (res?.success) {
+            safeModalHide('adjustStockModal');
+            await this.loadData();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to adjust stock.', true);
+        } finally {
+          if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = 'Save Correction'; }
+        }
+      },
+
+      handleImport(e) {
+        e.preventDefault();
+
+        const fileInput = document.getElementById('stockFileInput');
+        if (!fileInput || !fileInput.files.length) {
+          App.Utils.showToast('Please select a CSV or Excel file to upload.', true);
+          return;
+        }
+
+        const file = fileInput.files[0];
+        const submitBtn = document.getElementById('stockImportSubmitBtn');
+
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.innerText = 'Parsing File...';
+        }
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            if (typeof XLSX === 'undefined') {
+              await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+            }
+
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+
+            if (!workbook.SheetNames.length) {
+              throw new Error('Workbook contains no sheets.');
+            }
+
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+
+            // Convert to 2D array
+            const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+            if (2 > rows.length) {
+              throw new Error('File does not contain enough data (missing header or content rows).');
+            }
+
+            // Parse headers dynamically
+            const headers = (rows[0] || []).map(h => String(h || '').trim().toLowerCase());
+
+            // Find column indices
+            const nameIdx = headers.findIndex(h => h.includes('item name') || h === 'item' || h === 'name' || h === 'item_name');
+            const sizeIdx = headers.findIndex(h => h === 'size' || h.includes('size'));
+            const qtyIdx = headers.findIndex(h => h.includes('quantity') || h.includes('qty') || h.includes('initial') || h.includes('stock'));
+
+            if (nameIdx === -1) {
+              throw new Error('Could not find column for "Item Name" in headers.');
+            }
+            if (qtyIdx === -1) {
+              throw new Error('Could not find column for "Quantity" or "Qty" or "Initial Stock" in headers.');
+            }
+
+            const items = [];
+            for (let i = 1; rows.length > i; i++) {
+              const row = rows[i];
+              if (!row || row.length === 0) continue;
+
+              const name = String(row[nameIdx] || '').trim();
+              const size = sizeIdx !== -1 ? String(row[sizeIdx] || '').trim() : 'GENERAL';
+              const qty = Number(row[qtyIdx]);
+
+              if (name && !isNaN(qty) && qty >= 0) {
+                items.push({
+                  name: name,
+                  size: size,
+                  initialStock: qty
+                });
+              }
+            }
+
+            if (items.length === 0) {
+              throw new Error('No valid item records found in the file. Check item names and quantity numbers.');
+            }
+
+            if (submitBtn) {
+              submitBtn.innerText = 'Uploading to Server...';
+            }
+
+            // Call backend import
+            const res = await Api.call('importStockData', items);
+
+            safeModalHide('importStockModal');
+            App.Utils.showToast(res?.message || 'Stock imported successfully.', !res?.success);
+
+            if (res?.success) {
+              await this.loadData();
+            }
+          } catch (err) {
+            App.Utils.showToast('Failed to parse and import file: ' + err.message, true);
+          } finally {
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.innerText = 'Start Import';
+            }
+          }
+        };
+
+        reader.onerror = () => {
+          App.Utils.showToast('Failed to read file.', true);
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Start Import';
+          }
+        };
+
+        reader.readAsArrayBuffer(file);
+      },
+
+      printLowStockReport() {
+        const lowStockItems = App.State.globalStock.filter(item => item.isLowStock);
+        this.printStockPivot(lowStockItems, [], {
+          subtitle: 'Low Stock Alerts & Inventory Status Report',
+          reportType: 'Inventory Alert (Low Stock)',
+          fileNamePrefix: 'Low_Stock_Report',
+          emptyMessage: 'All items are well stocked. No low stock alerts.'
+        });
+      },
+
+      // Prints every item currently on the Stock sheet (regardless of any
+      // active search/filter on the table) as a pivot: one row per item
+      // name, one column per size, cell = current stock for that size.
+      // Also pulls in every Warehouse Pool bucket (WIP inventory not yet on
+      // the Stock sheet) as its own "(Warehouse Pool)" row — one row per
+      // distinct color/product-tag combination, not summed together — so the
+      // printed list reflects total on-hand inventory, not just finished stock.
+      async printFullStockList() {
+        let poolItems = App.State.globalWarehousePool || [];
+        try {
+          const poolRes = await Api.call('getWarehousePoolData');
+          if (poolRes?.success) {
+            poolItems = Array.isArray(poolRes.data) ? poolRes.data : [];
+            App.State.globalWarehousePool = poolItems;
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load Warehouse Pool data; printing stock items only.', true);
+        }
+
+        this.printStockPivot(App.State.globalStock, poolItems, {
+          subtitle: 'Complete Item & Stock Register',
+          reportType: 'Full Inventory List (Current Stock by Size)',
+          fileNamePrefix: 'Complete_Item_Stock_List',
+          emptyMessage: 'No stock records found.'
+        });
+      },
+
+      // Populates and prints #print-low-stock-container as a pivot: one row
+      // per item name, one column per size, cell = current stock for that
+      // size. Shared by "Print Complete Item/Stock List" (printFullStockList,
+      // which also folds in Warehouse Pool buckets), "Print Low Stock Report"
+      // (printLowStockReport), and the checkbox-driven "Print Selected"
+      // action (bulkPrint) — the latter two pass no pool items.
+      printStockPivot(items, poolItems, {
+        subtitle = 'Inventory Status Report',
+        reportType = 'Stock Report',
+        fileNamePrefix = 'Stock_Report',
+        emptyMessage = 'No stock records found.'
+      } = {}) {
+        const sizeSet = new Set();
+        const byName = new Map(); // name -> Map(size -> {currentStock, isLowStock})
+        items.forEach(item => {
+          const sizeLabel = item.size || 'GENERAL';
+          sizeSet.add(sizeLabel);
+          if (!byName.has(item.name)) byName.set(item.name, new Map());
+          byName.get(item.name).set(sizeLabel, {
+            currentStock: item.currentStock,
+            isLowStock: item.isLowStock
+          });
+        });
+
+        (poolItems || []).forEach(r => {
+          if (!r.outputItemName) return;
+          const sizeLabel = App.Utils.getSizeFromOutputItemName(r.outputItemName) || 'GENERAL';
+          // Each color/product-tag bucket prints as its own row (same "(Tag: X)"
+          // / "[Color]" convention as the Warehouse Pool Ledger modal) instead of
+          // being summed together, so distinct buckets stay visible in the report.
+          let name = `${r.outputItemName} (Warehouse Pool)`;
+          if (r.productTag) name += ` (Tag: ${r.productTag})`;
+          if (r.color) name += ` [${r.color}]`;
+          sizeSet.add(sizeLabel);
+          if (!byName.has(name)) byName.set(name, new Map());
+          const sizeMap = byName.get(name);
+          const existing = sizeMap.get(sizeLabel);
+          sizeMap.set(sizeLabel, {
+            currentStock: (existing ? existing.currentStock : 0) + (r.availableQty || 0),
+            isLowStock: false
+          });
+        });
+
+        const sizes = [...sizeSet].sort((a, b) => a.localeCompare(b));
+        const names = [...byName.keys()].sort((a, b) => a.localeCompare(b));
+
+        const headerRow = document.getElementById('print-low-stock-header-row');
+        if (headerRow) {
+          headerRow.innerHTML = `
+            <th style="padding:6px;border:1px solid #000;text-align:left;">Item Name</th>
+            ${sizes.map(s => `<th style="padding:6px;border:1px solid #000;text-align:center;">${escapeHtml(s)}</th>`).join('')}
+          `;
+        }
+
+        const subtitleEl = document.getElementById('print-low-stock-subtitle');
+        if (subtitleEl) subtitleEl.innerText = subtitle;
+
+        const titleEl = document.getElementById('print-low-stock-report-type');
+        if (titleEl) titleEl.innerText = reportType;
+
+        const dateEl = document.getElementById('print-low-stock-date');
+        if (dateEl) dateEl.innerText = new Date().toLocaleDateString('en-GB');
+
+        const bodyEl = document.getElementById('print-low-stock-body');
+        if (bodyEl) {
+          if (!names.length) {
+            bodyEl.innerHTML = `<tr><td colspan="${sizes.length + 1}" style="text-align:center;color:#777;padding:24px;">${escapeHtml(emptyMessage)}</td></tr>`;
+          } else {
+            bodyEl.innerHTML = names.map(name => {
+              const sizeMap = byName.get(name);
+              const cells = sizes.map(size => {
+                const entry = sizeMap.get(size);
+                if (!entry) return `<td style="padding:6px;border:1px solid #999;text-align:center;color:#1a1a1a;">-</td>`;
+                return `<td style="padding:6px;border:1px solid #999;text-align:center;color:#1a1a1a;${entry.isLowStock ? 'background:#e0e0e0;font-weight:800;' : ''}">${entry.currentStock}</td>`;
+              }).join('');
+              return `
+            <tr>
+              <td style="padding:6px;border:1px solid #999;text-align:left;"><strong style="color:#1a1a1a;">${escapeHtml(name)}</strong></td>
+              ${cells}
+            </tr>
+          `;
+            }).join('');
+          }
+        }
+
+        App.Print.trigger('print-low-stock-container', `${fileNamePrefix}_${new Date().toISOString().slice(0, 10)}`);
+      }
+    };
+</script>

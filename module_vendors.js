@@ -826,7 +826,7 @@ function autoExtractFromPoOrBill(vendorName, contact, items, docInfo) {
       try {
         _appendRateHistoryRows(rateHistoryRows);
       } catch (rateHistoryError) {
-        console.error('[autoExtractFromPoOrBill] Rate History append failed:', rateHistoryError.message);
+        Log.error('[autoExtractFromPoOrBill] Rate History append failed:', rateHistoryError.message);
         logAction('AUTO_EXTRACT_ERROR', 'RateHistory', vendorName, rateHistoryError.message, 'ERROR');
       }
     }
@@ -834,7 +834,7 @@ function autoExtractFromPoOrBill(vendorName, contact, items, docInfo) {
     invalidateListCache(MASTER_DATA_CACHE_KEYS.VENDORS, MASTER_DATA_CACHE_KEYS.ITEMS);
 
   } catch (error) {
-    console.error('[autoExtractFromPoOrBill] Error:', error.message);
+    Log.error('[autoExtractFromPoOrBill] Error:', error.message);
     logAction('AUTO_EXTRACT_ERROR', 'autoExtractFromPoOrBill', vendorName, error.message, 'ERROR');
   }
 }

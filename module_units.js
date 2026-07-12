@@ -62,7 +62,7 @@ function initUnitsSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Unit Master sheet initialized successfully.');
   } catch (error) {
-    console.error('[initUnitsSheet] Error:', error.message);
+    Log.error('[initUnitsSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Unit Master sheet: ' + error.message);
   }
 }
@@ -94,7 +94,7 @@ function getUnitsData() {
 
       return buildResponse(true, units);
     } catch (error) {
-      console.error('[getUnitsData] Error:', error.message);
+      Log.error('[getUnitsData] Error:', error.message);
       return buildResponse(false, null, 'Failed to load units: ' + error.message);
     }
   });
@@ -259,7 +259,7 @@ function saveUnit(formData) {
 
     return buildResponse(true, { unitName: newName }, msg);
   } catch (error) {
-    console.error('[saveUnit] Error:', error.message);
+    Log.error('[saveUnit] Error:', error.message);
     logAction('ERROR', 'saveUnit', formData ? formData.unitName : 'unknown', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save unit: ' + error.message);
   } finally {
@@ -304,7 +304,7 @@ function deleteUnit(unitName) {
     logAction('DELETE', APP_CONFIG.SHEETS.UNITS, unitName, 'Unit deleted', 'SUCCESS');
     return buildResponse(true, null, `Unit "${unitName}" deleted.`);
   } catch (error) {
-    console.error('[deleteUnit] Error:', error.message);
+    Log.error('[deleteUnit] Error:', error.message);
     logAction('ERROR', 'deleteUnit', unitName, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete unit: ' + error.message);
   } finally {

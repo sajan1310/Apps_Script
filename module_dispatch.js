@@ -68,7 +68,7 @@ function initDispatchSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Dispatch sheet initialized successfully.');
   } catch (error) {
-    console.error('[initDispatchSheet] Error:', error.message);
+    Log.error('[initDispatchSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Dispatch sheet: ' + error.message);
   }
 }
@@ -89,7 +89,7 @@ function ensureDispatchExtraColumns(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureDispatchExtraColumns] Error:', error.message);
+    Log.error('[ensureDispatchExtraColumns] Error:', error.message);
   }
 }
 
@@ -109,7 +109,7 @@ function ensureDispatchLogisticsColumns(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureDispatchLogisticsColumns] Error:', error.message);
+    Log.error('[ensureDispatchLogisticsColumns] Error:', error.message);
   }
 }
 
@@ -144,7 +144,7 @@ function getNextDispatchNumber() {
 
     return 'DSP-' + (maxNum + 1);
   } catch (error) {
-    console.error('[getNextDispatchNumber] Error:', error.message);
+    Log.error('[getNextDispatchNumber] Error:', error.message);
     return 'DSP-1001';
   }
 }
@@ -241,7 +241,7 @@ function getReadyToDispatchData() {
 
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getReadyToDispatchData] Error:', error.message);
+    Log.error('[getReadyToDispatchData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load Ready to Dispatch data: ' + error.message);
   }
 }
@@ -308,7 +308,7 @@ function getDispatchData() {
 
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getDispatchData] Error:', error.message);
+    Log.error('[getDispatchData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load dispatch data: ' + error.message);
   }
 }
@@ -466,7 +466,7 @@ function saveDispatch(formData) {
 
     return buildResponse(true, { dispatchNumber: dispatchNumber }, successMsg);
   } catch (error) {
-    console.error('[saveDispatch] Error:', error.message);
+    Log.error('[saveDispatch] Error:', error.message);
     logAction('ERROR', 'saveDispatch', formData.productId || 'NEW', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save dispatch: ' + error.message);
   } finally {
@@ -516,7 +516,7 @@ function deleteDispatch(rowIdx, expectedDispatchNumber, expectedQty) {
 
     return buildResponse(true, null, 'Dispatch record deleted successfully.');
   } catch (error) {
-    console.error('[deleteDispatch] Error:', error.message);
+    Log.error('[deleteDispatch] Error:', error.message);
     logAction('ERROR', 'deleteDispatch', String(rowIdx), error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete dispatch: ' + error.message);
   } finally {
@@ -561,7 +561,7 @@ function deleteDispatchBulk(rowIdxs) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[deleteDispatchBulk] Error:', error.message);
+    Log.error('[deleteDispatchBulk] Error:', error.message);
     logAction('ERROR', 'deleteDispatchBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete dispatch records: ' + error.message);
   } finally {

@@ -1,0 +1,800 @@
+<script>
+  'use strict';
+  // Script_Dispatch.html -- App.Dispatch
+
+    // ==========================================
+    // DISPATCH NAMESPACE
+    // ==========================================
+    App.State.globalReadyToDispatch = [];
+    App.State.filteredReadyToDispatch = [];
+    App.State.globalDispatch = [];
+    App.State.filteredDispatch = [];
+
+    App.Dispatch = {
+      async enterTab() {
+        const fetches = [
+          App.Contractor.ensureLoaded(),
+          this.loadReadyData(),
+          this.loadDispatchData()
+        ];
+
+        if (!App.State.globalOrders || !App.State.globalOrders.length) {
+          fetches.push(
+            Api.call('getClientOrdersData')
+              .then(res => { if (res.success) App.State.globalOrders = res.data; })
+              .catch(() => { /* Ignored — order dropdown will simply be empty until PI/Estimates load elsewhere. */ })
+          );
+        }
+        if (!App.State.globalClients || !App.State.globalClients.length) {
+          fetches.push(
+            Api.call('getClientsData')
+              .then(res => { if (res.success) App.State.globalClients = res.data; })
+              .catch(() => { /* Ignored — client dropdown will simply be empty until Clients load elsewhere. */ })
+          );
+        }
+
+        await Promise.all(fetches);
+
+        this.switchSubTab('readyToDispatchSubTab');
+      },
+
+      switchSubTab(id) {
+        $$('.dispatch-sub-tab').forEach(t => t.style.display = 'none');
+        const target = document.getElementById(id);
+        if (target) target.style.display = 'block';
+
+        $$('#dispatchSubTabs .nav-link').forEach(btn => btn.classList.remove('active'));
+        document.getElementById('btn-' + id)?.classList.add('active');
+      },
+
+      // ── Ready to Dispatch ──────────────────────────────────────
+      async loadReadyData() {
+        const tbody = document.getElementById('readyToDispatchTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4">Loading Ready to Dispatch Data...</td></tr>';
+
+        try {
+          const response = await Api.call('getReadyToDispatchData');
+          if (!response.success) {
+            App.Utils.showToast(response.message, true);
+            return;
+          }
+          App.State.globalReadyToDispatch = response.data;
+          App.State.filteredReadyToDispatch = response.data;
+          this.renderReadyTable();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load Ready to Dispatch data', true);
+        }
+      },
+
+      filterReady(searchTerm) {
+        const term = String(searchTerm || '').toLowerCase().trim();
+        App.State.filteredReadyToDispatch = term
+          ? App.State.globalReadyToDispatch.filter(r => App.Utils.matchesKeywords(`${r.productId} ${r.productName}`, term))
+          : App.State.globalReadyToDispatch;
+        this.renderReadyTable();
+      },
+
+      renderReadyTable() {
+        const tbody = document.getElementById('readyToDispatchTableBody');
+        if (!tbody) return;
+
+        const emptyState = document.getElementById('readyToDispatchEmptyState');
+        if (App.State.filteredReadyToDispatch.length === 0) {
+          tbody.innerHTML = '';
+          if (emptyState) emptyState.style.display = 'block';
+          return;
+        }
+        if (emptyState) emptyState.style.display = 'none';
+
+        let html = '';
+        App.State.filteredReadyToDispatch.forEach(r => {
+          const readyClass = r.readyQty > 0 ? 'text-success fw-bold' : 'text-muted';
+          html += `<tr>
+        <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(r.productId)}</span></td>
+        <td><strong>${escapeHtml(r.productName)}</strong></td>
+        <td class="text-center">${App.Production.formatQty(r.producedQty)}</td>
+        <td class="text-center">${App.Production.formatQty(r.dispatchedQty)}</td>
+        <td class="text-center ${readyClass}">${App.Production.formatQty(r.readyQty)}</td>
+        <td class="text-center">
+          <button class="btn btn-sm btn-success btn-action" ${r.readyQty > 0 ? '' : 'disabled'} onclick="App.Dispatch.openCreateDispatchModal('${escapeHtml(r.productId)}')">Dispatch</button>
+        </td>
+      </tr>`;
+        });
+
+        tbody.innerHTML = html;
+      },
+
+      // ── Dispatched Goods ───────────────────────────────────────
+      async loadDispatchData() {
+        const tbody = document.getElementById('dispatchTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="11" class="text-center p-4">Loading Dispatched Goods...</td></tr>';
+
+        try {
+          const response = await Api.call('getDispatchData');
+          if (!response.success) {
+            App.Utils.showToast(response.message, true);
+            return;
+          }
+          App.State.globalDispatch = response.data;
+          App.State.filteredDispatch = response.data;
+          App.State.dispatchCurrentPage = 1;
+          App.State.dispatchSortBy = App.State.dispatchSortBy || 'dateDesc';
+          App.State.selectedDispatch = [];
+          this.sortFilteredDispatch();
+          this.renderDispatchTable();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load dispatch data', true);
+        }
+      },
+
+      filterDispatch(searchTerm) {
+        const term = String(searchTerm || '').toLowerCase().trim();
+        App.State.filteredDispatch = term
+          ? App.State.globalDispatch.filter(d => App.Utils.matchesKeywords(`${d.dispatchNumber} ${d.orderNumber} ${d.clientName} ${d.productId} ${d.productName}`, term))
+          : App.State.globalDispatch;
+        this.sortFilteredDispatch();
+        App.State.dispatchCurrentPage = 1;
+        this.renderDispatchTable();
+      },
+
+      // Field/direction combos selectable via the "Sort by" dropdown
+      // (View_Dispatch.html#dispatchSortBy). Applied to filteredDispatch
+      // after every filter pass, before the pagination slice in renderDispatchTable.
+      DISPATCH_SORT_COMPARATORS: {
+        dateDesc: (a, b) => parseRecordDate(b.dateRaw, b.dispatchDate) - parseRecordDate(a.dateRaw, a.dispatchDate),
+        dateAsc: (a, b) => parseRecordDate(a.dateRaw, a.dispatchDate) - parseRecordDate(b.dateRaw, b.dispatchDate),
+        clientAsc: (a, b) => String(a.clientName || '').localeCompare(String(b.clientName || '')),
+        clientDesc: (a, b) => String(b.clientName || '').localeCompare(String(a.clientName || '')),
+        qtyDesc: (a, b) => (b.qty || 0) - (a.qty || 0),
+        qtyAsc: (a, b) => (a.qty || 0) - (b.qty || 0),
+        dispatchNumberDesc: (a, b) => (parseInt(String(b.dispatchNumber).replace(/\D/g, ''), 10) || 0) - (parseInt(String(a.dispatchNumber).replace(/\D/g, ''), 10) || 0),
+        dispatchNumberAsc: (a, b) => (parseInt(String(a.dispatchNumber).replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.dispatchNumber).replace(/\D/g, ''), 10) || 0)
+      },
+
+      sortFilteredDispatch() {
+        const cmp = this.DISPATCH_SORT_COMPARATORS[App.State.dispatchSortBy];
+        if (cmp) App.State.filteredDispatch.sort(cmp);
+      },
+
+      sortDispatchBy(value) {
+        App.State.dispatchSortBy = value;
+        this.sortFilteredDispatch();
+        App.State.dispatchCurrentPage = 1;
+        this.renderDispatchTable();
+      },
+
+      changeDispatchPage(page) {
+        App.State.dispatchCurrentPage = App.Utils.clampPage(page, App.State.filteredDispatch.length, App.State.dispatchRowsPerPage);
+        this.renderDispatchTable();
+      },
+
+      renderDispatchTable() {
+        const tbody = document.getElementById('dispatchTableBody');
+        if (!tbody) return;
+
+        const emptyState = document.getElementById('dispatchEmptyState');
+        if (App.State.filteredDispatch.length === 0) {
+          tbody.innerHTML = '';
+          if (emptyState) emptyState.style.display = 'block';
+          App.Utils.renderPagination('dispatchPagination', 0, 1, App.State.dispatchRowsPerPage, 'dispatch-page', 'Dispatch Records');
+          this.updateDispatchBulkButtons();
+          return;
+        }
+        if (emptyState) emptyState.style.display = 'none';
+
+        const { filteredDispatch, dispatchCurrentPage: cur, dispatchRowsPerPage: rpp } = App.State;
+        const start = (cur - 1) * rpp;
+        const pageItems = filteredDispatch.slice(start, start + rpp);
+
+        const selectAllChk = document.getElementById('selectAllDispatch');
+        if (selectAllChk) {
+          selectAllChk.checked = pageItems.length > 0 &&
+            pageItems.every(d => App.Selection.isSelected(App.State.selectedDispatch, String(d.rowIdx)));
+        }
+
+        let html = '';
+        pageItems.forEach(d => {
+          const idx = App.State.globalDispatch.indexOf(d);
+          const key = String(d.rowIdx);
+          const checked = App.Selection.isSelected(App.State.selectedDispatch, key) ? 'checked' : '';
+
+          html += `<tr>
+        <td class="text-center">
+          <input type="checkbox" class="form-check-input dispatch-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Dispatch.onDispatchRowSelectChange()">
+        </td>
+        <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(d.dispatchNumber)}</span></td>
+        <td>${escapeHtml(d.dispatchDate)}</td>
+        <td>${d.orderNumber ? escapeHtml(d.orderNumber) : '<span class="text-muted">&mdash;</span>'}</td>
+        <td>${escapeHtml(d.clientName) || '-'}</td>
+        <td><strong>${escapeHtml(d.productName)}</strong><br><small class="text-muted">${escapeHtml(d.productId)}</small></td>
+        <td class="text-center fw-bold">${App.Production.formatQty(d.qty)}</td>
+        <td>${escapeHtml(d.transport) || '-'}</td>
+        <td><small>${d.invoiceNumber ? `Inv: ${escapeHtml(d.invoiceNumber)}` : '<span class="text-muted">No Invoice #</span>'}${d.grNumber ? `<br>GR: ${escapeHtml(d.grNumber)}` : ''}</small></td>
+        <td class="text-end">${d.logisticsCost ? `${formatCurrency(d.logisticsCost)}<br><small class="text-muted">${escapeHtml(d.logisticsContractor)}</small>` : '<span class="text-muted">&mdash;</span>'}</td>
+        <td class="text-center">
+          <button class="btn btn-sm btn-outline-dark btn-action w-100 mb-1" onclick="App.Dispatch.print('${idx}')">Print Challan</button>
+          <button class="btn btn-sm btn-outline-primary btn-action w-100 mb-1" onclick="App.Dispatch.openEditDispatchModal('${idx}')">Edit</button>
+          <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Dispatch.delete('${d.rowIdx}', '${escapeHtml(d.dispatchNumber)}', '${d.qty}')">Delete</button>
+        </td>
+      </tr>`;
+        });
+
+        tbody.innerHTML = html;
+
+        App.Utils.renderPagination('dispatchPagination', filteredDispatch.length, cur, rpp, 'dispatch-page', 'Dispatch Records');
+        this.updateDispatchBulkButtons();
+      },
+
+      toggleSelectAllDispatch(masterChk) {
+        App.Selection.toggleAll(App.State.selectedDispatch, 'dispatch-select-chk', masterChk);
+        this.updateDispatchBulkButtons();
+      },
+
+      onDispatchRowSelectChange() {
+        App.Selection.syncFromRows(App.State.selectedDispatch, 'dispatch-select-chk', 'selectAllDispatch');
+        this.updateDispatchBulkButtons();
+      },
+
+      updateDispatchBulkButtons() {
+        const count = App.State.selectedDispatch.length;
+        App.Selection.updateButton('btnBulkDeleteDispatch', count, '<i class="bi bi-trash"></i> Delete Selected');
+        App.Selection.updateButton('btnBulkPrintDispatch', count, '<i class="bi bi-printer"></i> Print Selected');
+      },
+
+      // Populates #print-dispatch-container's fields from one Dispatch
+      // record for the per-row "Print Challan" button — a GST delivery
+      // challan, since goods physically leave the factory on a Dispatch.
+      // Consignee address/GSTIN aren't stored on the Dispatch row itself
+      // (only clientName is), so they're looked up from Client Master here.
+      populateDispatchPrintData(index) {
+        const d = App.State.globalDispatch[index];
+        if (!d) return null;
+
+        const setText = (id, val) => {
+          const el = document.getElementById(id);
+          if (el) el.innerText = val ?? '';
+        };
+
+        const client = (App.State.globalClients || []).find(c => App.Utils.sameText(c.name, d.clientName));
+        const item = (App.State.globalItems || []).find(it => App.Utils.sameText(it.name, d.productName));
+
+        setText('print-dispatch-number', d.dispatchNumber || '');
+        setText('print-dispatch-date', d.dispatchDate || '');
+        setText('print-dispatch-client', d.clientName || '');
+        setText('print-dispatch-client-address', client?.address || '');
+        setText('print-dispatch-client-gstin', client?.gstin || '');
+        setText('print-dispatch-transport', d.transport || '');
+        setText('print-dispatch-order-ref', d.orderNumber || '');
+
+        const grRefParts = [];
+        if (d.invoiceNumber) grRefParts.push(`Inv: ${d.invoiceNumber}`);
+        if (d.grNumber) grRefParts.push(`GR: ${d.grNumber}`);
+        setText('print-dispatch-gr-ref', grRefParts.join(' | '));
+        setText('print-dispatch-remarks', d.remarks || '');
+
+        const tbody = document.getElementById('print-dispatch-items-body');
+        if (tbody) {
+          tbody.innerHTML = `<tr>
+            <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">1</td>
+            <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${escapeHtml(d.productName || '')}${d.productId ? ` <small style="color:#888;">(${escapeHtml(d.productId)})</small>` : ''}</td>
+            <td style="padding:7px 6px;border:1px solid #e5e5e5;">${escapeHtml(item?.hsn || '')}</td>
+            <td style="padding:7px 6px;border:1px solid #e5e5e5;font-weight:600;">${escapeHtml(String(toNumber(d.qty)))}</td>
+            <td style="padding:7px 6px;border:1px solid #e5e5e5;">Pcs</td>
+          </tr>`;
+        }
+
+        return d;
+      },
+
+      print(index) {
+        const d = this.populateDispatchPrintData(index);
+        if (!d) return;
+
+        const title = `Delivery_Challan_${d.dispatchNumber}_${String(d.clientName || '')
+          .replace(/[^a-zA-Z0-9 \-]/g, '')
+          .trim()
+          .replace(/\s+/g, '_')}`;
+        App.Print.trigger('print-dispatch-container', title);
+      },
+
+      bulkPrint() {
+        const selected = App.State.selectedDispatch;
+        if (!selected.length) {
+          App.Utils.showToast('No dispatch records selected.', true);
+          return;
+        }
+
+        const records = App.State.globalDispatch.filter(d => App.Selection.isSelected(selected, String(d.rowIdx)));
+        if (!records.length) return;
+
+        App.Print.triggerBulk(records, d => this.buildDispatchPrintPageHtml(d), 'Delivery_Challans_Selected');
+      },
+
+      // Builds a fully self-contained "Delivery Challan" page (mirrors
+      // #print-dispatch-container's markup/styling) for use in bulk printing.
+      buildDispatchPrintPageHtml(d) {
+        const BRAND = '#0D6EFD';
+        const client = (App.State.globalClients || []).find(c => App.Utils.sameText(c.name, d.clientName));
+        const item = (App.State.globalItems || []).find(it => App.Utils.sameText(it.name, d.productName));
+
+        const grRefParts = [];
+        if (d.invoiceNumber) grRefParts.push(`Inv: ${escapeHtml(d.invoiceNumber)}`);
+        if (d.grNumber) grRefParts.push(`GR: ${escapeHtml(d.grNumber)}`);
+
+        return `
+        <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <div style="text-align:center;padding:4px 0 8px 0;">
+            ${App.Print.brandHeaderHtml(BRAND)}
+            <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
+              6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
+            </div>
+            <div style="font-size:10px;color:#555;margin-top:2px;letter-spacing:0.3px;">
+              Ph : 86996-42398, 91546-94000, 94170-42398 &nbsp;|&nbsp; E-mail : maharaja.bikes@gmail.com
+              &nbsp;&nbsp; GSTIN : 03AFIPS4089J1Z1
+            </div>
+          </div>
+          <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div style="flex:1;text-align:left;">
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Challan Number</span>
+              <div style="font-size:15px;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${escapeHtml(d.dispatchNumber || '')}</div>
+            </div>
+            <div style="flex:2;text-align:center;">
+              <span style="font-size:18px;font-weight:800;color:${BRAND};letter-spacing:3px;text-transform:uppercase;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+                Delivery Challan
+              </span>
+            </div>
+            <div style="flex:1;text-align:right;">
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
+              <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(d.dispatchDate || '')}</div>
+            </div>
+          </div>
+
+          <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
+
+          <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
+            <div style="display:flex;gap:16px;">
+              <div style="flex:1;">
+                <div style="margin-bottom:6px;">
+                  <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Consignee (Ship To)</span>
+                  <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(d.clientName || '')}</div>
+                </div>
+                <div style="margin-bottom:6px;">
+                  <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Address</span>
+                  <div style="font-size:11px;color:#333;margin-top:1px;white-space:pre-wrap;">${escapeHtml(client?.address || '')}</div>
+                </div>
+                <div>
+                  <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">GSTIN</span>
+                  <div style="font-size:11px;color:#333;margin-top:1px;font-weight:600;">${escapeHtml(client?.gstin || '')}</div>
+                </div>
+              </div>
+              <div style="flex:1;">
+                <div style="margin-bottom:6px;">
+                  <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vehicle / Transport</span>
+                  <div style="font-size:11px;color:#333;margin-top:1px;">${escapeHtml(d.transport || '')}</div>
+                </div>
+                <div style="margin-bottom:6px;">
+                  <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Order Reference</span>
+                  <div style="font-size:11px;color:#333;margin-top:1px;">${escapeHtml(d.orderNumber || '')}</div>
+                </div>
+                <div>
+                  <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">GR / Invoice #</span>
+                  <div style="font-size:11px;color:#333;margin-top:1px;">${grRefParts.join(' | ')}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
+            <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              <tr>
+                <th style="padding:8px 6px;border:1px solid ${BRAND};text-align:center;width:6%;">#</th>
+                <th style="padding:8px 6px;border:1px solid ${BRAND};text-align:left;width:52%;">Item / Product Name</th>
+                <th style="padding:8px 6px;border:1px solid ${BRAND};text-align:center;width:17%;">HSN</th>
+                <th style="padding:8px 6px;border:1px solid ${BRAND};text-align:center;width:12%;">Qty</th>
+                <th style="padding:8px 6px;border:1px solid ${BRAND};text-align:center;width:13%;">Unit</th>
+              </tr>
+            </thead>
+            <tbody style="color:#1a1a1a;text-align:center;">
+              <tr>
+                <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">1</td>
+                <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${escapeHtml(d.productName || '')}${d.productId ? ` <small style="color:#888;">(${escapeHtml(d.productId)})</small>` : ''}</td>
+                <td style="padding:7px 6px;border:1px solid #e5e5e5;">${escapeHtml(item?.hsn || '')}</td>
+                <td style="padding:7px 6px;border:1px solid #e5e5e5;font-weight:600;">${escapeHtml(String(toNumber(d.qty)))}</td>
+                <td style="padding:7px 6px;border:1px solid #e5e5e5;">Pcs</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div style="display:flex;gap:20px;margin-bottom:24px;min-height:40px;page-break-inside:avoid;break-inside:avoid;">
+            <div style="flex:1;padding-top:6px;border-top:1px solid #ccc;">
+              <div style="font-size:9px;color:${BRAND};text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:4px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Remarks</div>
+              <span style="white-space:pre-wrap;font-size:11px;color:#444;line-height:1.5;">${escapeHtml(d.remarks || '')}</span>
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;page-break-inside:avoid;break-inside:avoid;">
+            <div style="width:180px;text-align:center;padding-top:5px;border-top:2px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              <span style="font-size:10px;color:#666;letter-spacing:0.5px;font-style:italic;">Authorized Signatory</span>
+            </div>
+          </div>
+        </div>`;
+      },
+
+      async bulkDeleteDispatch() {
+        const selected = App.State.selectedDispatch.slice();
+        if (!selected.length) return;
+
+        App.Utils.confirmAction(
+          `Are you sure you want to permanently delete ${selected.length} selected dispatch record(s)? This will increase the Ready to Dispatch quantity for the affected products.`,
+          async () => {
+            try {
+              const res = await Api.call('deleteDispatchBulk', selected);
+              App.Utils.showToast(res.message, !res.success);
+              if (res.success) {
+                App.State.selectedDispatch = [];
+                await this.loadDispatchData();
+                await this.loadReadyData();
+              }
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete dispatch records', true);
+            }
+          }
+        );
+      },
+
+      delete(rowIdx, dispatchNumber, qty) {
+        App.Utils.confirmAction(
+          `Are you sure you want to permanently delete Dispatch "${dispatchNumber}" (Qty: ${qty})? This will increase the Ready to Dispatch quantity for this product.`,
+          async () => {
+            try {
+              const res = await Api.call('deleteDispatch', rowIdx, dispatchNumber, qty);
+              App.Utils.showToast(res.message, !res.success);
+              if (res.success) {
+                await this.loadDispatchData();
+                await this.loadReadyData();
+              }
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete dispatch record', true);
+            }
+          }
+        );
+      },
+
+      // ── Modal: Create / Edit Dispatch ──────────────────────────
+      // Populates the optional PI/Order dropdown with open order-lines (pending
+      // qty > 0). `currentValue` ("orderNumber|productId") is always kept
+      // selectable even if its pending qty is exhausted, so editing an existing
+      // dispatch doesn't lose its order reference.
+      populateDispatchOrderSelect(currentValue) {
+        const select = document.getElementById('dispatchOrderSelect');
+        if (!select) return;
+
+        const currentRowIdx = toNumber(document.getElementById('dispatchRowIdx')?.value, 0);
+
+        let html = '<option value="">— Direct Supply (No Order) —</option>';
+        (App.State.globalOrders || []).forEach(o => {
+          if (o.status !== 'Order Confirmed') return;
+
+          (o.lines || []).forEach(line => {
+            const dispatched = (App.State.globalDispatch || [])
+              .filter(d => d.orderNumber === o.orderNumber && d.productId === line.productId && d.rowIdx !== currentRowIdx)
+              .reduce((sum, d) => sum + (Number(d.qty) || 0), 0);
+            const pending = (Number(line.qty) || 0) - dispatched;
+            const value = `${o.orderNumber}|${line.productId}`;
+            if (pending <= 0.0001 && value !== currentValue) return;
+
+            html += `<option value="${escapeHtml(value)}"
+          data-order="${escapeHtml(o.orderNumber)}"
+          data-client="${escapeHtml(o.clientName)}"
+          data-product-id="${escapeHtml(line.productId)}"
+          data-product-name="${escapeHtml(line.productName)}">
+          ${escapeHtml(o.orderNumber)} - ${escapeHtml(o.clientName)} - ${escapeHtml(line.productName)} (Pending: ${App.Production.formatQty(pending)})
+        </option>`;
+          });
+        });
+
+        select.innerHTML = html;
+        if (currentValue) select.value = currentValue;
+      },
+
+      handleDispatchOrderChange(value) {
+        const select = document.getElementById('dispatchOrderSelect');
+        const option = select?.selectedOptions?.[0];
+
+        if (!value || !option || !option.dataset.order) {
+          document.getElementById('dispatchOrderNumber').value = '';
+          return;
+        }
+
+        document.getElementById('dispatchOrderNumber').value = option.dataset.order;
+
+        const clientSelect = document.getElementById('dispatchClientSelect');
+        if (clientSelect) {
+          clientSelect.value = option.dataset.client || '';
+          if (window.jQuery?.fn?.select2 && window.jQuery(clientSelect).data('select2'))
+            window.jQuery(clientSelect).trigger('change.select2');
+        }
+
+        const productId = option.dataset.productId || '';
+        const productSelect = document.getElementById('dispatchProductSelect');
+        if (productSelect) {
+          const exists = Array.from(productSelect.options).some(o => o.value === productId);
+          if (!exists && productId) {
+            productSelect.add(new Option(`${option.dataset.productName} (${productId})`, productId));
+          }
+          productSelect.value = productId;
+          if (window.jQuery?.fn?.select2 && window.jQuery(productSelect).data('select2'))
+            window.jQuery(productSelect).trigger('change.select2');
+        }
+        document.getElementById('dispatchProductId').value = productId;
+        document.getElementById('dispatchProductName').value = option.dataset.productName || '';
+
+        this.updateDispatchQtyHelp(productId);
+      },
+
+      populateDispatchProductSelect(currentProductId) {
+        const select = document.getElementById('dispatchProductSelect');
+        if (!select) return;
+
+        if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2'))
+          window.jQuery(select).select2('destroy');
+
+        let html = '<option value="">Choose a Product...</option>';
+        (App.State.globalReadyToDispatch || []).forEach(r => {
+          html += `<option value="${escapeHtml(r.productId)}" data-product-name="${escapeHtml(r.productName)}">${escapeHtml(r.productName)} (${escapeHtml(r.productId)}) — Ready: ${App.Production.formatQty(r.readyQty)}</option>`;
+        });
+
+        select.innerHTML = html;
+        if (currentProductId) select.value = currentProductId;
+        App.Utils.autoSelectOnlyOption(select);
+
+        if (window.jQuery?.fn?.select2) {
+          const $s = window.jQuery(select);
+          const $modal = $s.closest('.modal');
+          $s.select2({
+            placeholder: 'Choose a Product...',
+            width: '100%',
+            matcher: App.Utils.select2Matcher,
+            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+          });
+        }
+      },
+
+      handleDispatchProductChange(productId) {
+        const select = document.getElementById('dispatchProductSelect');
+        const option = select?.selectedOptions?.[0];
+
+        document.getElementById('dispatchProductId').value = productId || '';
+        document.getElementById('dispatchProductName').value = option?.dataset.productName || '';
+
+        this.updateDispatchQtyHelp(productId);
+      },
+
+      // `originalQty` adds back this dispatch's own quantity when editing, since
+      // the computed Ready Qty already has it subtracted out.
+      updateDispatchQtyHelp(productId, originalQty = 0) {
+        const help = document.getElementById('dispatchQtyHelp');
+        if (!help) return;
+
+        const entry = (App.State.globalReadyToDispatch || []).find(r => r.productId === productId);
+        const ready = entry ? entry.readyQty : 0;
+        const available = ready + originalQty;
+        help.innerText = productId ? `Available to Dispatch: ${App.Production.formatQty(available)} unit(s)` : '';
+      },
+
+      openCreateDispatchModal(prefillProductId) {
+        const form = document.getElementById('dispatchForm');
+        if (form) form.reset();
+
+        document.getElementById('dispatchRowIdx').value = '';
+        document.getElementById('dispatchNumberHidden').value = '';
+        document.getElementById('dispatchVisibleNumber').value = '';
+        document.getElementById('dispatchDate').value = todayIso();
+
+        this.populateDispatchOrderSelect('');
+        document.getElementById('dispatchOrderNumber').value = '';
+
+        const dispatchClientEl = document.getElementById('dispatchClientSelect');
+        if (window.jQuery?.fn?.select2 && window.jQuery(dispatchClientEl).data('select2'))
+          window.jQuery(dispatchClientEl).select2('destroy');
+        App.Client.populateClientSelect(dispatchClientEl);
+        if (dispatchClientEl && window.jQuery?.fn?.select2) {
+          const $modal = window.jQuery(dispatchClientEl).closest('.modal');
+          window.jQuery(dispatchClientEl).select2({
+            placeholder: 'Choose a Client...',
+            width: '100%',
+            matcher: App.Utils.select2Matcher,
+            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+          });
+        }
+
+        this.populateDispatchProductSelect(prefillProductId || '');
+        const productSelectEl = document.getElementById('dispatchProductSelect');
+        const resolvedProductId = prefillProductId || (productSelectEl ? productSelectEl.value : '');
+        if (resolvedProductId) {
+          // Either explicitly prefilled, or populateDispatchProductSelect
+          // auto-selected the only Ready-to-Dispatch product — either way,
+          // sync the hidden Id/Name fields and qty hint the same way a
+          // manual pick would via handleDispatchProductChange.
+          this.handleDispatchProductChange(resolvedProductId);
+        } else {
+          document.getElementById('dispatchProductId').value = '';
+          document.getElementById('dispatchProductName').value = '';
+          document.getElementById('dispatchQtyHelp').innerText = '';
+        }
+
+        this.initLogisticsContractorSelect2('');
+        document.getElementById('dispatchLogisticsCostHint').innerText = '';
+
+        document.getElementById('dispatchFormTitle').innerText = 'New Dispatch';
+        document.getElementById('dispatchSubmitBtn').innerText = 'Save Dispatch';
+
+        safeModalShow('dispatchModal');
+      },
+
+      // Initializes a searchable Select2 on Logistics Contractor, same pattern
+      // as Production's Assigned To and BOM's cost-row Contractor fields.
+      initLogisticsContractorSelect2(currentValue) {
+        const selectEl = document.getElementById('dispatchLogisticsContractor');
+        if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+        const $select = window.jQuery(selectEl);
+        if ($select.data('select2')) $select.select2('destroy');
+        selectEl.innerHTML = '';
+        if (currentValue) selectEl.add(new Option(currentValue, currentValue, true, true));
+
+        const $parentModal = $select.closest('.modal');
+
+        $select.select2({
+          placeholder: 'Search or type a logistics contractor...',
+          width: '100%',
+          tags: true,
+          allowClear: true,
+          matcher: App.Utils.select2Matcher,
+          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+          data: (App.State.globalContractors || []).map(c => ({ id: c.name, text: c.name })),
+          createTag(params) {
+            const term = (params.term || '').trim();
+            if (!term) return null;
+            // Resolve to an existing contractor differing only by case/whitespace
+            // instead of minting a second, differently-cased entry for the
+            // same real contractor (e.g. typing "seat" when "Seat" is on file).
+            const existing = (App.State.globalContractors || []).find(c => App.Utils.sameText(c.name, term));
+            if (existing) return { id: existing.name, text: existing.name };
+            return { id: term, text: term, newTag: true };
+          }
+        });
+
+        // Same Select2 v4 synchronous re-entrant double-'change' quirk as
+        // Production's initContractorSelect2 — see its comment for details.
+        let handlingChange = false;
+        $select.off('change').on('change', () => {
+          if (handlingChange) return;
+          handlingChange = true;
+          Promise.resolve().then(() => { handlingChange = false; });
+          this.refreshLogisticsCostHint();
+        });
+      },
+
+      // Fetches and displays the logistics cost estimate for the current
+      // Logistics Contractor + Qty, so the operator sees the cost before save.
+      async refreshLogisticsCostHint() {
+        const hintEl = document.getElementById('dispatchLogisticsCostHint');
+        if (!hintEl) return;
+
+        const contractorName = document.getElementById('dispatchLogisticsContractor')?.value;
+        const qty = toNumber(document.getElementById('dispatchQty')?.value);
+
+        if (!contractorName || !qty) {
+          hintEl.innerText = '';
+          return;
+        }
+
+        try {
+          const res = await Api.call('getContractorRateForProcess', contractorName, 'Dispatch / Logistics');
+          const rate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
+          if (!rate) {
+            hintEl.innerText = `No rate card entry for "${contractorName}" / Dispatch / Logistics — cost will be 0.`;
+            return;
+          }
+          hintEl.innerText = `Logistics Cost: ${formatCurrency(qty * rate)} (${qty} x ${rate}/unit)`;
+        } catch (err) {
+          hintEl.innerText = '';
+        }
+      },
+
+      openEditDispatchModal(idx) {
+        const d = App.State.globalDispatch[idx];
+        if (!d) return;
+
+        const form = document.getElementById('dispatchForm');
+        if (form) form.reset();
+
+        document.getElementById('dispatchRowIdx').value = d.rowIdx;
+        document.getElementById('dispatchNumberHidden').value = d.dispatchNumber;
+        document.getElementById('dispatchVisibleNumber').value = d.dispatchNumber;
+
+        let inputDateStr = todayIso();
+        if (d.dispatchDate && d.dispatchDate.includes('/')) {
+          const [day, month, year] = d.dispatchDate.split('/');
+          inputDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        } else if (d.dateRaw) {
+          inputDateStr = d.dateRaw.split('T')[0];
+        }
+        document.getElementById('dispatchDate').value = inputDateStr;
+        document.getElementById('dispatchTransport').value = d.transport || '';
+        document.getElementById('dispatchInvoiceNumber').value = d.invoiceNumber || '';
+        document.getElementById('dispatchPrivateMark').value = d.privateMark || '';
+        document.getElementById('dispatchGrNumber').value = d.grNumber || '';
+        document.getElementById('dispatchRemarks').value = d.remarks || '';
+
+        this.populateDispatchOrderSelect(d.orderNumber ? `${d.orderNumber}|${d.productId}` : '');
+        document.getElementById('dispatchOrderNumber').value = d.orderNumber || '';
+
+        const editDispatchClientEl = document.getElementById('dispatchClientSelect');
+        if (window.jQuery?.fn?.select2 && window.jQuery(editDispatchClientEl).data('select2'))
+          window.jQuery(editDispatchClientEl).select2('destroy');
+        App.Client.populateClientSelect(editDispatchClientEl);
+        if (editDispatchClientEl) editDispatchClientEl.value = d.clientName || '';
+        if (editDispatchClientEl && window.jQuery?.fn?.select2) {
+          const $modal = window.jQuery(editDispatchClientEl).closest('.modal');
+          window.jQuery(editDispatchClientEl).select2({
+            placeholder: 'Choose a Client...',
+            width: '100%',
+            matcher: App.Utils.select2Matcher,
+            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+          });
+          window.jQuery(editDispatchClientEl).trigger('change.select2');
+        }
+
+        this.populateDispatchProductSelect(d.productId);
+        document.getElementById('dispatchProductId').value = d.productId;
+        document.getElementById('dispatchProductName').value = d.productName;
+        document.getElementById('dispatchQty').value = d.qty;
+        this.updateDispatchQtyHelp(d.productId, d.qty);
+
+        this.initLogisticsContractorSelect2(d.logisticsContractor || '');
+        this.refreshLogisticsCostHint();
+
+        document.getElementById('dispatchFormTitle').innerText = `Edit Dispatch: ${d.dispatchNumber}`;
+        document.getElementById('dispatchSubmitBtn').innerText = 'Update Dispatch';
+
+        safeModalShow('dispatchModal');
+      }
+    };
+
+    // Wire up Dispatch form submission
+    document.addEventListener('DOMContentLoaded', function () {
+      const dispatchForm = document.getElementById('dispatchForm');
+      if (dispatchForm) {
+        dispatchForm.onsubmit = async function (e) {
+          e.preventDefault();
+          const formData = Object.fromEntries(new FormData(this));
+          const isEdit = !!formData.dispatchRowIdx;
+
+          const btn = document.getElementById('dispatchSubmitBtn');
+          if (btn) btn.disabled = true;
+
+          try {
+            const res = await Api.call('saveDispatch', formData);
+            if (res.success) {
+              await App.Dispatch.loadDispatchData();
+              await App.Dispatch.loadReadyData();
+              if (isEdit) {
+                safeModalHide('dispatchModal');
+              } else {
+                App.Dispatch.openCreateDispatchModal('');
+              }
+            }
+            App.Utils.showToast(res.message, !res.success);
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to save dispatch', true);
+          } finally {
+            if (btn) btn.disabled = false;
+          }
+        };
+      }
+    });
+</script>

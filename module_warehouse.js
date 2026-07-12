@@ -50,7 +50,7 @@ function initWarehousePoolSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Warehouse Pool sheet initialized successfully.');
   } catch (error) {
-    console.error('[initWarehousePoolSheet] Error:', error.message);
+    Log.error('[initWarehousePoolSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Warehouse Pool sheet: ' + error.message);
   }
 }
@@ -70,7 +70,7 @@ function ensureWarehousePoolColorColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureWarehousePoolColorColumn] Error:', error.message);
+    Log.error('[ensureWarehousePoolColorColumn] Error:', error.message);
   }
 }
 
@@ -113,7 +113,7 @@ function initWarehousePoolOpeningSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Warehouse Pool Opening sheet initialized successfully.');
   } catch (error) {
-    console.error('[initWarehousePoolOpeningSheet] Error:', error.message);
+    Log.error('[initWarehousePoolOpeningSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize Warehouse Pool Opening sheet: ' + error.message);
   }
 }
@@ -168,7 +168,7 @@ function getWarehousePoolOpeningData() {
 
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getWarehousePoolOpeningData] Error:', error.message);
+    Log.error('[getWarehousePoolOpeningData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load Warehouse Pool opening balances: ' + error.message);
   }
 }
@@ -233,7 +233,7 @@ function saveWarehousePoolOpening(formData) {
 
     return buildResponse(true, null, 'Opening stock recorded successfully.');
   } catch (error) {
-    console.error('[saveWarehousePoolOpening] Error:', error.message);
+    Log.error('[saveWarehousePoolOpening] Error:', error.message);
     logAction('ERROR', 'saveWarehousePoolOpening', formData.processId || 'NEW', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to record opening stock: ' + error.message);
   } finally {
@@ -364,7 +364,7 @@ function adjustWarehousePoolManually(outputItemName, processId, productTag, colo
 
     return buildResponse(true, { oldAvailableQty: oldQty, newAvailableQty: newQty }, 'Warehouse Pool stock adjusted successfully.');
   } catch (error) {
-    console.error('[adjustWarehousePoolManually] Error:', error.message);
+    Log.error('[adjustWarehousePoolManually] Error:', error.message);
     logAction('ERROR', 'adjustWarehousePoolManually', String(outputItemName), error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to adjust Warehouse Pool stock: ' + error.message);
   } finally {
@@ -428,7 +428,7 @@ function getWarehousePoolAdjustmentHistory() {
 
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getWarehousePoolAdjustmentHistory] Error:', error.message);
+    Log.error('[getWarehousePoolAdjustmentHistory] Error:', error.message);
     return buildResponse(false, null, 'Failed to load Warehouse Pool adjustment history: ' + error.message);
   }
 }
@@ -461,7 +461,7 @@ function deleteWarehousePoolOpening(rowIdx) {
 
     return buildResponse(true, null, 'Opening stock entry deleted successfully.');
   } catch (error) {
-    console.error('[deleteWarehousePoolOpening] Error:', error.message);
+    Log.error('[deleteWarehousePoolOpening] Error:', error.message);
     logAction('ERROR', 'deleteWarehousePoolOpening', String(rowIdx), error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete opening stock entry: ' + error.message);
   } finally {
@@ -519,7 +519,7 @@ function _getWarehousePoolOpeningRows() {
 function recalculateWarehousePool() {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(WAREHOUSE_LOCK_TIMEOUT_MS)) {
-    console.error('[recalculateWarehousePool] Could not acquire lock.');
+    Log.error('[recalculateWarehousePool] Could not acquire lock.');
     return buildResponse(false, null, 'System is busy. Please try again.');
   }
 
@@ -736,7 +736,7 @@ function recalculateWarehousePool() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'Warehouse Pool recalculated.');
   } catch (error) {
-    console.error('[recalculateWarehousePool] Error:', error.message);
+    Log.error('[recalculateWarehousePool] Error:', error.message);
     logAction('ERROR', 'recalculateWarehousePool', 'N/A', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to recalculate Warehouse Pool: ' + error.message);
   } finally {
@@ -779,7 +779,7 @@ function getWarehousePoolData() {
 
     return buildResponse(true, records);
   } catch (error) {
-    console.error('[getWarehousePoolData] Error:', error.message);
+    Log.error('[getWarehousePoolData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load Warehouse Pool data: ' + error.message);
   }
 }

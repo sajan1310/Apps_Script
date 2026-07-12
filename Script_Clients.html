@@ -1,0 +1,966 @@
+<script>
+  'use strict';
+  // Script_Clients.html -- App.Client
+
+    // ==========================================
+    // CLIENTS / PI-ESTIMATES NAMESPACE
+    // ==========================================
+    App.State.globalClients = [];
+    App.State.filteredClients = [];
+    App.State.globalOrders = [];
+    App.State.filteredOrders = [];
+    App.State.allPendingOrders = [];
+    App.State.filteredPendingOrders = [];
+
+    App.Client = {
+      async enterTab() {
+        await this.loadClientsData();
+
+        if (typeof App.Dispatch !== 'undefined' && !App.State.globalDispatch.length) {
+          await App.Dispatch.loadDispatchData();
+        }
+        await this.loadOrdersData();
+
+        if (!App.State.globalBOMs || !App.State.globalBOMs.length) {
+          try {
+            const res = await Api.call('getBOMProductionData');
+            if (res.success) App.State.globalBOMs = res.data;
+          } catch (err) {
+            // Ignored — product dropdown will simply be empty until BOMs load elsewhere.
+          }
+        }
+
+        this.switchSubTab('clientsListSubTab');
+      },
+
+      switchSubTab(id) {
+        $$('.clients-sub-tab').forEach(t => t.style.display = 'none');
+        const target = document.getElementById(id);
+        if (target) target.style.display = 'block';
+
+        $$('#clientsSubTabs .nav-link').forEach(btn => btn.classList.remove('active'));
+        document.getElementById('btn-' + id)?.classList.add('active');
+      },
+
+      // ── Clients Master CRUD ───────────────────────────────────
+      async loadClientsData() {
+        const tbody = document.getElementById('clientsTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4">Loading Clients...</td></tr>';
+
+        try {
+          const response = await Api.call('getClientsData');
+          if (!response.success) {
+            App.Utils.showToast(response.message, true);
+            return;
+          }
+          App.State.globalClients = response.data;
+          App.State.filteredClients = response.data;
+          App.State.clientCurrentPage = 1;
+          App.State.selectedClients = [];
+          this.renderClientsTable();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load clients', true);
+        }
+      },
+
+      filterClients(searchTerm) {
+        const term = String(searchTerm || '').toLowerCase().trim();
+        App.State.filteredClients = term
+          ? App.State.globalClients.filter(c => App.Utils.matchesKeywords(`${c.name} ${c.contact} ${c.gstin}`, term))
+          : App.State.globalClients;
+        App.State.clientCurrentPage = 1;
+        this.renderClientsTable();
+      },
+
+      changeClientsPage(page) {
+        App.State.clientCurrentPage = App.Utils.clampPage(page, App.State.filteredClients.length, App.State.clientRowsPerPage);
+        this.renderClientsTable();
+      },
+
+      renderClientsTable() {
+        const tbody = document.getElementById('clientsTableBody');
+        if (!tbody) return;
+
+        const emptyState = document.getElementById('clientsEmptyState');
+        if (App.State.filteredClients.length === 0) {
+          tbody.innerHTML = '';
+          if (emptyState) emptyState.style.display = 'block';
+          App.Utils.renderPagination('clientsPagination', 0, 1, App.State.clientRowsPerPage, 'client-page', 'Clients');
+          this.updateClientBulkButtons();
+          return;
+        }
+        if (emptyState) emptyState.style.display = 'none';
+
+        const { filteredClients, clientCurrentPage: cur, clientRowsPerPage: rpp } = App.State;
+        const start = (cur - 1) * rpp;
+        const pageItems = filteredClients.slice(start, start + rpp);
+
+        const selectAllChk = document.getElementById('selectAllClients');
+        if (selectAllChk) {
+          selectAllChk.checked = pageItems.length > 0 &&
+            pageItems.every(c => App.Selection.isSelected(App.State.selectedClients, c.name));
+        }
+
+        let html = '';
+        pageItems.forEach(c => {
+          const checked = App.Selection.isSelected(App.State.selectedClients, c.name) ? 'checked' : '';
+          html += `<tr>
+        <td class="text-center">
+          <input type="checkbox" class="form-check-input client-select-chk" data-key="${escapeHtml(c.name)}" ${checked} onchange="App.Client.onClientRowSelectChange()">
+        </td>
+        <td><strong class="text-dark fs-5">${escapeHtml(c.name)}</strong></td>
+        <td>${escapeHtml(c.contact) || '-'}</td>
+        <td><span class="badge bg-light text-dark border">${escapeHtml(c.gstin) || 'No GSTIN'}</span></td>
+        <td>${escapeHtml(c.address) || '-'}</td>
+        <td class="text-center">
+          <button class="btn btn-sm btn-outline-dark btn-action w-100 mb-1" data-client-name="${escapeHtml(c.name)}" onclick="App.Client.openLedgerModal(this.dataset.clientName)">Ledger</button>
+          <button class="btn btn-sm btn-outline-primary btn-action w-100 mb-1" data-client-name="${escapeHtml(c.name)}" onclick="App.Client.openEditClientModal(this.dataset.clientName)">Edit</button>
+          <button class="btn btn-sm btn-outline-danger btn-action w-100" data-client-name="${escapeHtml(c.name)}" onclick="App.Client.deleteClient(this.dataset.clientName)">Delete</button>
+        </td>
+      </tr>`;
+        });
+
+        tbody.innerHTML = html;
+
+        App.Utils.renderPagination('clientsPagination', filteredClients.length, cur, rpp, 'client-page', 'Clients');
+        this.updateClientBulkButtons();
+      },
+
+      toggleSelectAllClients(masterChk) {
+        App.Selection.toggleAll(App.State.selectedClients, 'client-select-chk', masterChk);
+        this.updateClientBulkButtons();
+      },
+
+      onClientRowSelectChange() {
+        App.Selection.syncFromRows(App.State.selectedClients, 'client-select-chk', 'selectAllClients');
+        this.updateClientBulkButtons();
+      },
+
+      updateClientBulkButtons() {
+        const count = App.State.selectedClients.length;
+        App.Selection.updateButton('btnBulkDeleteClients', count, '<i class="bi bi-trash"></i> Delete Selected');
+      },
+
+      async bulkDeleteClients() {
+        const selected = App.State.selectedClients;
+        if (!selected.length) return;
+
+        App.Utils.confirmAction(
+          `Are you sure you want to delete ${selected.length} selected client(s) from the Master list? Clients with PI/Estimate or Dispatch history will be skipped.`,
+          async () => {
+            try {
+              const res = await Api.call('deleteClientsBulk', selected);
+              App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+              if (res?.success) {
+                App.State.selectedClients = [];
+                await this.loadClientsData();
+              }
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete clients.', true);
+            }
+          }
+        );
+      },
+
+      openCreateClientModal() {
+        const form = document.getElementById('clientForm');
+        if (form) form.reset();
+
+        document.getElementById('originalClientName').value = '';
+        document.getElementById('clientModalTitle').innerText = 'Register New Client';
+        document.getElementById('clientSubmitBtn').innerText = 'Register Client';
+
+        safeModalShow('clientModal');
+      },
+
+      openEditClientModal(clientName) {
+        const client = App.State.globalClients.find(c => App.Utils.sameText(c.name, clientName));
+        if (!client) return;
+
+        const form = document.getElementById('clientForm');
+        if (form) form.reset();
+
+        document.getElementById('originalClientName').value = client.name;
+        document.getElementById('cFormName').value = client.name;
+        document.getElementById('cFormContact').value = client.contact || '';
+        document.getElementById('cFormGstin').value = client.gstin || '';
+        document.getElementById('cFormAddress').value = client.address || '';
+        document.getElementById('cFormRemarks').value = client.remarks || '';
+
+        document.getElementById('clientModalTitle').innerText = `Edit Client: ${client.name}`;
+        document.getElementById('clientSubmitBtn').innerText = 'Update Client';
+
+        safeModalShow('clientModal');
+      },
+
+      deleteClient(clientName) {
+        App.Utils.confirmAction(
+          `Are you sure you want to delete client "${clientName}" from the Master list? This is blocked if the client has any PI/Estimate or Dispatch history.`,
+          async () => {
+            try {
+              const res = await Api.call('deleteClient', clientName);
+              App.Utils.showToast(res.message, !res.success);
+              if (res.success) await this.loadClientsData();
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete client', true);
+            }
+          }
+        );
+      },
+
+      populateClientSelect(selectEl) {
+        if (!selectEl) return;
+        const currentValue = selectEl.value;
+
+        let html = '<option value="">Choose a Client...</option>';
+        (App.State.globalClients || []).forEach(c => {
+          html += `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`;
+        });
+
+        selectEl.innerHTML = html;
+        selectEl.value = currentValue;
+        App.Utils.autoSelectOnlyOption(selectEl);
+      },
+
+      // ── PI / Estimates CRUD ────────────────────────────────────
+      async loadOrdersData() {
+        const tbody = document.getElementById('clientOrdersTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-center p-4">Loading PI / Estimates...</td></tr>';
+
+        try {
+          const response = await Api.call('getClientOrdersData');
+          if (!response.success) {
+            App.Utils.showToast(response.message, true);
+            return;
+          }
+          App.State.globalOrders = response.data;
+          App.State.filteredOrders = response.data;
+          App.State.orderCurrentPage = 1;
+          App.State.selectedOrders = [];
+          this.renderOrdersTable();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to load PI / Estimates', true);
+        }
+      },
+
+      filterOrders(searchTerm) {
+        const term = String(searchTerm || '').toLowerCase().trim();
+        App.State.filteredOrders = term
+          ? App.State.globalOrders.filter(o => {
+            const productsText = (o.lines || []).map(l => `${l.productId} ${l.productName}`).join(' ');
+            return App.Utils.matchesKeywords(`${o.orderNumber} ${o.clientName} ${productsText}`, term);
+          })
+          : App.State.globalOrders;
+        App.State.orderCurrentPage = 1;
+        this.renderOrdersTable();
+      },
+
+      changeOrdersPage(page) {
+        App.State.orderCurrentPage = App.Utils.clampPage(page, App.State.filteredOrders.length, App.State.orderRowsPerPage);
+        this.renderOrdersTable();
+      },
+
+      // 5-stage computed display status: Estimate, Order Confirmed, In Production,
+      // Partially Dispatched / Dispatched, Cancelled.
+      calculatePIDisplayStatus(order) {
+        if (order.status === 'Cancelled') return { label: 'Cancelled', badgeClass: 'bg-danger' };
+        if (order.status === 'Estimate') return { label: 'Estimate', badgeClass: 'bg-secondary' };
+
+        const lines = order.lines || [];
+        const totalOrdered = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+        const totalDispatched = (App.State.globalDispatch || [])
+          .filter(d => d.orderNumber === order.orderNumber)
+          .reduce((sum, d) => sum + (Number(d.qty) || 0), 0);
+
+        if (totalOrdered > 0 && totalDispatched >= totalOrdered - 0.0001) {
+          return { label: 'Dispatched', badgeClass: 'bg-success' };
+        }
+        if (totalDispatched > 0) {
+          return { label: 'Partially Dispatched', badgeClass: 'bg-info' };
+        }
+        if (lines.some(l => l.productionPushed)) {
+          return { label: 'In Production', badgeClass: 'bg-primary' };
+        }
+        return { label: 'Order Confirmed', badgeClass: 'bg-warning text-dark' };
+      },
+
+      renderOrdersTable() {
+        const tbody = document.getElementById('clientOrdersTableBody');
+        if (!tbody) return;
+
+        const emptyState = document.getElementById('clientOrdersEmptyState');
+        if (App.State.filteredOrders.length === 0) {
+          tbody.innerHTML = '';
+          if (emptyState) emptyState.style.display = 'block';
+          App.Utils.renderPagination('clientOrdersPagination', 0, 1, App.State.orderRowsPerPage, 'order-page', 'PI / Estimates');
+          this.updateOrderBulkButtons();
+          return;
+        }
+        if (emptyState) emptyState.style.display = 'none';
+
+        const { filteredOrders, orderCurrentPage: cur, orderRowsPerPage: rpp } = App.State;
+        const start = (cur - 1) * rpp;
+        const pageItems = filteredOrders.slice(start, start + rpp);
+
+        const selectAllChk = document.getElementById('selectAllOrders');
+        if (selectAllChk) {
+          selectAllChk.checked = pageItems.length > 0 &&
+            pageItems.every(o => App.Selection.isSelected(App.State.selectedOrders, o.orderNumber));
+        }
+
+        let html = '';
+        pageItems.forEach(o => {
+          const idx = App.State.globalOrders.indexOf(o);
+          const checked = App.Selection.isSelected(App.State.selectedOrders, o.orderNumber) ? 'checked' : '';
+          const productsSummary = (o.lines || [])
+            .map(l => `${escapeHtml(l.productName)} <span class="text-muted">x${App.Production.formatQty(l.qty)}</span>`)
+            .join('<br>');
+          const { label, badgeClass } = this.calculatePIDisplayStatus(o);
+
+          html += `<tr>
+        <td class="text-center">
+          <input type="checkbox" class="form-check-input order-select-chk" data-key="${escapeHtml(o.orderNumber)}" ${checked} onchange="App.Client.onOrderRowSelectChange()">
+        </td>
+        <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(o.orderNumber)}</span></td>
+        <td>${escapeHtml(o.orderDate)}</td>
+        <td><strong>${escapeHtml(o.clientName)}</strong></td>
+        <td><small>${productsSummary || '-'}</small></td>
+        <td class="text-center"><span class="badge ${badgeClass} shadow-sm">${label}</span></td>
+        <td class="text-center">
+          <button class="btn btn-sm btn-outline-dark btn-action w-100 mb-1" onclick="App.Client.printOrder('${idx}')">Print</button>
+          <button class="btn btn-sm btn-outline-primary btn-action w-100 mb-1" onclick="App.Client.openEditOrderModal('${idx}')">Edit</button>
+          <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Client.deleteOrder('${escapeHtml(o.orderNumber)}')">Delete</button>
+        </td>
+      </tr>`;
+        });
+
+        tbody.innerHTML = html;
+
+        App.Utils.renderPagination('clientOrdersPagination', filteredOrders.length, cur, rpp, 'order-page', 'PI / Estimates');
+        this.updateOrderBulkButtons();
+      },
+
+      toggleSelectAllOrders(masterChk) {
+        App.Selection.toggleAll(App.State.selectedOrders, 'order-select-chk', masterChk);
+        this.updateOrderBulkButtons();
+      },
+
+      onOrderRowSelectChange() {
+        App.Selection.syncFromRows(App.State.selectedOrders, 'order-select-chk', 'selectAllOrders');
+        this.updateOrderBulkButtons();
+      },
+
+      updateOrderBulkButtons() {
+        const count = App.State.selectedOrders.length;
+        App.Selection.updateButton('btnBulkDeleteOrders', count, '<i class="bi bi-trash"></i> Delete Selected');
+      },
+
+      // Single-record print for a PI / Estimate, from either the row's
+      // "Print" button or the order form's own edit-mode Print action (see
+      // printCurrentOrder). Reuses the shared bulk-print container with a
+      // one-element array, same approach as App.Return.print/App.Issue.print
+      // — there's no dedicated static print-client-order-container template.
+      printOrder(index) {
+        const order = App.State.globalOrders[index];
+        if (!order) return;
+
+        const title = `${order.status === 'Estimate' ? 'Estimate' : 'Proforma_Invoice'}_${order.orderNumber}_${String(order.clientName || '')
+          .replace(/[^a-zA-Z0-9 \-]/g, '')
+          .trim()
+          .replace(/\s+/g, '_')}`;
+        App.Print.triggerBulk([order], o => this.buildOrderPrintPageHtml(o), title);
+      },
+
+      // Print button inside the clientOrderForm itself (edit mode only —
+      // see openEditOrderModal, which shows #clientOrderPrintBtn once
+      // orderNumber is populated). Resolves the array index from the
+      // hidden orderNumber field since the form only tracks that, not the
+      // App.State.globalOrders index.
+      printCurrentOrder() {
+        const orderNumber = document.getElementById('orderNumber')?.value;
+        if (!orderNumber) return;
+        const index = App.State.globalOrders.findIndex(o => o.orderNumber === orderNumber);
+        if (index === -1) return;
+        this.printOrder(index);
+      },
+
+      // Builds a fully self-contained "Proforma Invoice / Estimate" page for print.
+      buildOrderPrintPageHtml(order) {
+        const BRAND = '#20C997';
+        const client = (App.State.globalClients || []).find(c => App.Utils.sameText(c.name, order.clientName));
+
+        const bodyHtml = (order.lines || []).map((line, idx) => {
+          const rowBg = idx % 2 === 0 ? '#ffffff' : '#EAFAF4';
+          const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
+          return `
+          <tr style="${rowStyle}">
+            <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+            <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${escapeHtml(line.productName || '')} <small style="color:#888;">(${escapeHtml(line.productId || '')})</small></td>
+            <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${escapeHtml(String(toNumber(line.qty)))}</td>
+            <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;color:#555;">${escapeHtml(line.lineRemarks || '')}</td>
+          </tr>`;
+        }).join('');
+
+        return `
+        <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <div style="text-align:center;padding:4px 0 8px 0;">
+            ${App.Print.brandHeaderHtml(BRAND)}
+            <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
+              6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
+            </div>
+            <div style="font-size:10px;color:#555;margin-top:2px;letter-spacing:0.3px;">
+              Ph : 86996-42398, 91546-94000, 94170-42398 &nbsp;|&nbsp; E-mail : maharaja.bikes@gmail.com
+              &nbsp;&nbsp; GSTIN : 03AFIPS4089J1Z1
+            </div>
+          </div>
+          <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div style="flex:1;text-align:left;">
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">${order.status === 'Estimate' ? 'Estimate' : 'PI'} #</span>
+              <div style="font-size:15px;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${escapeHtml(order.orderNumber || '')}</div>
+            </div>
+            <div style="flex:2;text-align:center;">
+              <span style="font-size:18px;font-weight:800;color:${BRAND};letter-spacing:3px;text-transform:uppercase;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+                ${order.status === 'Estimate' ? 'Estimate' : 'Proforma Invoice'}
+              </span>
+            </div>
+            <div style="flex:1;text-align:right;">
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
+              <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(order.orderDate || '')}</div>
+            </div>
+          </div>
+
+          <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
+
+          <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
+            <div style="display:flex;gap:16px;">
+              <div style="flex:1;">
+                <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Client</span>
+                <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(order.clientName || '')}</div>
+              </div>
+              <div style="flex:1;">
+                <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">GSTIN</span>
+                <div style="font-size:11px;color:#333;margin-top:1px;font-weight:600;">${escapeHtml(client?.gstin || '')}</div>
+              </div>
+            </div>
+          </div>
+
+          <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
+            <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              <tr>
+                <th style="padding:6px;border:1px solid #bbb;text-align:center;width:6%;">#</th>
+                <th style="padding:6px;border:1px solid #bbb;text-align:left;width:44%;">Product</th>
+                <th style="padding:6px;border:1px solid #bbb;text-align:center;width:15%;">Qty</th>
+                <th style="padding:6px;border:1px solid #bbb;text-align:left;width:35%;">Remarks</th>
+              </tr>
+            </thead>
+            <tbody style="color:#1a1a1a;text-align:center;">${bodyHtml}</tbody>
+          </table>
+
+          <div style="display:flex;gap:20px;margin-bottom:24px;min-height:40px;page-break-inside:avoid;break-inside:avoid;">
+            <div style="flex:1;padding-top:6px;border-top:1px solid #ccc;">
+              <div style="font-size:9px;color:${BRAND};text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:4px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Remarks</div>
+              <span style="white-space:pre-wrap;font-size:11px;color:#444;line-height:1.5;">${escapeHtml(order.orderRemarks || '')}</span>
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;page-break-inside:avoid;break-inside:avoid;">
+            <div style="width:180px;text-align:center;padding-top:5px;border-top:2px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              <span style="font-size:10px;color:#666;letter-spacing:0.5px;font-style:italic;">Authorized Signatory</span>
+            </div>
+          </div>
+        </div>`;
+      },
+
+      async bulkDeleteOrders() {
+        const selected = App.State.selectedOrders;
+        if (!selected.length) return;
+
+        App.Utils.confirmAction(
+          `Are you sure you want to delete ${selected.length} selected PI / Estimate(s)? Any with dispatch records against them will be skipped.`,
+          async () => {
+            try {
+              const res = await Api.call('deleteClientOrdersBulk', selected);
+              App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+              if (res?.success) {
+                App.State.selectedOrders = [];
+                await this.loadOrdersData();
+              }
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete PI / Estimates.', true);
+            }
+          }
+        );
+      },
+
+      deleteOrder(orderNumber) {
+        App.Utils.confirmAction(
+          `Are you sure you want to delete PI / Estimate "${orderNumber}"?`,
+          async () => {
+            try {
+              const res = await Api.call('deleteClientOrder', orderNumber);
+              App.Utils.showToast(res.message, !res.success);
+              if (res.success) await this.loadOrdersData();
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to delete PI / Estimate', true);
+            }
+          }
+        );
+      },
+
+      populateOrderProductSelect(selectEl, currentProductId) {
+        if (!selectEl) return;
+
+        let html = '<option value="">Choose Product...</option>';
+        (App.State.globalBOMs || []).forEach(b => {
+          html += `<option value="${escapeHtml(b.productId)}">${escapeHtml(b.productId)} (${escapeHtml(b.productName)})</option>`;
+        });
+
+        selectEl.innerHTML = html;
+        if (currentProductId) selectEl.value = currentProductId;
+        App.Utils.autoSelectOnlyOption(selectEl);
+      },
+
+      handleOrderLineProductChange(selectEl) {
+        const row = selectEl.closest('tr');
+        const nameInput = row?.querySelector('.pi-line-product-name');
+        const bom = (App.State.globalBOMs || []).find(b => b.productId === selectEl.value);
+        if (nameInput) nameInput.value = bom ? bom.productName : '';
+      },
+
+      // Appends a product-line row. `line` (if provided) pre-fills the row from
+      // an existing PI record; `productionPushed` lines are locked and show a
+      // "Queued in Production" badge instead of a remove button.
+      // `needsManualProduction` lines (BOM didn't resolve to one unambiguous
+      // final-stage Process, or it's multi-color) stay editable/removable —
+      // they're retried automatically on every save — but show a warning
+      // badge so the operator knows to log that lot by hand in the meantime.
+      addOrderLineRow(line = null) {
+        const tbody = document.getElementById('orderLinesBody');
+        if (!tbody) return;
+
+        const pushed = !!(line && line.productionPushed);
+        const needsManual = !!(line && line.needsManualProduction);
+
+        const row = document.createElement('tr');
+        row.dataset.pushed = pushed ? 'true' : 'false';
+
+        const productSelect = document.createElement('select');
+        productSelect.className = 'form-select pi-line-product';
+        productSelect.required = true;
+        productSelect.onchange = function () { App.Client.handleOrderLineProductChange(this); };
+        if (pushed) productSelect.disabled = true;
+
+        const productNameInput = document.createElement('input');
+        productNameInput.type = 'text';
+        productNameInput.className = 'form-control pi-line-product-name bg-light';
+        productNameInput.readOnly = true;
+
+        const qtyInput = document.createElement('input');
+        qtyInput.type = 'number';
+        qtyInput.className = 'form-control pi-line-qty';
+        qtyInput.min = '0.001';
+        qtyInput.step = '0.001';
+        qtyInput.required = true;
+
+        const remarksInput = document.createElement('input');
+        remarksInput.type = 'text';
+        remarksInput.className = 'form-control pi-line-remarks';
+        remarksInput.maxLength = 250;
+
+        const tdProduct = document.createElement('td');
+        tdProduct.appendChild(productSelect);
+        const tdName = document.createElement('td');
+        tdName.appendChild(productNameInput);
+        const tdQty = document.createElement('td');
+        tdQty.appendChild(qtyInput);
+        const tdRemarks = document.createElement('td');
+        tdRemarks.appendChild(remarksInput);
+        const tdAction = document.createElement('td');
+        tdAction.className = 'text-center';
+
+        if (pushed) {
+          tdAction.innerHTML = '<span class="badge bg-info text-dark" title="Already queued in Production - cannot be removed.">Queued in Production</span>';
+        } else {
+          if (needsManual) {
+            tdAction.innerHTML = '<span class="badge bg-warning text-dark d-block mb-1" title="Could not auto-resolve a single final-stage Process for this product (or it\'s multi-color) - log this lot yourself in the Production tab. Retried automatically on every save.">Needs Manual Production</span>';
+          }
+          const removeBtn = document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.className = 'btn btn-outline-danger btn-sm';
+          removeBtn.innerText = '✕';
+          removeBtn.onclick = function () { this.closest('tr').remove(); };
+          tdAction.appendChild(removeBtn);
+        }
+
+        row.appendChild(tdProduct);
+        row.appendChild(tdName);
+        row.appendChild(tdQty);
+        row.appendChild(tdRemarks);
+        row.appendChild(tdAction);
+        tbody.appendChild(row);
+
+        this.populateOrderProductSelect(productSelect, line ? line.productId : '');
+
+        if (line) {
+          productNameInput.value = line.productName || '';
+          qtyInput.value = line.qty;
+          remarksInput.value = line.lineRemarks || '';
+        } else if (productSelect.value) {
+          // Only one Product exists in BOM Master, so populateOrderProductSelect
+          // auto-selected it — fill in the Name column the same way
+          // handleOrderLineProductChange would for a manual pick.
+          this.handleOrderLineProductChange(productSelect);
+        }
+      },
+
+      serializeOrderLines() {
+        const lines = [];
+        $$('#orderLinesBody tr').forEach(row => {
+          const productSelect = row.querySelector('.pi-line-product');
+          const productId = productSelect?.value || '';
+          if (!productId) return;
+
+          const bom = (App.State.globalBOMs || []).find(b => b.productId === productId);
+          lines.push({
+            productId,
+            productName: bom ? bom.productName : (row.querySelector('.pi-line-product-name')?.value || ''),
+            qty: toNumber(row.querySelector('.pi-line-qty')?.value),
+            lineRemarks: row.querySelector('.pi-line-remarks')?.value?.trim() || '',
+            productionPushed: row.dataset.pushed === 'true'
+          });
+        });
+        return lines;
+      },
+
+      openCreateOrderModal() {
+        const form = document.getElementById('clientOrderForm');
+        if (form) form.reset();
+
+        document.getElementById('orderNumber').value = '';
+        document.getElementById('orderVisibleNumber').value = '';
+        document.getElementById('orderDate').value = todayIso();
+        document.getElementById('orderStatus').value = 'Estimate';
+
+        this.populateClientSelect(document.getElementById('orderClientSelect'));
+
+        const tbody = document.getElementById('orderLinesBody');
+        if (tbody) tbody.innerHTML = '';
+        this.addOrderLineRow();
+
+        document.getElementById('clientOrderFormTitle').innerText = 'New PI / Estimate';
+        document.getElementById('clientOrderSubmitBtn').innerText = 'Save PI / Estimate';
+        const printBtn = document.getElementById('clientOrderPrintBtn');
+        if (printBtn) printBtn.style.display = 'none';
+
+        safeModalShow('clientOrderModal');
+      },
+
+      openEditOrderModal(idx) {
+        const order = App.State.globalOrders[idx];
+        if (!order) return;
+
+        const form = document.getElementById('clientOrderForm');
+        if (form) form.reset();
+
+        document.getElementById('orderNumber').value = order.orderNumber;
+        document.getElementById('orderVisibleNumber').value = order.orderNumber;
+
+        let inputDateStr = todayIso();
+        if (order.orderDate && order.orderDate.includes('/')) {
+          const [day, month, year] = order.orderDate.split('/');
+          inputDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        } else if (order.dateRaw) {
+          inputDateStr = order.dateRaw.split('T')[0];
+        }
+        document.getElementById('orderDate').value = inputDateStr;
+        document.getElementById('orderStatus').value = order.status;
+        document.getElementById('orderRemarks').value = order.orderRemarks || '';
+
+        this.populateClientSelect(document.getElementById('orderClientSelect'));
+        document.getElementById('orderClientSelect').value = order.clientName;
+
+        const tbody = document.getElementById('orderLinesBody');
+        if (tbody) tbody.innerHTML = '';
+        (order.lines || []).forEach(line => this.addOrderLineRow(line));
+        if (!order.lines || !order.lines.length) this.addOrderLineRow();
+
+        document.getElementById('clientOrderFormTitle').innerText = `Edit PI / Estimate: ${order.orderNumber}`;
+        document.getElementById('clientOrderSubmitBtn').innerText = 'Update PI / Estimate';
+        const printBtn = document.getElementById('clientOrderPrintBtn');
+        if (printBtn) printBtn.style.display = '';
+
+        safeModalShow('clientOrderModal');
+      },
+
+      // ── Client Ledger (PI / Estimates + Dispatch History) ─────
+      calculateClientLedger(clientName) {
+        const orders = (App.State.globalOrders || []).filter(o => o.clientName === clientName);
+        const dispatches = (App.State.globalDispatch || []).filter(d => d.clientName === clientName);
+        return { orders, dispatches };
+      },
+
+      // Returns one row per order line that still has qty pending dispatch
+      // (status === 'Order Confirmed' and dispatched < ordered). Optionally
+      // scoped to a single client.
+      calculatePendingOrderLines(clientName = null) {
+        const result = [];
+
+        (App.State.globalOrders || []).forEach(o => {
+          if (o.status !== 'Order Confirmed') return;
+          if (clientName && o.clientName !== clientName) return;
+
+          const { label, badgeClass } = this.calculatePIDisplayStatus(o);
+
+          (o.lines || []).forEach(line => {
+            const orderedQty = Number(line.qty) || 0;
+            const dispatchedQty = (App.State.globalDispatch || [])
+              .filter(d => d.orderNumber === o.orderNumber &&
+                String(d.productId).toLowerCase() === String(line.productId).toLowerCase())
+              .reduce((sum, d) => sum + (Number(d.qty) || 0), 0);
+            const pendingQty = orderedQty - dispatchedQty;
+            if (pendingQty <= 0.0001) return;
+
+            result.push({
+              orderNumber: o.orderNumber,
+              orderDate: o.orderDate,
+              clientName: o.clientName,
+              productId: line.productId,
+              productName: line.productName,
+              orderedQty,
+              dispatchedQty,
+              pendingQty,
+              label,
+              badgeClass
+            });
+          });
+        });
+
+        return result;
+      },
+
+      populateClientLedger(clientName) {
+        const client = App.State.globalClients.find(c => App.Utils.sameText(c.name, clientName));
+        if (!client) return;
+
+        document.getElementById('clientLedgerTitle').innerText = `Client Ledger: ${client.name}`;
+        document.getElementById('clientLedgerContact').innerText = client.contact || '-';
+        document.getElementById('clientLedgerGstin').innerText = client.gstin || '-';
+        document.getElementById('clientLedgerAddress').innerText = client.address || '-';
+
+        const { orders, dispatches } = this.calculateClientLedger(clientName);
+
+        const ordersBody = document.getElementById('clientLedgerOrdersBody');
+        if (ordersBody) {
+          let html = '';
+          orders.forEach(o => {
+            const productsSummary = (o.lines || [])
+              .map(l => `${escapeHtml(l.productName)} <span class="text-muted">x${App.Production.formatQty(l.qty)}</span>`)
+              .join('<br>');
+            const totalQty = (o.lines || []).reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+            const { label, badgeClass } = this.calculatePIDisplayStatus(o);
+
+            html += `<tr>
+          <td><span class="badge bg-dark shadow-sm">${escapeHtml(o.orderNumber)}</span></td>
+          <td>${escapeHtml(o.orderDate)}</td>
+          <td><small>${productsSummary || '-'}</small></td>
+          <td class="text-center"><span class="badge ${badgeClass} shadow-sm">${label}</span></td>
+          <td class="text-center fw-bold">${App.Production.formatQty(totalQty)}</td>
+        </tr>`;
+          });
+          ordersBody.innerHTML = html || '<tr><td colspan="5" class="text-center text-muted p-4">No PI / Estimates found for this client.</td></tr>';
+        }
+
+        const pendingBody = document.getElementById('clientLedgerPendingBody');
+        if (pendingBody) {
+          let html = '';
+          this.calculatePendingOrderLines(clientName).forEach(p => {
+            html += `<tr>
+          <td><span class="badge bg-dark shadow-sm">${escapeHtml(p.orderNumber)}</span></td>
+          <td>${escapeHtml(p.orderDate)}</td>
+          <td>${escapeHtml(p.productName)} <span class="text-muted">(${escapeHtml(p.productId)})</span></td>
+          <td class="text-center">${App.Production.formatQty(p.orderedQty)}</td>
+          <td class="text-center">${App.Production.formatQty(p.dispatchedQty)}</td>
+          <td class="text-center fw-bold text-danger">${App.Production.formatQty(p.pendingQty)}</td>
+          <td class="text-center"><span class="badge ${p.badgeClass} shadow-sm">${p.label}</span></td>
+        </tr>`;
+          });
+          pendingBody.innerHTML = html || '<tr><td colspan="7" class="text-center text-success fw-bold p-4">No pending orders. All caught up!</td></tr>';
+        }
+
+        const dispatchBody = document.getElementById('clientLedgerDispatchBody');
+        if (dispatchBody) {
+          let html = '';
+          dispatches.forEach(d => {
+            const invoiceGr = [
+              d.invoiceNumber ? `Inv: ${escapeHtml(d.invoiceNumber)}` : '',
+              d.grNumber ? `GR: ${escapeHtml(d.grNumber)}` : ''
+            ].filter(Boolean).join('<br>');
+
+            html += `<tr>
+          <td><span class="badge bg-success shadow-sm">${escapeHtml(d.dispatchNumber)}</span></td>
+          <td>${escapeHtml(d.dispatchDate)}</td>
+          <td>${escapeHtml(d.orderNumber) || '-'}</td>
+          <td>${escapeHtml(d.productName)} <span class="text-muted">(${escapeHtml(d.productId)})</span></td>
+          <td class="text-center fw-bold">${App.Production.formatQty(d.qty)}</td>
+          <td>${escapeHtml(d.transport) || '-'}</td>
+          <td><small>${invoiceGr || '-'}</small></td>
+        </tr>`;
+          });
+          dispatchBody.innerHTML = html || '<tr><td colspan="7" class="text-center text-muted p-4">No dispatch records found for this client.</td></tr>';
+        }
+      },
+
+      openLedgerModal(clientName) {
+        const client = App.State.globalClients.find(c => App.Utils.sameText(c.name, clientName));
+        if (!client) return;
+
+        document.getElementById('clientLedgerName').value = client.name;
+        this.populateClientLedger(client.name);
+
+        safeModalShow('clientLedgerModal');
+      },
+
+      printLedger() {
+        const clientName = document.getElementById('clientLedgerName')?.value;
+        const client = App.State.globalClients.find(c => App.Utils.sameText(c.name, clientName));
+        if (!client) return;
+
+        document.getElementById('print-client-name').innerText = client.name;
+        document.getElementById('print-client-gstin').innerText = client.gstin || '-';
+        document.getElementById('print-client-contact').innerText = client.contact || '-';
+        document.getElementById('print-client-address').innerText = client.address || '-';
+        document.getElementById('print-client-remarks').innerText = client.remarks || 'No remarks';
+
+        const ordersSource = document.getElementById('clientLedgerOrdersBody');
+        const ordersDest = document.getElementById('print-client-orders-body');
+        if (ordersSource && ordersDest) ordersDest.innerHTML = ordersSource.innerHTML;
+
+        const pendingSource = document.getElementById('clientLedgerPendingBody');
+        const pendingDest = document.getElementById('print-client-pending-body');
+        if (pendingSource && pendingDest) pendingDest.innerHTML = pendingSource.innerHTML;
+
+        const dispatchSource = document.getElementById('clientLedgerDispatchBody');
+        const dispatchDest = document.getElementById('print-client-dispatch-body');
+        if (dispatchSource && dispatchDest) dispatchDest.innerHTML = dispatchSource.innerHTML;
+
+        App.Print.trigger('print-client-ledger-container', `Client_Ledger_${client.name.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+      },
+
+      // ── Global Pending Orders (All Clients) ───────────────────
+      openPendingOrdersModal() {
+        App.State.allPendingOrders = this.calculatePendingOrderLines();
+        App.State.filteredPendingOrders = App.State.allPendingOrders;
+
+        const searchEl = document.getElementById('searchPendingOrders');
+        if (searchEl) searchEl.value = '';
+
+        this.renderPendingOrdersTable();
+        safeModalShow('pendingOrdersModal');
+      },
+
+      filterPendingOrders(searchTerm) {
+        const term = String(searchTerm || '').toLowerCase().trim();
+        App.State.filteredPendingOrders = term
+          ? (App.State.allPendingOrders || []).filter(p =>
+            App.Utils.matchesKeywords(`${p.orderNumber} ${p.clientName} ${p.productId} ${p.productName}`, term))
+          : (App.State.allPendingOrders || []);
+
+        this.renderPendingOrdersTable();
+      },
+
+      renderPendingOrdersTable() {
+        const tbody = document.getElementById('pendingOrdersTableBody');
+        if (!tbody) return;
+
+        const items = App.State.filteredPendingOrders || [];
+        const emptyState = document.getElementById('pendingOrdersEmptyState');
+
+        if (items.length === 0) {
+          tbody.innerHTML = '';
+          if (emptyState) emptyState.style.display = 'block';
+          return;
+        }
+        if (emptyState) emptyState.style.display = 'none';
+
+        let html = '';
+        items.forEach(p => {
+          html += `<tr>
+        <td><span class="badge bg-dark shadow-sm">${escapeHtml(p.orderNumber)}</span></td>
+        <td>${escapeHtml(p.orderDate)}</td>
+        <td><strong>${escapeHtml(p.clientName)}</strong></td>
+        <td>${escapeHtml(p.productName)} <span class="text-muted">(${escapeHtml(p.productId)})</span></td>
+        <td class="text-center">${App.Production.formatQty(p.orderedQty)}</td>
+        <td class="text-center">${App.Production.formatQty(p.dispatchedQty)}</td>
+        <td class="text-center fw-bold text-danger">${App.Production.formatQty(p.pendingQty)}</td>
+        <td class="text-center"><span class="badge ${p.badgeClass} shadow-sm">${p.label}</span></td>
+      </tr>`;
+        });
+
+        tbody.innerHTML = html;
+      }
+    };
+
+    // Wire up Client / PI-Estimate form submissions
+    document.addEventListener('DOMContentLoaded', function () {
+      const clientForm = document.getElementById('clientForm');
+      if (clientForm) {
+        clientForm.onsubmit = async function (e) {
+          e.preventDefault();
+          const formData = Object.fromEntries(new FormData(this));
+          const isEdit = !!formData.originalClientName;
+          const btn = document.getElementById('clientSubmitBtn');
+          if (btn) btn.disabled = true;
+
+          try {
+            const res = await Api.call('saveClient', formData);
+            if (res.success) {
+              await App.Client.loadClientsData();
+              if (isEdit) {
+                safeModalHide('clientModal');
+              } else {
+                App.Client.openCreateClientModal();
+              }
+            }
+            App.Utils.showToast(res.message, !res.success);
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to save client', true);
+          } finally {
+            if (btn) btn.disabled = false;
+          }
+        };
+      }
+
+      const clientOrderForm = document.getElementById('clientOrderForm');
+      if (clientOrderForm) {
+        clientOrderForm.onsubmit = async function (e) {
+          e.preventDefault();
+          const formData = Object.fromEntries(new FormData(this));
+          formData.lines = JSON.stringify(App.Client.serializeOrderLines());
+          const isEdit = !!formData.orderNumber;
+
+          const btn = document.getElementById('clientOrderSubmitBtn');
+          if (btn) btn.disabled = true;
+
+          try {
+            const res = await Api.call('saveClientOrder', formData);
+            if (res.success) {
+              await App.Client.loadOrdersData();
+              if (typeof App.Dispatch !== 'undefined') await App.Dispatch.loadReadyData();
+              if (isEdit) {
+                safeModalHide('clientOrderModal');
+              } else {
+                App.Client.openCreateOrderModal();
+              }
+            }
+            App.Utils.showToast(res.message, !res.success);
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to save PI / Estimate', true);
+          } finally {
+            if (btn) btn.disabled = false;
+          }
+        };
+      }
+    });
+</script>

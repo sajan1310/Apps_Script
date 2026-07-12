@@ -110,7 +110,7 @@ function verifyBOMAccess(password) {
 
     return buildResponse(true, { token: token }, 'Access granted.');
   } catch (error) {
-    console.error('[verifyBOMAccess] Error:', error.message);
+    Log.error('[verifyBOMAccess] Error:', error.message);
     return buildResponse(false, null, 'Failed to verify password: ' + error.message);
   }
 }
@@ -161,7 +161,7 @@ function initBOMSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'BOM sheet initialized successfully.');
   } catch (error) {
-    console.error('[initBOMSheet] Error:', error.message);
+    Log.error('[initBOMSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize BOM sheet: ' + error.message);
   }
 }
@@ -181,7 +181,7 @@ function ensureBOMRemarksColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureBOMRemarksColumn] Error:', error.message);
+    Log.error('[ensureBOMRemarksColumn] Error:', error.message);
   }
 }
 
@@ -200,7 +200,7 @@ function ensureBOMProcessGroupColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureBOMProcessGroupColumn] Error:', error.message);
+    Log.error('[ensureBOMProcessGroupColumn] Error:', error.message);
   }
 }
 
@@ -220,7 +220,7 @@ function ensureBOMColorColumn(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureBOMColorColumn] Error:', error.message);
+    Log.error('[ensureBOMColorColumn] Error:', error.message);
   }
 }
 
@@ -264,7 +264,7 @@ function ensureBOMSequenceColumn(sheet) {
 
     sheet.getRange(2, BOM_COL.SEQUENCE, sequences.length, 1).setValues(sequences);
   } catch (error) {
-    console.error('[ensureBOMSequenceColumn] Error:', error.message);
+    Log.error('[ensureBOMSequenceColumn] Error:', error.message);
   }
 }
 
@@ -297,7 +297,7 @@ function initBOMCostsSheet() {
     SpreadsheetApp.flush();
     return buildResponse(true, null, 'BOM Additional Costs sheet initialized successfully.');
   } catch (error) {
-    console.error('[initBOMCostsSheet] Error:', error.message);
+    Log.error('[initBOMCostsSheet] Error:', error.message);
     return buildResponse(false, null, 'Failed to initialize BOM Additional Costs sheet: ' + error.message);
   }
 }
@@ -318,7 +318,7 @@ function ensureBOMCostsExtraColumns(sheet) {
         .setBackground('#f3f3f3');
     }
   } catch (error) {
-    console.error('[ensureBOMCostsExtraColumns] Error:', error.message);
+    Log.error('[ensureBOMCostsExtraColumns] Error:', error.message);
   }
 }
 
@@ -448,7 +448,7 @@ function getBOMData(token) {
     if (error.message === 'UNAUTHORIZED_BOM') {
       return buildResponse(false, null, 'This section is password-protected.');
     }
-    console.error('[getBOMData] Error:', error.message);
+    Log.error('[getBOMData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load BOM data: ' + error.message);
   }
 }
@@ -508,7 +508,7 @@ function getBOMFinalStageProcessMap() {
 
     return map;
   } catch (e) {
-    console.error('[getBOMFinalStageProcessMap] Error:', e.message);
+    Log.error('[getBOMFinalStageProcessMap] Error:', e.message);
     return map;
   }
 }
@@ -592,7 +592,7 @@ function getBOMProductionData() {
 
     return buildResponse(true, products);
   } catch (error) {
-    console.error('[getBOMProductionData] Error:', error.message);
+    Log.error('[getBOMProductionData] Error:', error.message);
     return buildResponse(false, null, 'Failed to load product list: ' + error.message);
   }
 }
@@ -632,7 +632,7 @@ function getNextProductId(token) {
 
     return 'PRD-' + (maxNum + 1);
   } catch (error) {
-    console.error('[getNextProductId] Error:', error.message);
+    Log.error('[getNextProductId] Error:', error.message);
     return 'PRD-1001'; // Fallback
   }
 }
@@ -813,7 +813,7 @@ function saveBOM(formData, token) {
 
     return buildResponse(true, { productId: productId, productName: productName }, isEdit ? 'BOM updated successfully.' : 'Product BOM saved successfully.');
   } catch (error) {
-    console.error('[saveBOM] Error:', error.message);
+    Log.error('[saveBOM] Error:', error.message);
     logAction('ERROR', 'saveBOM', formData.productId || 'NEW', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save BOM: ' + error.message);
   } finally {
@@ -919,7 +919,7 @@ function deleteBOM(productId, token) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[deleteBOM] Error:', error.message);
+    Log.error('[deleteBOM] Error:', error.message);
     logAction('ERROR', 'deleteBOM', productId, error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete BOM: ' + error.message);
   } finally {
@@ -986,7 +986,7 @@ function deleteBOMsBulk(productIds, token) {
 
     return buildResponse(true, { skipped: Array.from(inUseSet) }, msg);
   } catch (error) {
-    console.error('[deleteBOMsBulk] Error:', error.message);
+    Log.error('[deleteBOMsBulk] Error:', error.message);
     logAction('ERROR', 'deleteBOMsBulk', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete BOMs: ' + error.message);
   } finally {
@@ -1048,7 +1048,7 @@ function reorderBOM(orderedProductIds, token) {
 
     return buildResponse(true, null, msg);
   } catch (error) {
-    console.error('[reorderBOM] Error:', error.message);
+    Log.error('[reorderBOM] Error:', error.message);
     logAction('ERROR', 'reorderBOM', 'multiple', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to reorder products: ' + error.message);
   } finally {
