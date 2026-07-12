@@ -1,0 +1,218 @@
+<!--
+  Mobile_Views.html — screen & sheet markup for the mobile shell.
+
+  Two kinds of content live here:
+  1. Tab-root screens: <template id="tpl-*"> — cloned into #mapp-content
+     by MApp.Shell.showTab() on every tab switch, so each visit starts
+     from a clean skeleton state.
+  2. Sheets/pickers: plain top-level <div class="mb-sheet"> — persistent,
+     full-viewport overlays (they sit above the tab bar, so a tab can't be
+     switched out from under one) opened via MApp.Sheet.open()/close().
+-->
+
+<!-- Shared backdrop behind every open sheet -->
+<div class="mb-sheet-backdrop" id="mapp-sheet-backdrop"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     GENERIC FULL-SCREEN SEARCHABLE PICKER
+     Driven by MApp.Picker.open({title, items, selectedValue, searchable})
+     — replaces Select2 everywhere in the mobile bundle per the "no
+     Select2 in mobile" rule.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet mb-picker-screen" id="mapp-picker-sheet" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2 id="mapp-picker-title">Choose</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Picker.cancel()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div id="mapp-picker-search-wrap" style="padding:var(--mb-sp-4) var(--mb-sp-4) 0;">
+      <div class="mb-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input type="text" id="mapp-picker-search" placeholder="Search..." oninput="MApp.Picker.onSearch(this.value)" autocomplete="off">
+      </div>
+    </div>
+    <div id="mapp-picker-list"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     TAB 1 — HOME
+     ═══════════════════════════════════════════════════════════════════ -->
+<template id="tpl-home">
+  <h1 class="mapp-screen-title">Today</h1>
+
+  <div id="home-stats" class="mb-stat-grid">
+    <div class="mb-skel mb-skel-tile"></div>
+    <div class="mb-skel mb-skel-tile"></div>
+    <div class="mb-skel mb-skel-tile"></div>
+  </div>
+
+  <div class="mapp-section-label">Recent activity</div>
+  <div id="home-activity">
+    <div class="mb-skel mb-skel-card"></div>
+    <div class="mb-skel mb-skel-card"></div>
+    <div class="mb-skel mb-skel-card"></div>
+  </div>
+</template>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     TAB 2 — STOCK
+     ═══════════════════════════════════════════════════════════════════ -->
+<template id="tpl-stock">
+  <h1 class="mapp-screen-title">Stock</h1>
+
+  <div class="mb-search mb-search-sticky">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+    <input type="text" id="stock-search" placeholder="Search items..." oninput="MApp.Stock.onSearch(this.value)" autocomplete="off">
+  </div>
+
+  <div id="stock-list">
+    <div class="mb-skel mb-skel-card"></div>
+    <div class="mb-skel mb-skel-card"></div>
+    <div class="mb-skel mb-skel-card"></div>
+    <div class="mb-skel mb-skel-card"></div>
+  </div>
+</template>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     TAB 3 — PRODUCTION
+     ═══════════════════════════════════════════════════════════════════ -->
+<template id="tpl-production">
+  <h1 class="mapp-screen-title">Production</h1>
+  <div id="production-list">
+    <div class="mb-skel mb-skel-card"></div>
+    <div class="mb-skel mb-skel-card"></div>
+    <div class="mb-skel mb-skel-card"></div>
+  </div>
+  <button type="button" class="mb-fab" onclick="MApp.Production.openLogLotSheet()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Log Lot
+  </button>
+</template>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     TAB 4 — DISPATCH
+     ═══════════════════════════════════════════════════════════════════ -->
+<template id="tpl-dispatch">
+  <h1 class="mapp-screen-title">Dispatch</h1>
+  <div id="dispatch-list">
+    <div class="mb-skel mb-skel-card"></div>
+    <div class="mb-skel mb-skel-card"></div>
+    <div class="mb-skel mb-skel-card"></div>
+  </div>
+  <button type="button" class="mb-fab" onclick="MApp.Dispatch.openNewDispatchSheet()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    New Dispatch
+  </button>
+</template>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     TAB 5 — MORE
+     ═══════════════════════════════════════════════════════════════════ -->
+<template id="tpl-more">
+  <h1 class="mapp-screen-title">More</h1>
+
+  <div class="mapp-section-label">Returns</div>
+  <div id="more-returns-list">
+    <div class="mb-skel mb-skel-card"></div>
+  </div>
+  <button type="button" class="mb-btn mb-btn-secondary mb-mb-4" onclick="MApp.Returns.openNewReturnSheet()">Log Return</button>
+
+  <div class="mapp-section-label mb-mt-4">Lookup</div>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Items.openLookupSheet()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Items lookup</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Search the full item master</div>
+  </button>
+
+  <div class="mapp-section-label mb-mt-4">Desktop</div>
+  <a class="mb-card mb-card-tappable" style="border:none;display:block;text-decoration:none;" id="more-desktop-link" href="?" target="_top">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Open desktop UI</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Bills, BOM, vendor ledgers, settings</div>
+  </a>
+
+  <div class="mapp-section-label mb-mt-4">About</div>
+  <div class="mb-card">
+    <div class="mb-card-sub" id="more-about-line">Maharaja Bikes ERP — Mobile</div>
+  </div>
+</template>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — LOG LOT (Production)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-log-lot" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Log Lot</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Production.closeLogLotSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="log-lot-body">
+    <!-- Rendered by MApp.Production.renderLogLotForm() -->
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="log-lot-save-btn" onclick="MApp.Production.saveLot()">Log Lot</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — NEW DISPATCH
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-new-dispatch" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>New Dispatch</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Dispatch.closeNewDispatchSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="new-dispatch-body">
+    <!-- Rendered by MApp.Dispatch.renderForm() -->
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="new-dispatch-save-btn" onclick="MApp.Dispatch.save()">Save Dispatch</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — LOG RETURN
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-log-return" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Log Return</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Returns.closeNewReturnSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="log-return-body">
+    <!-- Rendered by MApp.Returns.renderForm() -->
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="log-return-save-btn" onclick="MApp.Returns.save()">Log Return</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — ITEMS LOOKUP (More tab)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-items-lookup" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Items lookup</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Items.closeLookupSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="text" id="items-lookup-search" placeholder="Search item master..." oninput="MApp.Items.onSearch(this.value)" autocomplete="off">
+    </div>
+    <div id="items-lookup-list"></div>
+  </div>
+</div>

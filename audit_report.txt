@@ -1,0 +1,39 @@
+==============================================================================
+AUDIT REPORT — Maharaja Bikes ERP (Apps Script project)
+==============================================================================
+
+-- ERROR (0) -------------------------------------------------------
+  (none)
+
+-- WARNING (4) -----------------------------------------------------
+  [include-graph] Mobile_Index.html is not reachable from Index.html via include() — dead/unused file or not wired into the build
+  [include-graph] Mobile_Script.html is not reachable from Index.html via include() — dead/unused file or not wired into the build
+  [include-graph] Mobile_Styles.html is not reachable from Index.html via include() — dead/unused file or not wired into the build
+  [include-graph] Mobile_Views.html is not reachable from Index.html via include() — dead/unused file or not wired into the build
+
+-- INFO (21) --------------------------------------------------------
+  [console] main.js: 5 console.* call(s)
+  [console] module_bill.js: 6 console.* call(s)
+  [console] module_bom.js: 16 console.* call(s)
+  [console] module_clients.js: 8 console.* call(s)
+  [console] module_contractors.js: 14 console.* call(s)
+  [console] module_dashboard.js: 2 console.* call(s)
+  [console] module_dispatch.js: 9 console.* call(s)
+  [console] module_issue.js: 4 console.* call(s)
+  [console] module_items.js: 20 console.* call(s)
+  [console] module_po.js: 9 console.* call(s)
+  [console] module_process.js: 22 console.* call(s)
+  [console] module_production.js: 17 console.* call(s)
+  [console] module_return.js: 6 console.* call(s)
+  [console] module_stock.js: 11 console.* call(s)
+  [console] module_tags.js: 6 console.* call(s)
+  [console] module_units.js: 4 console.* call(s)
+  [console] module_vendors.js: 2 console.* call(s)
+  [console] module_warehouse.js: 11 console.* call(s)
+  [console] module_wastage.js: 4 console.* call(s)
+  [console] utils.js: 11 console.* call(s)
+  [security] appsscript.json webapp.access is 'ANYONE' with executeAs 'USER_DEPLOYING' — anyone with the URL can read/write the spreadsheet using the deploying user's permissions. Confirm this is intentional for this ERP system.
+
+==============================================================================
+SUMMARY: 0 error(s), 4 warning(s), 21 info note(s)
+==============================================================================

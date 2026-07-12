@@ -1,0 +1,808 @@
+<style>
+  /**
+   * ═════════════════════════════════════════════════════════════════════
+   * Mobile_Styles.html — Maharaja Bikes ERP, Mobile Shell Design System
+   *
+   * Standalone design system for the mobile field UI. No dependency on
+   * desktop Styles.html or Bootstrap — every component here is built from
+   * the custom properties below. Designed for factory-floor conditions:
+   * sunlight glare, dusty/gloved hands, one-handed use.
+   *
+   * Palette — a bicycle factory's own materials, not a generic brand kit:
+   *   Ink        near-black steel frame tubing — body text, max contrast
+   *   Steel       cold-rolled steel gray-blue — secondary text, borders
+   *   Workshop    pale workshop-wall white — page background
+   *   Safety      safety-orange enamel — the one primary action color
+   *   Enamel *    frame paint-code colors — status chips & stock badges
+   *               (the signature element, used consistently everywhere)
+   *
+   * Type — Oswald (condensed, stencil-like, reads at arm's length across a
+   * shop floor — screen titles and big numbers) + Inter (clean body copy).
+   * ═════════════════════════════════════════════════════════════════════
+   */
+
+  :root {
+    /* ── Palette ─────────────────────────────────────────────────────── */
+    --mb-ink:            #14181c;
+    --mb-ink-soft:       #3a4550;
+    --mb-steel:          #55707e;
+    --mb-steel-light:    #cbd8de;
+    --mb-steel-faint:    #e7edf0;
+    --mb-workshop:       #f3f5f6;
+    --mb-surface:        #ffffff;
+
+    --mb-safety:         #ff6a13;
+    --mb-safety-dark:    #d6540a;
+    --mb-safety-faint:   #ffe7d6;
+
+    --mb-enamel-red:     #c81e3a;
+    --mb-enamel-red-bg:  #fbe2e6;
+    --mb-enamel-blue:    #1d5fa8;
+    --mb-enamel-blue-bg: #dfe9f5;
+    --mb-enamel-green:   #1e8a5f;
+    --mb-enamel-green-bg:#dcf0e6;
+    --mb-enamel-amber:   #b8790a;
+    --mb-enamel-amber-bg:#fbe9cf;
+    --mb-enamel-slate:   #4a5a66;
+    --mb-enamel-slate-bg:#e3e8ea;
+
+    /* ── Type ────────────────────────────────────────────────────────── */
+    --mb-font-display:   'Oswald', 'Arial Narrow', sans-serif;
+    --mb-font-body:      'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+
+    /* ── Spacing scale ───────────────────────────────────────────────── */
+    --mb-sp-1: 4px;
+    --mb-sp-2: 8px;
+    --mb-sp-3: 12px;
+    --mb-sp-4: 16px;
+    --mb-sp-5: 20px;
+    --mb-sp-6: 24px;
+    --mb-sp-7: 32px;
+    --mb-sp-8: 40px;
+
+    /* ── Shape & elevation ───────────────────────────────────────────── */
+    --mb-radius-sm:   8px;
+    --mb-radius-md:   14px;
+    --mb-radius-lg:   22px;
+    --mb-radius-pill: 999px;
+    --mb-shadow-card: 0 1px 3px rgba(20, 24, 28, 0.08), 0 1px 2px rgba(20, 24, 28, 0.06);
+    --mb-shadow-raised: 0 6px 20px rgba(20, 24, 28, 0.18);
+    --mb-shadow-fab:  0 8px 24px rgba(255, 106, 19, 0.4);
+
+    /* ── Touch targets ───────────────────────────────────────────────── */
+    --mb-tap-min:     48px;
+    --mb-tap-primary: 56px;
+
+    /* ── Motion ──────────────────────────────────────────────────────── */
+    --mb-motion-fast: 120ms ease-out;
+    --mb-motion-base: 200ms ease-out;
+    --mb-motion-sheet: 260ms cubic-bezier(0.32, 0.72, 0, 1);
+
+    /* ── Chrome heights (used by layout math) ───────────────────────── */
+    --mb-topbar-h: 56px;
+    --mb-tabbar-h: 64px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --mb-motion-fast: 0ms;
+      --mb-motion-base: 0ms;
+      --mb-motion-sheet: 0ms;
+    }
+  }
+
+  /* ── Reset & base ────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--mb-workshop);
+    color: var(--mb-ink);
+    font-family: var(--mb-font-body);
+    font-size: 16px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+    height: 100%;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--mb-font-display);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin: 0;
+    color: var(--mb-ink);
+  }
+
+  button {
+    font-family: inherit;
+  }
+
+  a { color: var(--mb-enamel-blue); }
+
+  ul { list-style: none; margin: 0; padding: 0; }
+
+  input, select, textarea, button {
+    font-size: 16px; /* iOS Safari zooms on focus below 16px */
+  }
+
+  /* Visible keyboard focus everywhere — non-negotiable on a device that's
+     also used with a bluetooth barcode-scanner keyboard on the shop floor. */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 3px solid var(--mb-safety);
+    outline-offset: 2px;
+  }
+
+  /* ── App shell ───────────────────────────────────────────────────────── */
+  #mapp-root {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .mapp-topbar {
+    flex: 0 0 var(--mb-topbar-h);
+    display: flex;
+    align-items: center;
+    gap: var(--mb-sp-3);
+    padding: 0 var(--mb-sp-4);
+    background: var(--mb-ink);
+    color: #fff;
+    z-index: 30;
+  }
+
+  .mapp-topbar-title {
+    font-family: var(--mb-font-display);
+    font-size: 20px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mapp-topbar-btn {
+    background: transparent;
+    border: none;
+    color: #fff;
+    min-width: var(--mb-tap-min);
+    min-height: var(--mb-tap-min);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--mb-radius-sm);
+    cursor: pointer;
+  }
+  .mapp-topbar-btn:active { background: rgba(255,255,255,0.15); }
+
+  .mapp-content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    position: relative;
+    padding: var(--mb-sp-4) var(--mb-sp-4) calc(var(--mb-sp-8) + env(safe-area-inset-bottom));
+  }
+
+  .mapp-tabbar {
+    flex: 0 0 auto;
+    display: flex;
+    background: var(--mb-surface);
+    border-top: 1px solid var(--mb-steel-faint);
+    padding-bottom: env(safe-area-inset-bottom);
+    z-index: 40;
+  }
+
+  .mapp-tab {
+    flex: 1;
+    min-height: var(--mb-tabbar-h);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    background: none;
+    border: none;
+    color: var(--mb-steel);
+    font-family: var(--mb-font-body);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: var(--mb-sp-1) 0;
+  }
+  .mapp-tab svg { width: 24px; height: 24px; }
+  .mapp-tab.active { color: var(--mb-safety); }
+  .mapp-tab:active { background: var(--mb-workshop); }
+
+  /* ── Section headings & screen title ────────────────────────────────── */
+  .mapp-screen-title {
+    font-size: 24px;
+    margin-bottom: var(--mb-sp-5);
+  }
+
+  .mapp-section-label {
+    font-family: var(--mb-font-body);
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--mb-steel);
+    margin: 0 0 var(--mb-sp-2);
+  }
+
+  /* ── Cards ───────────────────────────────────────────────────────────── */
+  .mb-card {
+    background: var(--mb-surface);
+    border-radius: var(--mb-radius-md);
+    box-shadow: var(--mb-shadow-card);
+    padding: var(--mb-sp-4);
+    margin-bottom: var(--mb-sp-3);
+  }
+
+  .mb-card-tappable {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .mb-card-tappable:active { background: var(--mb-workshop); }
+
+  .mb-card-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--mb-sp-3);
+  }
+
+  .mb-card-title {
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--mb-ink);
+  }
+
+  .mb-card-sub {
+    font-size: 13px;
+    color: var(--mb-steel);
+    margin-top: 2px;
+  }
+
+  .mb-card-number {
+    font-family: var(--mb-font-display);
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--mb-ink);
+    line-height: 1;
+  }
+
+  /* ── Stat tiles (Home) ───────────────────────────────────────────────── */
+  .mb-stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--mb-sp-3);
+    margin-bottom: var(--mb-sp-5);
+  }
+
+  .mb-stat-tile {
+    background: var(--mb-surface);
+    border-radius: var(--mb-radius-md);
+    box-shadow: var(--mb-shadow-card);
+    padding: var(--mb-sp-4);
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    min-height: var(--mb-tap-min);
+  }
+  .mb-stat-tile:active { background: var(--mb-workshop); }
+
+  .mb-stat-tile-label {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--mb-steel);
+    margin-bottom: var(--mb-sp-2);
+  }
+
+  .mb-stat-tile-value {
+    font-family: var(--mb-font-display);
+    font-size: 36px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--mb-ink);
+  }
+
+  .mb-stat-tile-value.mb-alert { color: var(--mb-enamel-red); }
+
+  /* ── Enamel chips / badges — the signature element ──────────────────── */
+  .mb-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mb-font-body);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 5px 12px;
+    border-radius: var(--mb-radius-pill);
+    color: #fff;
+    background: var(--mb-enamel-slate);
+    white-space: nowrap;
+  }
+  .mb-chip-pending   { background: var(--mb-enamel-amber); }
+  .mb-chip-inprogress{ background: var(--mb-enamel-blue); }
+  .mb-chip-completed { background: var(--mb-enamel-green); }
+  .mb-chip-cancelled { background: var(--mb-enamel-red); }
+  .mb-chip-lowstock   { background: var(--mb-enamel-red); }
+
+  /* ── Buttons ─────────────────────────────────────────────────────────── */
+  .mb-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--mb-sp-2);
+    min-height: var(--mb-tap-primary);
+    padding: 0 var(--mb-sp-5);
+    border-radius: var(--mb-radius-md);
+    border: none;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform var(--mb-motion-fast), opacity var(--mb-motion-fast);
+    width: 100%;
+  }
+  .mb-btn:active { transform: scale(0.98); }
+  .mb-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  .mb-btn-primary { background: var(--mb-safety); color: #fff; }
+  .mb-btn-primary:active:not(:disabled) { background: var(--mb-safety-dark); }
+
+  .mb-btn-secondary { background: var(--mb-steel-faint); color: var(--mb-ink); }
+
+  .mb-btn-danger { background: var(--mb-enamel-red-bg); color: var(--mb-enamel-red); }
+
+  .mb-btn-text {
+    background: none;
+    color: var(--mb-enamel-blue);
+    min-height: var(--mb-tap-min);
+    width: auto;
+    padding: 0 var(--mb-sp-3);
+  }
+
+  /* ── FAB ─────────────────────────────────────────────────────────────── */
+  .mb-fab {
+    position: absolute;
+    right: var(--mb-sp-5);
+    bottom: var(--mb-sp-5);
+    min-width: 64px;
+    height: 64px;
+    border-radius: var(--mb-radius-pill);
+    background: var(--mb-safety);
+    color: #fff;
+    border: none;
+    box-shadow: var(--mb-shadow-fab);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--mb-sp-2);
+    padding: 0 var(--mb-sp-5);
+    font-size: 15px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    z-index: 20;
+  }
+  .mb-fab:active { background: var(--mb-safety-dark); transform: scale(0.97); }
+  .mb-fab svg { width: 24px; height: 24px; flex-shrink: 0; }
+
+  /* ── Search bar ──────────────────────────────────────────────────────── */
+  .mb-search {
+    position: relative;
+    margin-bottom: var(--mb-sp-4);
+  }
+  .mb-search input {
+    width: 100%;
+    min-height: var(--mb-tap-primary);
+    border-radius: var(--mb-radius-md);
+    border: 2px solid var(--mb-steel-faint);
+    background: var(--mb-surface);
+    padding: 0 var(--mb-sp-4) 0 44px;
+    color: var(--mb-ink);
+  }
+  .mb-search input:focus {
+    border-color: var(--mb-safety);
+    outline: none;
+  }
+  .mb-search svg {
+    position: absolute;
+    left: var(--mb-sp-4);
+    top: 50%;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 20px;
+    color: var(--mb-steel);
+  }
+  .mb-search-sticky {
+    position: sticky;
+    top: 0;
+    background: var(--mb-workshop);
+    padding-top: var(--mb-sp-1);
+    z-index: 10;
+  }
+
+  /* ── Form controls ───────────────────────────────────────────────────── */
+  .mb-field { margin-bottom: var(--mb-sp-5); }
+
+  .mb-field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--mb-steel);
+    margin-bottom: var(--mb-sp-2);
+  }
+
+  .mb-field input[type="text"],
+  .mb-field input[type="number"],
+  .mb-field input[type="date"],
+  .mb-field textarea,
+  .mb-field select {
+    width: 100%;
+    min-height: var(--mb-tap-primary);
+    border-radius: var(--mb-radius-md);
+    border: 2px solid var(--mb-steel-faint);
+    background: var(--mb-surface);
+    padding: 0 var(--mb-sp-4);
+    color: var(--mb-ink);
+  }
+  .mb-field textarea {
+    min-height: 88px;
+    padding: var(--mb-sp-3) var(--mb-sp-4);
+    resize: vertical;
+  }
+  .mb-field input:focus, .mb-field select:focus, .mb-field textarea:focus {
+    border-color: var(--mb-safety);
+    outline: none;
+  }
+  .mb-field input:disabled, .mb-field select:disabled, .mb-field textarea:disabled {
+    background: var(--mb-steel-faint);
+    color: var(--mb-steel);
+  }
+  .mb-field-hint {
+    font-size: 12px;
+    color: var(--mb-steel);
+    margin-top: var(--mb-sp-1);
+  }
+
+  /* A field styled to look like a select but opens a full-screen picker
+     (see .mb-picker-screen) — used for item/process pickers per the "no
+     Select2" rule. */
+  .mb-picker-field {
+    width: 100%;
+    min-height: var(--mb-tap-primary);
+    border-radius: var(--mb-radius-md);
+    border: 2px solid var(--mb-steel-faint);
+    background: var(--mb-surface);
+    padding: 0 var(--mb-sp-4);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--mb-sp-2);
+    cursor: pointer;
+    color: var(--mb-ink);
+    font-size: 16px;
+    text-align: left;
+  }
+  .mb-picker-field.mb-placeholder { color: var(--mb-steel); }
+  .mb-picker-field:disabled { background: var(--mb-steel-faint); color: var(--mb-steel); cursor: not-allowed; }
+  .mb-picker-field svg { width: 20px; height: 20px; color: var(--mb-steel); flex-shrink: 0; }
+
+  /* ── Full-screen sheet (forms) ──────────────────────────────────────── */
+  .mb-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 24, 28, 0.4);
+    z-index: 100;
+    opacity: 0;
+    transition: opacity var(--mb-motion-sheet);
+    pointer-events: none;
+  }
+  .mb-sheet-backdrop.open { opacity: 1; pointer-events: auto; }
+
+  .mb-sheet {
+    position: fixed;
+    inset: 0;
+    background: var(--mb-workshop);
+    z-index: 101;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(100%);
+    transition: transform var(--mb-motion-sheet);
+  }
+  .mb-sheet.open { transform: translateY(0); }
+
+  .mb-sheet-header {
+    flex: 0 0 var(--mb-topbar-h);
+    display: flex;
+    align-items: center;
+    gap: var(--mb-sp-3);
+    padding: 0 var(--mb-sp-2) 0 var(--mb-sp-4);
+    background: var(--mb-ink);
+    color: #fff;
+  }
+  .mb-sheet-header h2 {
+    flex: 1;
+    font-size: 18px;
+    color: #fff;
+  }
+
+  .mb-sheet-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: var(--mb-sp-5) var(--mb-sp-4) var(--mb-sp-7);
+  }
+
+  .mb-sheet-footer {
+    flex: 0 0 auto;
+    padding: var(--mb-sp-4);
+    padding-bottom: calc(var(--mb-sp-4) + env(safe-area-inset-bottom));
+    background: var(--mb-surface);
+    border-top: 1px solid var(--mb-steel-faint);
+  }
+
+  /* Full-screen searchable picker — sits visually identical to .mb-sheet
+     but stacks on top of it (z-index above), per the "full-screen
+     searchable picker instead of Select2" instruction. */
+  .mb-picker-screen { z-index: 110; }
+  .mb-picker-screen .mb-sheet-body { padding: 0; }
+
+  .mb-picker-option {
+    display: block;
+    width: 100%;
+    min-height: var(--mb-tap-primary);
+    padding: 0 var(--mb-sp-4);
+    border: none;
+    border-bottom: 1px solid var(--mb-steel-faint);
+    background: var(--mb-surface);
+    text-align: left;
+    font-size: 16px;
+    color: var(--mb-ink);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .mb-picker-option:active { background: var(--mb-workshop); }
+  .mb-picker-option.selected { color: var(--mb-safety); font-weight: 700; }
+
+  /* ── Color chips + stepper (multi-color process checklist) ──────────── */
+  .mb-color-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--mb-sp-3);
+  }
+
+  .mb-color-chip {
+    border: 2px solid var(--mb-steel-faint);
+    background: var(--mb-surface);
+    border-radius: var(--mb-radius-lg);
+    padding: var(--mb-sp-3) var(--mb-sp-4);
+    min-width: 128px;
+  }
+  .mb-color-chip.checked {
+    border-color: var(--mb-safety);
+    background: var(--mb-safety-faint);
+  }
+
+  .mb-color-chip-toggle {
+    width: 100%;
+    background: none;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--mb-sp-2);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--mb-ink);
+    cursor: pointer;
+    min-height: var(--mb-tap-min);
+  }
+  .mb-color-chip-swatch {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.15);
+    flex-shrink: 0;
+  }
+
+  .mb-stepper {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--mb-sp-2);
+    margin-top: var(--mb-sp-3);
+  }
+  .mb-stepper-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--mb-radius-sm);
+    border: none;
+    background: var(--mb-ink);
+    color: #fff;
+    font-size: 20px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .mb-stepper-btn:active { background: var(--mb-safety); }
+  .mb-stepper-btn:disabled { background: var(--mb-steel-light); cursor: not-allowed; }
+  .mb-stepper-value {
+    font-family: var(--mb-font-display);
+    font-size: 22px;
+    font-weight: 600;
+    min-width: 48px;
+    text-align: center;
+  }
+
+  /* ── Skeleton loading ────────────────────────────────────────────────── */
+  .mb-skel {
+    background: linear-gradient(90deg, var(--mb-steel-faint) 25%, #eef1f2 37%, var(--mb-steel-faint) 63%);
+    background-size: 400% 100%;
+    animation: mb-shimmer 1.4s ease infinite;
+    border-radius: var(--mb-radius-sm);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mb-skel { animation: none; background: var(--mb-steel-faint); }
+  }
+  @keyframes mb-shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+  }
+  .mb-skel-card {
+    height: 84px;
+    border-radius: var(--mb-radius-md);
+    margin-bottom: var(--mb-sp-3);
+  }
+  .mb-skel-line { height: 14px; margin-bottom: var(--mb-sp-2); }
+  .mb-skel-tile { height: 96px; border-radius: var(--mb-radius-md); }
+
+  /* ── Empty / error states ────────────────────────────────────────────── */
+  .mb-state {
+    text-align: center;
+    padding: var(--mb-sp-8) var(--mb-sp-5);
+    color: var(--mb-steel);
+  }
+  .mb-state svg {
+    width: 48px;
+    height: 48px;
+    color: var(--mb-steel-light);
+    margin-bottom: var(--mb-sp-3);
+  }
+  .mb-state-title {
+    font-family: var(--mb-font-display);
+    font-size: 18px;
+    color: var(--mb-ink);
+    text-transform: none;
+    letter-spacing: normal;
+    margin-bottom: var(--mb-sp-2);
+  }
+  .mb-state-body { font-size: 14px; margin-bottom: var(--mb-sp-4); }
+  .mb-state.mb-state-error svg { color: var(--mb-enamel-red); }
+  .mb-state-retry {
+    display: inline-flex;
+    min-height: var(--mb-tap-min);
+    padding: 0 var(--mb-sp-5);
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--mb-radius-md);
+    border: none;
+    background: var(--mb-ink);
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  /* ── Toast ───────────────────────────────────────────────────────────── */
+  .mb-toast-stack {
+    position: fixed;
+    left: var(--mb-sp-4);
+    right: var(--mb-sp-4);
+    bottom: calc(var(--mb-tabbar-h) + var(--mb-sp-4) + env(safe-area-inset-bottom));
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: var(--mb-sp-2);
+    pointer-events: none;
+  }
+  .mb-toast {
+    background: var(--mb-ink);
+    color: #fff;
+    border-radius: var(--mb-radius-md);
+    padding: var(--mb-sp-3) var(--mb-sp-4);
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: var(--mb-shadow-raised);
+    animation: mb-toast-in var(--mb-motion-base);
+  }
+  .mb-toast.mb-toast-error { background: var(--mb-enamel-red); }
+  .mb-toast.mb-toast-success { background: var(--mb-enamel-green); }
+  @keyframes mb-toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mb-toast { animation: none; }
+  }
+
+  /* ── Misc utility ────────────────────────────────────────────────────── */
+  .mb-hidden { display: none !important; }
+  .mb-flex-row { display: flex; align-items: center; gap: var(--mb-sp-2); }
+  .mb-mt-2 { margin-top: var(--mb-sp-2); }
+  .mb-mt-4 { margin-top: var(--mb-sp-4); }
+  .mb-mb-4 { margin-bottom: var(--mb-sp-4); }
+  .mb-text-steel { color: var(--mb-steel); }
+  .mb-text-sm { font-size: 13px; }
+  .mb-truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Offline / no-connection banner injected by MApp.Api on a failed call */
+  .mb-offline-banner {
+    background: var(--mb-enamel-red-bg);
+    color: var(--mb-enamel-red);
+    border-radius: var(--mb-radius-md);
+    padding: var(--mb-sp-3) var(--mb-sp-4);
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: var(--mb-sp-4);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--mb-sp-3);
+  }
+
+  /* ── Print (challan) ─────────────────────────────────────────────────
+     View_Print.html's containers are display:none by default and each
+     print template owns its own inline styling (see that file's header
+     comment) — this block only handles visibility switching, mirroring
+     desktop Styles.html's @media print pattern, scoped to the mobile
+     shell's own chrome instead of the desktop app-container. */
+  @page { size: A4 portrait; margin: 10mm; }
+
+  @media print {
+    body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
+    #mapp-root, .mb-toast-stack, .mb-sheet-backdrop { display: none !important; }
+
+    #print-po-container, #print-dispatch-container, #print-item-ledger-container,
+    #print-vendor-ledger-container, #print-client-ledger-container,
+    #print-production-sheet-container, #print-low-stock-container,
+    #print-bill-container, #print-bom-container, #print-contractor-ledger-container,
+    #print-bulk-container {
+      display: none !important;
+    }
+    #print-po-container.active-print, #print-dispatch-container.active-print,
+    #print-item-ledger-container.active-print, #print-vendor-ledger-container.active-print,
+    #print-client-ledger-container.active-print, #print-production-sheet-container.active-print,
+    #print-low-stock-container.active-print, #print-bill-container.active-print,
+    #print-bom-container.active-print, #print-contractor-ledger-container.active-print,
+    #print-bulk-container.active-print {
+      display: block !important;
+      width: 100% !important;
+      margin: 0 !important;
+    }
+  }
+</style>

@@ -1,0 +1,2135 @@
+<script>
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * Mobile_Script.html — Maharaja Bikes ERP, Mobile App Logic
+   *
+   * Own MApp namespace, sharing nothing with desktop's App except the
+   * Api.call() promise wrapper pattern (Script.html ~line 1052). Every
+   * server call here hits an EXISTING module_*.js function unchanged; the
+   * only new server-side surface is getMobileDashboard() (module_dashboard.js).
+   *
+   * Structure: MApp.Api / MApp.Toast / MApp.Util / MApp.Shell / MApp.Sheet /
+   * MApp.Picker are the shared engine; MApp.Home / MApp.Stock / MApp.Production /
+   * MApp.Dispatch / MApp.Returns / MApp.Items / MApp.More are one module per
+   * tab/feature, each with a mount() called by MApp.Shell.showTab().
+   * ═══════════════════════════════════════════════════════════════════════
+   */
+  const MApp = {};
+
+  // ================================================================
+  // GAS API WRAPPER — same call(method, ...args) contract as desktop's
+  // Api.call so the request/response shape matches exactly; failures are
+  // left for each screen's own load()/save() to turn into a Retry state
+  // or toast, per the "fail loudly and recoverably, never spin forever"
+  // requirement (there is no offline mode to fall back to).
+  // ================================================================
+  MApp.Api = {
+    call(method, ...args) {
+      return new Promise((resolve, reject) => {
+        try {
+          const runner = google.script.run
+            .withSuccessHandler(resolve)
+            .withFailureHandler(reject);
+
+          if (typeof runner[method] !== 'function') {
+            reject(new Error(`Backend method "${method}" is unavailable.`));
+            return;
+          }
+
+          runner[method](...args);
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }
+  };
+
+  // ================================================================
+  // TOAST
+  // ================================================================
+  MApp.Toast = {
+    show(message, type) {
+      const stack = document.getElementById('mapp-toast-stack');
+      if (!stack) return;
+      const el = document.createElement('div');
+      el.className = 'mb-toast' + (type === 'error' ? ' mb-toast-error' : type === 'success' ? ' mb-toast-success' : '');
+      el.textContent = message;
+      stack.appendChild(el);
+      setTimeout(() => {
+        el.remove();
+      }, type === 'error' ? 4200 : 2600);
+    },
+    success(message) { this.show(message, 'success'); },
+    error(message) { this.show(message, 'error'); }
+  };
+
+  // ================================================================
+  // SHARED UTILITIES
+  // ================================================================
+  MApp.Util = {
+    escapeHtml(str) {
+      return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    },
+
+    toNumber(val) {
+      const n = parseFloat(val);
+      return isNaN(n) ? 0 : n;
+    },
+
+    // For a date input's default value / server payload — local YYYY-MM-DD,
+    // not toISOString() (which shifts to UTC and can land on the wrong day).
+    todayInputValue() {
+      const d = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    },
+
+    // dateRaw is an ISO timestamp string (see getProductionData/getDispatchData)
+    formatDateDisplay(dateRaw) {
+      if (!dateRaw) return '—';
+      const d = new Date(dateRaw);
+      if (isNaN(d.getTime())) return '—';
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return `${d.getDate()} ${months[d.getMonth()]}`;
+    },
+
+    isToday(dateRaw) {
+      if (!dateRaw) return false;
+      return String(dateRaw).slice(0, 10) === this.todayInputValue();
+    },
+
+    debounce(fn, wait) {
+      let t = null;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), wait);
+      };
+    },
+
+    // Renders `count` skeleton cards into a container while a load() is in flight.
+    renderSkeleton(container, count) {
+      if (!container) return;
+      container.innerHTML = Array.from({ length: count || 3 })
+        .map(() => '<div class="mb-skel mb-skel-card"></div>')
+        .join('');
+    },
+
+    // icon defaults to a simple inbox glyph — good enough for every empty state
+    // in this app; body copy is what actually varies per screen.
+    renderEmpty(container, { title, body }) {
+      if (!container) return;
+      container.innerHTML = `
+        <div class="mb-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-5h15L21 9"/><path d="M3 9h18v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z"/><path d="M9 13a3 3 0 0 0 6 0"/></svg>
+          <div class="mb-state-title">${this.escapeHtml(title)}</div>
+          <div class="mb-state-body">${this.escapeHtml(body)}</div>
+        </div>`;
+    },
+
+    // The "no connection — retry" state required for every list load failure.
+    renderError(container, message, onRetry) {
+      if (!container) return;
+      container.innerHTML = `
+        <div class="mb-state mb-state-error">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          <div class="mb-state-title">No connection</div>
+          <div class="mb-state-body">${this.escapeHtml(message || "Couldn't reach the server. Check your connection and try again.")}</div>
+          <button type="button" class="mb-state-retry">Retry</button>
+        </div>`;
+      const btn = container.querySelector('.mb-state-retry');
+      if (btn && typeof onRetry === 'function') btn.addEventListener('click', onRetry);
+    },
+
+    // Disables/enables every input, select, textarea and button inside a
+    // sheet body + swaps the footer save button's label — the "hard-disable
+    // the whole form" requirement, so a fast-tapping operator can never
+    // trigger a second overlapping save.
+    setSheetBusy(sheetBodyId, saveBtnId, isBusy, busyLabel, idleLabel) {
+      const body = document.getElementById(sheetBodyId);
+      if (body) {
+        body.querySelectorAll('input, select, textarea, button').forEach(el => {
+          el.disabled = isBusy;
+        });
+      }
+      const btn = document.getElementById(saveBtnId);
+      if (btn) {
+        btn.disabled = isBusy;
+        btn.textContent = isBusy ? (busyLabel || 'Saving…') : (idleLabel || btn.dataset.idleLabel || btn.textContent);
+        if (!isBusy && idleLabel) btn.dataset.idleLabel = idleLabel;
+      }
+    },
+
+    statusChipClass(status) {
+      switch (String(status || '').trim()) {
+        case 'Pending': return 'mb-chip-pending';
+        case 'In Progress': return 'mb-chip-inprogress';
+        case 'Completed': return 'mb-chip-completed';
+        case 'Cancelled': return 'mb-chip-cancelled';
+        default: return '';
+      }
+    }
+  };
+
+  // ================================================================
+  // SHELL — tab routing. Each tab root is a <template id="tpl-*"> in
+  // Mobile_Views.html, cloned fresh into #mapp-content on every visit so a
+  // tab always starts from its skeleton state rather than stale DOM.
+  // ================================================================
+  MApp.Shell = {
+    TABS: ['home', 'stock', 'production', 'dispatch', 'more'],
+    TITLES: { home: 'Home', stock: 'Stock', production: 'Production', dispatch: 'Dispatch', more: 'More' },
+    current: null,
+
+    init() {
+      this.showTab('home');
+    },
+
+    showTab(tab) {
+      if (this.TABS.indexOf(tab) === -1) return;
+      this.current = tab;
+
+      const titleEl = document.getElementById('mapp-topbar-title');
+      if (titleEl) titleEl.textContent = this.TITLES[tab];
+
+      this.TABS.forEach(t => {
+        const btn = document.getElementById('mapp-tab-' + t);
+        if (!btn) return;
+        const active = t === tab;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', String(active));
+      });
+
+      const content = document.getElementById('mapp-content');
+      const tpl = document.getElementById('tpl-' + tab);
+      if (content) {
+        content.innerHTML = '';
+        if (tpl) content.appendChild(tpl.content.cloneNode(true));
+        content.scrollTop = 0;
+      }
+
+      const moduleName = tab.charAt(0).toUpperCase() + tab.slice(1);
+      const mod = MApp[moduleName];
+      if (mod && typeof mod.mount === 'function') mod.mount();
+    }
+  };
+
+  // ================================================================
+  // SHEET — full-screen form overlays (Log Lot, New Dispatch, ...)
+  // ================================================================
+  MApp.Sheet = {
+    _stack: [],
+
+    open(sheetId) {
+      const backdrop = document.getElementById('mapp-sheet-backdrop');
+      const sheet = document.getElementById(sheetId);
+      if (!sheet) return;
+      if (backdrop) backdrop.classList.add('open');
+      sheet.classList.add('open');
+      document.body.style.overflow = 'hidden';
+      this._stack.push(sheetId);
+    },
+
+    close(sheetId) {
+      const sheet = document.getElementById(sheetId);
+      if (sheet) sheet.classList.remove('open');
+      this._stack = this._stack.filter(id => id !== sheetId);
+      if (this._stack.length === 0) {
+        const backdrop = document.getElementById('mapp-sheet-backdrop');
+        if (backdrop) backdrop.classList.remove('open');
+        document.body.style.overflow = '';
+      }
+    }
+  };
+
+  // ================================================================
+  // PICKER — generic full-screen searchable picker (replaces Select2).
+  // Usage: const picked = await MApp.Picker.open({ title, items }); items:
+  // [{ value, label, sublabel }]. Resolves the chosen item, or null if
+  // dismissed.
+  // ================================================================
+  MApp.Picker = {
+    _resolve: null,
+    _items: [],
+    _selectedValue: null,
+
+    open({ title, items, selectedValue, searchable = true, allowCustom = false }) {
+      return new Promise(resolve => {
+        this._resolve = resolve;
+        this._items = items || [];
+        this._selectedValue = selectedValue;
+        this._allowCustom = allowCustom;
+
+        const titleEl = document.getElementById('mapp-picker-title');
+        if (titleEl) titleEl.textContent = title || 'Choose';
+
+        const searchWrap = document.getElementById('mapp-picker-search-wrap');
+        const searchInput = document.getElementById('mapp-picker-search');
+        if (searchWrap) searchWrap.style.display = searchable ? '' : 'none';
+        if (searchInput) searchInput.value = '';
+
+        this._renderList(this._items, '');
+        MApp.Sheet.open('mapp-picker-sheet');
+
+        if (searchable && searchInput) {
+          setTimeout(() => searchInput.focus(), 280);
+        }
+      });
+    },
+
+    onSearch(term) {
+      const lower = String(term || '').toLowerCase();
+      const filtered = !lower ? this._items : this._items.filter(i =>
+        String(i.label || '').toLowerCase().includes(lower) ||
+        String(i.sublabel || '').toLowerCase().includes(lower));
+      this._renderList(filtered, term || '');
+    },
+
+    _renderList(items, term) {
+      const list = document.getElementById('mapp-picker-list');
+      if (!list) return;
+
+      // Free-text option: offered whenever allowCustom is set and the typed
+      // term doesn't already exactly match an existing option — lets
+      // "Assigned To" take an in-house name with no Contractor Master entry,
+      // same as desktop's Select2 tags:true behavior.
+      const trimmedTerm = String(term || '').trim();
+      const exactMatch = trimmedTerm && (items || []).some(i => String(i.label || '').toLowerCase() === trimmedTerm.toLowerCase());
+      const showCustomOption = this._allowCustom && trimmedTerm && !exactMatch;
+
+      if ((!items || items.length === 0) && !showCustomOption) {
+        MApp.Util.renderEmpty(list, { title: 'No matches', body: 'Try a different search term.' });
+        return;
+      }
+
+      list.innerHTML = '';
+
+      if (showCustomOption) {
+        const customBtn = document.createElement('button');
+        customBtn.type = 'button';
+        customBtn.className = 'mb-picker-option';
+        customBtn.style.color = 'var(--mb-safety)';
+        customBtn.style.fontWeight = '700';
+        customBtn.textContent = `Use "${trimmedTerm}"`;
+        customBtn.addEventListener('click', () => {
+          MApp.Sheet.close('mapp-picker-sheet');
+          const resolve = this._resolve;
+          this._resolve = null;
+          if (resolve) resolve({ value: trimmedTerm, label: trimmedTerm, isCustom: true });
+        });
+        list.appendChild(customBtn);
+      }
+
+      (items || []).forEach(item => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'mb-picker-option' + (item.value === this._selectedValue ? ' selected' : '');
+        const sub = item.sublabel
+          ? `<br><span class="mb-text-sm mb-text-steel">${MApp.Util.escapeHtml(item.sublabel)}</span>`
+          : '';
+        btn.innerHTML = `<span>${MApp.Util.escapeHtml(item.label)}${sub}</span>`;
+        btn.addEventListener('click', () => {
+          MApp.Sheet.close('mapp-picker-sheet');
+          const resolve = this._resolve;
+          this._resolve = null;
+          if (resolve) resolve(item);
+        });
+        list.appendChild(btn);
+      });
+    },
+
+    cancel() {
+      MApp.Sheet.close('mapp-picker-sheet');
+      const resolve = this._resolve;
+      this._resolve = null;
+      if (resolve) resolve(null);
+    }
+  };
+
+  // ================================================================
+  // PRINT — mirrors desktop App.Print.trigger(containerId, title):
+  // shows the one requested #print-*-container (reused as-is from
+  // View_Print.html), calls window.print(), restores on 'afterprint'.
+  // ================================================================
+  MApp.Print = {
+    trigger(containerId, documentTitle) {
+      document.querySelectorAll('[id^="print-"]').forEach(el => {
+        el.classList.remove('active-print');
+        el.style.display = 'none';
+      });
+
+      const container = document.getElementById(containerId);
+      if (container) {
+        container.classList.add('active-print');
+        container.style.display = 'block';
+      }
+
+      const originalTitle = document.title;
+      document.title = documentTitle || originalTitle;
+
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        document.title = originalTitle;
+        if (container) {
+          container.classList.remove('active-print');
+          container.style.display = 'none';
+        }
+        window.removeEventListener('afterprint', cleanup);
+      };
+
+      window.addEventListener('afterprint', cleanup);
+      window.print();
+      setTimeout(cleanup, 1000);
+    }
+  };
+
+  // Cross-tab one-shot pre-filters set by Home's stat tiles, consumed and
+  // cleared by the target tab's own mount().
+  MApp.State = {
+    stockFilter: '',
+    productionFilter: '',
+    dispatchFilter: '',
+    lastDashboard: null // cached getMobileDashboard() payload, reused by the More tab's About row
+  };
+
+  // ================================================================
+  // HOME
+  // ================================================================
+  MApp.Home = {
+    async mount() {
+      const statsEl = document.getElementById('home-stats');
+      const activityEl = document.getElementById('home-activity');
+
+      try {
+        const res = await MApp.Api.call('getMobileDashboard');
+        if (!res || !res.success) {
+          MApp.Util.renderError(statsEl, res && res.message, () => this.mount());
+          if (activityEl) activityEl.innerHTML = '';
+          return;
+        }
+        MApp.State.lastDashboard = res.data || {};
+        this.render(res.data || {});
+      } catch (err) {
+        MApp.Util.renderError(statsEl, err && err.message, () => this.mount());
+        if (activityEl) activityEl.innerHTML = '';
+      }
+    },
+
+    render(data) {
+      const statsEl = document.getElementById('home-stats');
+      if (statsEl) {
+        const lowStock = data.lowStockCount || 0;
+        statsEl.innerHTML = `
+          <button type="button" class="mb-stat-tile" onclick="MApp.Home.goTo('production')">
+            <div class="mb-stat-tile-label">Pending production</div>
+            <div class="mb-stat-tile-value">${data.pendingProductionCount || 0}</div>
+          </button>
+          <button type="button" class="mb-stat-tile" onclick="MApp.Home.goTo('dispatch')">
+            <div class="mb-stat-tile-label">Today's dispatches</div>
+            <div class="mb-stat-tile-value">${data.todaysDispatchCount || 0}</div>
+          </button>
+          <button type="button" class="mb-stat-tile" style="grid-column:1 / -1;" onclick="MApp.Home.goTo('stock')">
+            <div class="mb-stat-tile-label">Low-stock alerts</div>
+            <div class="mb-stat-tile-value${lowStock > 0 ? ' mb-alert' : ''}">${lowStock}</div>
+          </button>`;
+      }
+
+      const activityEl = document.getElementById('home-activity');
+      if (activityEl) {
+        const activity = data.recentActivity || [];
+        if (activity.length === 0) {
+          MApp.Util.renderEmpty(activityEl, {
+            title: 'No activity yet',
+            body: 'Production lots and dispatches will show up here as they happen.'
+          });
+        } else {
+          activityEl.innerHTML = activity.map(a => `
+            <div class="mb-card">
+              <div class="mb-card-row">
+                <span class="mb-card-title">${MApp.Util.escapeHtml(a.title)}</span>
+                <span class="mb-text-sm mb-text-steel">${MApp.Util.formatDateDisplay(a.dateRaw)}</span>
+              </div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(a.subtitle)}</div>
+            </div>
+          `).join('');
+        }
+      }
+    },
+
+    goTo(tab) {
+      if (tab === 'production') MApp.State.productionFilter = 'pending';
+      if (tab === 'dispatch') MApp.State.dispatchFilter = 'today';
+      if (tab === 'stock') MApp.State.stockFilter = 'lowstock';
+      MApp.Shell.showTab(tab);
+    }
+  };
+
+  // ================================================================
+  // STOCK — search-first item list. "Searches as you type" is a pure
+  // client-side filter over the already-loaded list (no per-keystroke API
+  // call). Tapping a card expands recent movements, merged client-side
+  // from Bill/Return/Wastage/Issue/Production/Stock-adjustment history —
+  // there is no dedicated "item ledger" server endpoint (confirmed: the
+  // desktop Item Ledger tab derives it the same way from already-loaded
+  // data), and adding one isn't in scope (getMobileDashboard is the only
+  // new server function this app is allowed).
+  // ================================================================
+  MApp.Stock = {
+    all: [],
+    filtered: [],
+    expandedKey: null,
+    ledgerSources: null, // lazy-loaded on first expand; cached after that
+
+    mount() {
+      this.expandedKey = null;
+      this.ledgerSources = null;
+      const searchInput = document.getElementById('stock-search');
+      if (searchInput) searchInput.value = '';
+      this.load();
+    },
+
+    async load() {
+      const listEl = document.getElementById('stock-list');
+      MApp.Util.renderSkeleton(listEl, 5);
+
+      try {
+        const [stockRes, itemsRes] = await Promise.all([
+          MApp.Api.call('getStockData'),
+          MApp.Api.call('getItemsData')
+        ]);
+
+        if (!stockRes || !stockRes.success) {
+          MApp.Util.renderError(listEl, stockRes && stockRes.message, () => this.load());
+          return;
+        }
+
+        const unitByKey = {};
+        if (itemsRes && itemsRes.success) {
+          (itemsRes.data || []).forEach(it => {
+            unitByKey[this._key(it.name, it.size)] = it.baseUnit || 'Pcs';
+          });
+        }
+
+        this.all = (stockRes.data || []).map(s => ({
+          ...s,
+          unit: unitByKey[this._key(s.name, s.size)] || 'Pcs'
+        }));
+
+        const lowStockOnly = MApp.State.stockFilter === 'lowstock';
+        MApp.State.stockFilter = '';
+        this._lowStockOnly = lowStockOnly;
+        this.filtered = lowStockOnly ? this.all.filter(s => s.isLowStock) : this.all;
+
+        this.render();
+      } catch (err) {
+        MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      }
+    },
+
+    _key(name, size) {
+      return String(name || '').trim().toLowerCase() + '||' + String(size || '').trim().toLowerCase();
+    },
+
+    onSearch(term) {
+      const lower = String(term || '').toLowerCase();
+      const base = this._lowStockOnly ? this.all.filter(s => s.isLowStock) : this.all;
+      this.filtered = !lower ? base : base.filter(s =>
+        s.name.toLowerCase().includes(lower) || s.size.toLowerCase().includes(lower));
+      this.render();
+    },
+
+    clearLowStockFilter() {
+      this._lowStockOnly = false;
+      this.filtered = this.all;
+      const searchInput = document.getElementById('stock-search');
+      if (searchInput) searchInput.value = '';
+      this.render();
+    },
+
+    render() {
+      const listEl = document.getElementById('stock-list');
+      if (!listEl) return;
+
+      const banner = this._lowStockOnly
+        ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
+             <span>Showing low-stock items only</span>
+             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.Stock.clearLowStockFilter()">Clear</button>
+           </div>`
+        : '';
+
+      if (this.filtered.length === 0) {
+        listEl.innerHTML = banner;
+        const empty = document.createElement('div');
+        listEl.appendChild(empty);
+        MApp.Util.renderEmpty(empty, {
+          title: 'No items found',
+          body: this._lowStockOnly ? 'Nothing is currently below its threshold.' : 'Try a different search term.'
+        });
+        return;
+      }
+
+      // data-idx (a plain array index) drives the toggle instead of
+      // interpolating the item's name/size into an inline onclick string —
+      // item names come from sheet data and may contain quote characters
+      // that would otherwise break out of an inline handler's string literal.
+      listEl.innerHTML = banner + this.filtered.map((item, idx) => {
+        const key = this._key(item.name, item.size);
+        const isOpen = this.expandedKey === key;
+        return `
+          <button type="button" class="mb-card mb-card-tappable" style="border:none;width:100%;" data-stock-toggle data-idx="${idx}">
+            <div class="mb-card-row">
+              <div>
+                <div class="mb-card-title">${MApp.Util.escapeHtml(item.name)}</div>
+                <div class="mb-card-sub">${MApp.Util.escapeHtml(item.size || 'No size')}</div>
+              </div>
+              <div style="text-align:right;">
+                <div class="mb-card-number${item.isLowStock ? ' mb-alert' : ''}">${item.currentStock}</div>
+                <div class="mb-card-sub">${MApp.Util.escapeHtml(item.unit)}</div>
+              </div>
+            </div>
+            ${item.isLowStock ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-lowstock">Low stock</span></div>' : ''}
+          </button>
+          <div id="stock-expand-${idx}" class="${isOpen ? '' : 'mb-hidden'}" style="margin:-8px 0 12px;padding:0 var(--mb-sp-2);"></div>
+        `;
+      }).join('');
+
+      listEl.querySelectorAll('[data-stock-toggle]').forEach(btn => {
+        btn.addEventListener('click', () => this.toggleExpand(parseInt(btn.dataset.idx, 10)));
+      });
+
+      if (this.expandedKey) {
+        const idx = this.filtered.findIndex(i => this._key(i.name, i.size) === this.expandedKey);
+        if (idx !== -1) this._renderMovements(idx, this.filtered[idx]);
+      }
+    },
+
+    async toggleExpand(idx) {
+      const item = this.filtered[idx];
+      if (!item) return;
+      const key = this._key(item.name, item.size);
+      const panel = document.getElementById('stock-expand-' + idx);
+      if (!panel) return;
+
+      if (this.expandedKey === key) {
+        this.expandedKey = null;
+        panel.classList.add('mb-hidden');
+        panel.innerHTML = '';
+        return;
+      }
+
+      // Collapse any previously open panel
+      document.querySelectorAll('[id^="stock-expand-"]').forEach(el => {
+        el.classList.add('mb-hidden');
+        el.innerHTML = '';
+      });
+
+      this.expandedKey = key;
+      panel.classList.remove('mb-hidden');
+      await this._renderMovements(idx, item);
+    },
+
+    async _renderMovements(idx, item) {
+      const panel = document.getElementById('stock-expand-' + idx);
+      if (!panel) return;
+      panel.innerHTML = '<div class="mb-skel mb-skel-line" style="width:60%;"></div><div class="mb-skel mb-skel-line" style="width:40%;"></div>';
+
+      try {
+        await this._ensureLedgerSources();
+        const movements = this._computeMovements(item.name, item.size);
+
+        if (movements.length === 0) {
+          panel.innerHTML = '<div class="mb-text-sm mb-text-steel" style="padding:var(--mb-sp-2) 0;">No recorded movements for this item yet.</div>';
+          return;
+        }
+
+        panel.innerHTML = movements.slice(0, 6).map(m => `
+          <div class="mb-flex-row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--mb-steel-faint);">
+            <div>
+              <div class="mb-text-sm" style="font-weight:600;color:var(--mb-ink);">${MApp.Util.escapeHtml(m.label)}</div>
+              <div class="mb-text-sm mb-text-steel">${MApp.Util.formatDateDisplay(m.dateRaw)}</div>
+            </div>
+            <div class="mb-text-sm" style="font-weight:700;color:${m.qtyDelta > 0 ? 'var(--mb-enamel-green)' : 'var(--mb-enamel-red)'};white-space:nowrap;">
+              ${m.qtyDelta > 0 ? '+' : ''}${m.qtyDelta}
+            </div>
+          </div>
+        `).join('');
+      } catch (err) {
+        panel.innerHTML = `<div class="mb-text-sm" style="color:var(--mb-enamel-red);">Couldn't load movement history: ${MApp.Util.escapeHtml(err.message || '')}</div>`;
+      }
+    },
+
+    async _ensureLedgerSources() {
+      if (this.ledgerSources) return this.ledgerSources;
+
+      const [billsRes, returnsRes, wastageRes, issueRes, productionRes, adjustRes] = await Promise.all([
+        MApp.Api.call('getBillData'),
+        MApp.Api.call('getReturnData'),
+        MApp.Api.call('getWastageData'),
+        MApp.Api.call('getIssueData'),
+        MApp.Api.call('getProductionData'),
+        MApp.Api.call('getStockAdjustmentHistory')
+      ]);
+
+      this.ledgerSources = {
+        bills: (billsRes && billsRes.success) ? billsRes.data || [] : [],
+        returns: (returnsRes && returnsRes.success) ? returnsRes.data || [] : [],
+        wastage: (wastageRes && wastageRes.success) ? wastageRes.data || [] : [],
+        issues: (issueRes && issueRes.success) ? issueRes.data || [] : [],
+        production: (productionRes && productionRes.success) ? productionRes.data || [] : [],
+        adjustments: (adjustRes && adjustRes.success) ? adjustRes.data || [] : []
+      };
+      return this.ledgerSources;
+    },
+
+    _computeMovements(name, size) {
+      const matches = (n, s) => String(n || '').trim().toLowerCase() === String(name || '').trim().toLowerCase() &&
+        String(s || '').trim().toLowerCase() === String(size || '').trim().toLowerCase();
+      const src = this.ledgerSources;
+      const out = [];
+
+      src.bills.forEach(bill => {
+        (bill.items || []).forEach(it => {
+          if (!matches(it.name, it.size)) return;
+          out.push({ dateRaw: bill.billDateRaw || bill.billDate, label: `Bill ${bill.billNumber} — ${bill.vendor}`, qtyDelta: it.qty });
+        });
+      });
+
+      src.returns.forEach(ret => {
+        (ret.items || []).forEach(it => {
+          if (!matches(it.name, it.size)) return;
+          out.push({ dateRaw: ret.returnDateRaw, label: `Return ${ret.returnNumber} — ${ret.vendor}`, qtyDelta: -it.qty });
+        });
+      });
+
+      src.wastage.forEach(w => {
+        (w.items || []).forEach(it => {
+          if (!matches(it.name, it.size)) return;
+          out.push({ dateRaw: w.dateRaw, label: `Wastage — ${it.reason || 'unspecified'}`, qtyDelta: -it.qty });
+        });
+      });
+
+      src.issues.forEach(iss => {
+        (iss.items || []).forEach(it => {
+          if (!matches(it.name, it.size)) return;
+          out.push({ dateRaw: iss.dateRaw, label: `Issued to ${iss.issuedTo}`, qtyDelta: -it.qty });
+        });
+      });
+
+      src.production.forEach(lot => {
+        if (lot.status !== 'Completed') return;
+        (lot.componentsConsumed || []).forEach(c => {
+          if (String(c.sourceType || '').toUpperCase() === 'POOL') return;
+          if (!matches(c.itemName, c.size)) return;
+          out.push({ dateRaw: lot.dateRaw, label: `Production lot ${lot.lotNumber}`, qtyDelta: -(Number(c.qty) || 0) });
+        });
+      });
+
+      src.adjustments.forEach(adj => {
+        if (!matches(adj.itemName, adj.size)) return;
+        out.push({
+          dateRaw: adj.date,
+          label: `Manual adjustment${adj.reason ? ' — ' + adj.reason : ''}`,
+          qtyDelta: Math.round(((adj.newValue || 0) - (adj.oldValue || 0)) * 100) / 100
+        });
+      });
+
+      out.sort((a, b) => new Date(b.dateRaw || 0) - new Date(a.dateRaw || 0));
+      return out;
+    }
+  };
+
+  // ================================================================
+  // PRODUCTION — card list + the "Log Lot" full-screen sheet, the primary
+  // action screen. The Size/Model/Process Type/Process cascade is pure
+  // client-side array filtering over one already-loaded process list (no
+  // per-level fetch, so no suppress-flags/sequence counters are needed —
+  // see _applyCascadeEnabledStates, which always re-derives each picker's
+  // enabled state from current selection instead of tracking it separately).
+  // The one real fetch in this flow is loading a chosen process's color
+  // groups/axes/recipe (_setCascadeBusy brackets it); saving disables the
+  // whole sheet via MApp.Util.setSheetBusy.
+  //
+  // Color checklist scope note: when a process has 2+ independent color
+  // axes (e.g. Frame + Mudguard), the mobile form treats the PRIMARY axis
+  // as the real per-color chip+stepper checklist (drives lot qty, exactly
+  // like desktop), and every OTHER axis as a single "pick one color for
+  // this whole batch" choice applied to the full lot qty. Desktop instead
+  // lets different primary colors within the same lot pair with different
+  // secondary colors (auto-matched via Process Color Links) — a genuinely
+  // complex feature intentionally simplified here for one-handed field
+  // logging. A lot that needs mixed secondary colors within one batch
+  // should still be logged on desktop.
+  // ================================================================
+  MApp.Production = {
+    PROCESS_SIZE_LIST: ['12 inch', '14 inch', '16 inch', '20 inch', '24 inch', '26 inch'],
+
+    lots: [],
+    allProcesses: [],
+    activeProcesses: [],
+    processById: {},
+    models: [],
+    processTypes: [],
+    contractors: [],
+    bomProducts: null,
+    _pendingOnly: false,
+
+    selection: { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' },
+    flatColors: [],
+    axes: [],
+    primaryAxisKey: '',
+    recipeComponents: [],
+    colorQtyByColor: {},
+    secondaryChoice: {},
+    selectedStatus: 'Pending',
+    selectedAssignedTo: '',
+
+    mount() {
+      this.bomProducts = null;
+      this.load();
+    },
+
+    async load() {
+      const listEl = document.getElementById('production-list');
+      MApp.Util.renderSkeleton(listEl, 4);
+
+      try {
+        const [lotsRes, procRes] = await Promise.all([
+          MApp.Api.call('getProductionData'),
+          MApp.Api.call('getProcessData')
+        ]);
+
+        if (!lotsRes || !lotsRes.success) {
+          MApp.Util.renderError(listEl, lotsRes && lotsRes.message, () => this.load());
+          return;
+        }
+
+        this.lots = lotsRes.data || [];
+        this.allProcesses = (procRes && procRes.success) ? (procRes.data || []) : [];
+        this.activeProcesses = this.allProcesses.filter(p => p.active);
+        this.processById = {};
+        this.allProcesses.forEach(p => { this.processById[p.processId] = p; });
+
+        this._pendingOnly = MApp.State.productionFilter === 'pending';
+        MApp.State.productionFilter = '';
+
+        this.render();
+      } catch (err) {
+        MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      }
+    },
+
+    render() {
+      const listEl = document.getElementById('production-list');
+      if (!listEl) return;
+
+      let lots = this.lots;
+      const banner = this._pendingOnly
+        ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
+             <span>Showing pending &amp; in-progress lots only</span>
+             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-clear-filter>Clear</button>
+           </div>`
+        : '';
+      if (this._pendingOnly) {
+        lots = lots.filter(l => l.status === 'Pending' || l.status === 'In Progress');
+      }
+
+      if (lots.length === 0) {
+        listEl.innerHTML = banner;
+        const empty = document.createElement('div');
+        listEl.appendChild(empty);
+        MApp.Util.renderEmpty(empty, { title: 'No lots logged today', body: 'Tap + to log the first lot.' });
+      } else {
+        listEl.innerHTML = banner + lots.slice(0, 50).map(l => {
+          const process = this.processById[l.processId];
+          const processName = process ? process.processName : l.processId;
+          return `
+            <div class="mb-card">
+              <div class="mb-card-row">
+                <div>
+                  <div class="mb-card-title">${MApp.Util.escapeHtml(l.lotNumber)}</div>
+                  <div class="mb-card-sub">${MApp.Util.escapeHtml(processName)}</div>
+                </div>
+                <div style="text-align:right;">
+                  <div class="mb-card-number">${l.qty}</div>
+                  <div class="mb-card-sub">${MApp.Util.escapeHtml(l.assignedTo || '—')}</div>
+                </div>
+              </div>
+              <div class="mb-mt-2"><span class="mb-chip ${MApp.Util.statusChipClass(l.status)}">${MApp.Util.escapeHtml(l.status || 'Pending')}</span></div>
+            </div>`;
+        }).join('');
+      }
+
+      const clearBtn = listEl.querySelector('[data-clear-filter]');
+      if (clearBtn) clearBtn.addEventListener('click', () => { this._pendingOnly = false; this.render(); });
+    },
+
+    // ── Size/Model/Process Type helpers (mirror desktop's App.Utils, kept
+    // local since the mobile bundle shares nothing with desktop Script.html) ──
+    getSizeFromOutputItemName(text) {
+      const lower = String(text || '').toLowerCase();
+      return this.PROCESS_SIZE_LIST.find(s => lower.includes(s)) || 'General';
+    },
+
+    getModelFromOutputItemName(text) {
+      const lower = String(text || '').toLowerCase();
+      const models = [...(this.models || [])].sort((a, b) => String(b.name || '').length - String(a.name || '').length);
+      const match = models.find(m => m.name && lower.includes(String(m.name).toLowerCase()));
+      return match ? match.name : 'General';
+    },
+
+    // ── Log Lot sheet ──────────────────────────────────────────────────
+    async openLogLotSheet() {
+      this.selection = { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' };
+      this.flatColors = [];
+      this.axes = [];
+      this.primaryAxisKey = '';
+      this.recipeComponents = [];
+      this.colorQtyByColor = {};
+      this.secondaryChoice = {};
+      this.selectedStatus = 'Pending';
+      this.selectedAssignedTo = '';
+
+      document.getElementById('log-lot-body').innerHTML = this._skeletonFormHtml();
+      MApp.Sheet.open('sheet-log-lot');
+
+      const saveBtn = document.getElementById('log-lot-save-btn');
+      if (saveBtn) saveBtn.disabled = true;
+
+      try {
+        await this._ensureRefData();
+        document.getElementById('log-lot-body').innerHTML = this._formHtml();
+      } catch (err) {
+        MApp.Toast.error('Could not load production reference data: ' + (err.message || ''));
+        this.closeLogLotSheet();
+        return;
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    },
+
+    closeLogLotSheet() {
+      MApp.Sheet.close('sheet-log-lot');
+    },
+
+    async _ensureRefData() {
+      if (this.allProcesses.length === 0) await this.load();
+
+      const [modelsRes, typesRes, contractorsRes] = await Promise.all([
+        MApp.Api.call('getModels'),
+        MApp.Api.call('getProcessTypes'),
+        MApp.Api.call('getContractorsData')
+      ]);
+      this.models = (modelsRes && modelsRes.success) ? (modelsRes.data || []) : [];
+      this.processTypes = (typesRes && typesRes.success) ? (typesRes.data || []) : [];
+      this.contractors = (contractorsRes && contractorsRes.success) ? (contractorsRes.data || []) : [];
+    },
+
+    _skeletonFormHtml() {
+      return `
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      `;
+    },
+
+    _formHtml() {
+      const statusOptions = ['Pending', 'In Progress', 'Completed', 'Cancelled'];
+      return `
+        <div class="mb-field">
+          <label for="lot-date">Date</label>
+          <input type="date" id="lot-date" value="${MApp.Util.todayInputValue()}">
+        </div>
+
+        <div class="mb-field">
+          <label>Size</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="lot-size-field" onclick="MApp.Production.pickSize()">Choose a size...</button>
+        </div>
+
+        <div class="mb-field">
+          <label>Model</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="lot-model-field" disabled onclick="MApp.Production.pickModel()">Choose a size first...</button>
+        </div>
+
+        <div class="mb-field">
+          <label>Process type</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="lot-type-field" disabled onclick="MApp.Production.pickProcessType()">Choose a model first...</button>
+        </div>
+
+        <div class="mb-field">
+          <label>Process</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="lot-process-field" disabled onclick="MApp.Production.pickProcess()">Choose a process type first...</button>
+        </div>
+
+        <div class="mb-field mb-hidden" id="lot-product-tag-wrap">
+          <label>Product tag (optional)</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="lot-product-field" onclick="MApp.Production.pickProductTag()">Choose a product...</button>
+          <div class="mb-field-hint">Only needed so Dispatch can find this lot's stock — leave blank for an intermediate stage.</div>
+        </div>
+
+        <div class="mb-field mb-hidden" id="lot-qty-wrap">
+          <label for="lot-qty">Quantity</label>
+          <input type="number" id="lot-qty" inputmode="decimal" min="0" step="1" placeholder="0">
+        </div>
+
+        <div id="lot-color-wrap" class="mb-hidden mb-mb-4"></div>
+
+        <div class="mb-field">
+          <label>Assigned to</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="lot-assignedto-field" onclick="MApp.Production.pickAssignedTo()">Choose or add a name...</button>
+        </div>
+
+        <div class="mb-field">
+          <label for="lot-assignedby">Assigned by (optional)</label>
+          <input type="text" id="lot-assignedby" placeholder="Supervisor name">
+        </div>
+
+        <div class="mb-field">
+          <label>Status</label>
+          <div class="mb-color-chip-list" id="lot-status-row">
+            ${statusOptions.map(s => `<button type="button" class="mb-color-chip${s === 'Pending' ? ' checked' : ''}" style="min-width:auto;padding:10px 16px;" data-status="${s}" onclick="MApp.Production.setStatus('${s}')">${s}</button>`).join('')}
+          </div>
+        </div>
+
+        <div class="mb-field">
+          <label for="lot-remarks">Remarks (optional)</label>
+          <textarea id="lot-remarks" rows="3" placeholder="Notes for this lot..."></textarea>
+        </div>
+      `;
+    },
+
+    _updateFieldLabel(id, label) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = label;
+      el.classList.remove('mb-placeholder');
+    },
+
+    _resetDownstreamFieldLabels(levels) {
+      const placeholders = { model: 'Choose a model...', type: 'Choose a process type...', process: 'Choose a process...' };
+      levels.forEach(level => {
+        const el = document.getElementById('lot-' + level + '-field');
+        if (!el) return;
+        el.textContent = placeholders[level];
+        el.classList.add('mb-placeholder');
+      });
+    },
+
+    _hideProcessDependentSections() {
+      const tagWrap = document.getElementById('lot-product-tag-wrap');
+      if (tagWrap) tagWrap.classList.add('mb-hidden');
+
+      const qtyWrap = document.getElementById('lot-qty-wrap');
+      if (qtyWrap) {
+        qtyWrap.classList.add('mb-hidden');
+        const q = document.getElementById('lot-qty');
+        if (q) q.value = '';
+      }
+
+      const colorWrap = document.getElementById('lot-color-wrap');
+      if (colorWrap) {
+        colorWrap.classList.add('mb-hidden');
+        colorWrap.innerHTML = '';
+      }
+
+      this.flatColors = [];
+      this.axes = [];
+      this.primaryAxisKey = '';
+      this.recipeComponents = [];
+      this.colorQtyByColor = {};
+      this.secondaryChoice = {};
+      this.selection.productId = '';
+      this.selection.productName = '';
+
+      this._updateFieldLabel('lot-product-field', 'Choose a product...');
+      document.getElementById('lot-product-field')?.classList.add('mb-placeholder');
+    },
+
+    _applyCascadeEnabledStates() {
+      const modelBtn = document.getElementById('lot-model-field');
+      const typeBtn = document.getElementById('lot-type-field');
+      const processBtn = document.getElementById('lot-process-field');
+      if (modelBtn) modelBtn.disabled = !this.selection.size;
+      if (typeBtn) typeBtn.disabled = !this.selection.model;
+      if (processBtn) processBtn.disabled = !this.selection.type;
+    },
+
+    // Disables every cascade picker + Save while a process-dependent fetch
+    // (color groups/axes/recipe) is in flight, then re-derives each
+    // picker's correct enabled state from current selection afterwards —
+    // no remembered "previous" state to restore, so nothing can go stale.
+    _setCascadeBusy(isBusy) {
+      ['lot-size-field', 'lot-model-field', 'lot-type-field', 'lot-process-field', 'lot-product-field'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = isBusy;
+      });
+      const saveBtn = document.getElementById('log-lot-save-btn');
+      if (saveBtn) saveBtn.disabled = isBusy;
+      if (!isBusy) this._applyCascadeEnabledStates();
+    },
+
+    async pickSize() {
+      const sizesPresent = new Set(this.activeProcesses.map(p => this.getSizeFromOutputItemName(p.outputItemName)));
+      const ordered = this.PROCESS_SIZE_LIST.filter(s => sizesPresent.has(s));
+      if (sizesPresent.has('General')) ordered.push('General');
+      const items = ordered.map(s => ({ value: s, label: s }));
+
+      const picked = await MApp.Picker.open({ title: 'Choose a size', items, selectedValue: this.selection.size, searchable: false });
+      if (!picked) return;
+
+      this.selection.size = picked.value;
+      this.selection.model = '';
+      this.selection.type = '';
+      this.selection.processId = '';
+      this.selection.process = null;
+      this._updateFieldLabel('lot-size-field', picked.label);
+      this._resetDownstreamFieldLabels(['model', 'type', 'process']);
+      this._hideProcessDependentSections();
+      this._applyCascadeEnabledStates();
+    },
+
+    async pickModel() {
+      if (!this.selection.size) return;
+      const matches = this.activeProcesses.filter(p => this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size);
+      const modelsPresent = new Set(matches.map(p => this.getModelFromOutputItemName(p.outputItemName)));
+      const masterNames = (this.models || []).map(m => m.name);
+      const ordered = masterNames.filter(n => modelsPresent.has(n));
+      if (modelsPresent.has('General')) ordered.push('General');
+      const items = ordered.map(m => ({ value: m, label: m }));
+
+      const picked = await MApp.Picker.open({ title: 'Choose a model', items, selectedValue: this.selection.model });
+      if (!picked) return;
+
+      this.selection.model = picked.value;
+      this.selection.type = '';
+      this.selection.processId = '';
+      this.selection.process = null;
+      this._updateFieldLabel('lot-model-field', picked.label);
+      this._resetDownstreamFieldLabels(['type', 'process']);
+      this._hideProcessDependentSections();
+      this._applyCascadeEnabledStates();
+    },
+
+    async pickProcessType() {
+      if (!this.selection.model) return;
+      const matches = this.activeProcesses
+        .filter(p => this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size)
+        .filter(p => this.getModelFromOutputItemName(p.outputItemName) === this.selection.model);
+      const typesPresent = new Set(matches.map(p => p.processType || 'General'));
+      const masterNames = (this.processTypes || []).map(t => t.name);
+      const ordered = masterNames.filter(t => typesPresent.has(t));
+      if (typesPresent.has('General')) ordered.push('General');
+      const items = ordered.map(t => ({ value: t, label: t }));
+
+      const picked = await MApp.Picker.open({ title: 'Choose a process type', items, selectedValue: this.selection.type });
+      if (!picked) return;
+
+      this.selection.type = picked.value;
+      this.selection.processId = '';
+      this.selection.process = null;
+      this._updateFieldLabel('lot-type-field', picked.label);
+      this._resetDownstreamFieldLabels(['process']);
+      this._hideProcessDependentSections();
+      this._applyCascadeEnabledStates();
+    },
+
+    async pickProcess() {
+      if (!this.selection.type) return;
+      const matches = this.activeProcesses
+        .filter(p => this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size)
+        .filter(p => this.getModelFromOutputItemName(p.outputItemName) === this.selection.model)
+        .filter(p => (p.processType || 'General') === this.selection.type)
+        .sort((a, b) => a.sequence - b.sequence);
+      const items = matches.map(p => ({ value: p.processId, label: p.processName, sublabel: 'Stage ' + p.sequence }));
+
+      const picked = await MApp.Picker.open({ title: 'Choose a process', items, selectedValue: this.selection.processId });
+      if (!picked) return;
+
+      this._updateFieldLabel('lot-process-field', picked.label);
+      await this.onProcessSelected(picked.value);
+    },
+
+    async onProcessSelected(processId) {
+      const process = this.activeProcesses.find(p => p.processId === processId);
+      if (!process) return;
+
+      this.selection.processId = processId;
+      this.selection.process = process;
+      this.selection.productId = '';
+      this.selection.productName = '';
+      this._updateFieldLabel('lot-product-field', 'Choose a product...');
+      document.getElementById('lot-product-field')?.classList.add('mb-placeholder');
+
+      this._setCascadeBusy(true);
+      try {
+        const [groupsRes, axesRes, compRes] = await Promise.all([
+          MApp.Api.call('getProcessColorGroups', processId),
+          MApp.Api.call('getProcessColorAxes', processId),
+          MApp.Api.call('getProcessComponentsData', processId)
+        ]);
+
+        this.flatColors = (groupsRes && groupsRes.success) ? (groupsRes.data || []) : [];
+        const axesData = (axesRes && axesRes.success) ? (axesRes.data || {}) : {};
+        this.axes = axesData.axes || [];
+        this.primaryAxisKey = axesData.primaryAxisKey || (this.axes[0] && this.axes[0].key) || '';
+        this.recipeComponents = (compRes && compRes.success) ? (compRes.data || []) : [];
+        this.colorQtyByColor = {};
+        this.secondaryChoice = {};
+
+        const tagWrap = document.getElementById('lot-product-tag-wrap');
+        if (tagWrap) tagWrap.classList.toggle('mb-hidden', !process.isFinalStage);
+
+        if (process.isFinalStage && this.bomProducts === null) {
+          const bomRes = await MApp.Api.call('getBOMProductionData');
+          this.bomProducts = (bomRes && bomRes.success) ? (bomRes.data || []) : [];
+        }
+
+        this._renderQtyOrColorSection();
+      } catch (err) {
+        MApp.Toast.error('Could not load this process: ' + (err.message || ''));
+      } finally {
+        this._setCascadeBusy(false);
+      }
+    },
+
+    async pickProductTag() {
+      if (this.bomProducts === null) return;
+      const items = this.bomProducts.map(p => ({ value: p.productId, label: p.productName, sublabel: p.productId }));
+      const picked = await MApp.Picker.open({ title: 'Choose a product', items, selectedValue: this.selection.productId });
+      if (!picked) return;
+      this.selection.productId = picked.value;
+      this.selection.productName = picked.label;
+      this._updateFieldLabel('lot-product-field', picked.label);
+    },
+
+    async pickAssignedTo() {
+      const items = (this.contractors || []).map(c => ({ value: c.name, label: c.name }));
+      const picked = await MApp.Picker.open({
+        title: 'Assigned to', items, selectedValue: this.selectedAssignedTo, allowCustom: true
+      });
+      if (!picked) return;
+      this.selectedAssignedTo = picked.value;
+      this._updateFieldLabel('lot-assignedto-field', picked.label);
+    },
+
+    setStatus(status) {
+      this.selectedStatus = status;
+      document.querySelectorAll('#lot-status-row [data-status]').forEach(btn => {
+        btn.classList.toggle('checked', btn.dataset.status === status);
+      });
+    },
+
+    // ── Color checklist (chips + stepper) ───────────────────────────────
+    _renderQtyOrColorSection() {
+      const qtyWrap = document.getElementById('lot-qty-wrap');
+      const colorWrap = document.getElementById('lot-color-wrap');
+      if (!qtyWrap || !colorWrap) return;
+
+      if (!this.flatColors || this.flatColors.length === 0) {
+        colorWrap.classList.add('mb-hidden');
+        colorWrap.innerHTML = '';
+        qtyWrap.classList.remove('mb-hidden');
+        return;
+      }
+
+      qtyWrap.classList.add('mb-hidden');
+      colorWrap.classList.remove('mb-hidden');
+
+      const isMultiAxis = this.axes.length >= 2;
+      const primaryAxis = isMultiAxis ? (this.axes.find(a => a.key === this.primaryAxisKey) || this.axes[0]) : null;
+      const primaryColors = isMultiAxis ? primaryAxis.colors : this.flatColors;
+      const secondaryAxes = isMultiAxis ? this.axes.filter(a => a !== primaryAxis) : [];
+      const total = this.currentTotalQty();
+
+      let html = `<div class="mapp-section-label">${MApp.Util.escapeHtml(isMultiAxis ? primaryAxis.label : 'Colors produced')}</div>`;
+      html += `<div class="mb-color-chip-list" id="lot-primary-chips">`;
+      primaryColors.forEach(color => { html += this._colorChipHtml(color); });
+      html += `</div><div class="mb-text-sm mb-text-steel mb-mt-2" id="lot-total-qty-display">Total: ${total} unit(s)</div>`;
+
+      secondaryAxes.forEach(axis => {
+        html += `<div class="mapp-section-label mb-mt-4">${MApp.Util.escapeHtml(axis.label)}</div><div class="mb-color-chip-list">`;
+        axis.colors.forEach(color => { html += this._secondaryChipHtml(axis.key, color); });
+        html += '</div>';
+      });
+
+      colorWrap.innerHTML = html;
+      this._wireColorSectionEvents();
+    },
+
+    _wireColorSectionEvents() {
+      const colorWrap = document.getElementById('lot-color-wrap');
+      if (!colorWrap) return;
+
+      colorWrap.querySelectorAll('[data-chip-color]').forEach(el => {
+        const color = el.dataset.chipColor;
+        const toggleBtn = el.querySelector('[data-chip-toggle]');
+        if (toggleBtn) toggleBtn.addEventListener('click', () => this.toggleColorChip(color));
+        const minus = el.querySelector('[data-step="-1"]');
+        const plus = el.querySelector('[data-step="1"]');
+        if (minus) minus.addEventListener('click', () => this.stepColor(color, -1));
+        if (plus) plus.addEventListener('click', () => this.stepColor(color, 1));
+      });
+
+      colorWrap.querySelectorAll('[data-secondary-chip]').forEach(el => {
+        el.addEventListener('click', () => this.pickSecondaryColor(el.dataset.axisKey, el.dataset.color));
+      });
+    },
+
+    _colorChipHtml(color) {
+      const qty = this.colorQtyByColor[color] || 0;
+      const checked = qty > 0;
+      return `
+        <div class="mb-color-chip${checked ? ' checked' : ''}" data-chip-color="${MApp.Util.escapeHtml(color)}">
+          <button type="button" class="mb-color-chip-toggle" data-chip-toggle>
+            <span class="mb-flex-row"><span class="mb-color-chip-swatch" style="background:${this._swatchColor(color)};"></span>${MApp.Util.escapeHtml(color)}</span>
+          </button>
+          ${checked ? `
+            <div class="mb-stepper">
+              <button type="button" class="mb-stepper-btn" data-step="-1">−</button>
+              <span class="mb-stepper-value">${qty}</span>
+              <button type="button" class="mb-stepper-btn" data-step="1">+</button>
+            </div>` : ''}
+        </div>`;
+    },
+
+    _secondaryChipHtml(axisKey, color) {
+      const selected = this.secondaryChoice[axisKey] === color;
+      return `
+        <button type="button" class="mb-color-chip${selected ? ' checked' : ''}" style="min-width:auto;padding:10px 16px;" data-secondary-chip data-axis-key="${MApp.Util.escapeHtml(axisKey)}" data-color="${MApp.Util.escapeHtml(color)}">
+          <span class="mb-flex-row"><span class="mb-color-chip-swatch" style="background:${this._swatchColor(color)};"></span>${MApp.Util.escapeHtml(color)}</span>
+        </button>`;
+    },
+
+    // Best-effort CSS swatch for a Color Master name — recognizes common
+    // color words, else a deterministic hash-based hue so unrecognized
+    // names still get a distinct, stable dot.
+    _swatchColor(name) {
+      const known = {
+        blue: '#1d5fa8', red: '#c81e3a', green: '#1e8a5f', orange: '#ff6a13',
+        black: '#14181c', white: '#f3f5f6', yellow: '#e8a400', pink: '#e0669b',
+        purple: '#7b4fa6', grey: '#8a97a0', gray: '#8a97a0', silver: '#b7c0c6',
+        gold: '#c9a227', maroon: '#7a2030', navy: '#1b3a63', teal: '#1f7a7a', brown: '#7a5230'
+      };
+      const lower = String(name || '').toLowerCase();
+      for (const key in known) {
+        if (lower.includes(key)) return known[key];
+      }
+      let hash = 0;
+      for (let i = 0; i < lower.length; i++) hash = (hash * 31 + lower.charCodeAt(i)) >>> 0;
+      return `hsl(${hash % 360}, 55%, 45%)`;
+    },
+
+    toggleColorChip(color) {
+      const current = this.colorQtyByColor[color] || 0;
+      this.colorQtyByColor[color] = current > 0 ? 0 : 1;
+      this._renderQtyOrColorSection();
+    },
+
+    stepColor(color, delta) {
+      const next = Math.max(0, (this.colorQtyByColor[color] || 0) + delta);
+      this.colorQtyByColor[color] = next;
+      this._renderQtyOrColorSection();
+    },
+
+    pickSecondaryColor(axisKey, color) {
+      this.secondaryChoice[axisKey] = color;
+      this._renderQtyOrColorSection();
+    },
+
+    currentTotalQty() {
+      if (!this.flatColors || this.flatColors.length === 0) {
+        return MApp.Util.toNumber(document.getElementById('lot-qty')?.value);
+      }
+      return Object.values(this.colorQtyByColor).reduce((s, q) => s + (q || 0), 0);
+    },
+
+    // Scales this process's recipe (qtyPerUnit) by the lot's total qty for
+    // COMMON components, or by that color's own qty for color-scoped ones —
+    // the recipe's qtyPerUnit is defined as exactly this ("qty needed per
+    // unit of process output"), so this is the recipe's own default, not a
+    // guess. Desktop additionally lets an operator hand-override individual
+    // component quantities on a per-lot basis; that power-user editing step
+    // is out of scope for the mobile "log it and move on" flow.
+    buildComponentsConsumed(totalQty, colorBreakdown) {
+      const components = [];
+      (this.recipeComponents || []).forEach(r => {
+        if (!r.itemName) return;
+        const isCommon = !r.colorGroup || r.colorGroup.toUpperCase() === 'COMMON';
+        let qty;
+        let color = '';
+
+        if (isCommon) {
+          qty = r.qtyPerUnit * totalQty;
+        } else if (colorBreakdown && colorBreakdown.length) {
+          const match = colorBreakdown.find(c => c.color.toLowerCase() === r.colorGroup.toLowerCase());
+          if (!match) return;
+          qty = r.qtyPerUnit * match.qty;
+          color = match.color;
+        } else {
+          return;
+        }
+
+        if (qty <= 0) return;
+        components.push({
+          itemName: r.itemName,
+          size: r.size || '',
+          color: color,
+          sourceType: r.sourceType,
+          qty: Math.round(qty * 1000) / 1000,
+          colorGroup: isCommon ? 'COMMON' : r.colorGroup
+        });
+      });
+      return components;
+    },
+
+    async saveLot() {
+      if (!this.selection.process) {
+        MApp.Toast.error('Choose a process first.');
+        return;
+      }
+      if (!this.selectedAssignedTo) {
+        MApp.Toast.error('Choose or add who this lot is assigned to.');
+        return;
+      }
+
+      const totalQty = this.currentTotalQty();
+      if (!totalQty || totalQty <= 0) {
+        MApp.Toast.error(this.flatColors.length > 0
+          ? 'Select at least one color and set its quantity.'
+          : 'Enter a quantity greater than zero.');
+        return;
+      }
+
+      let colorBreakdown = null;
+      if (this.flatColors.length > 0) {
+        colorBreakdown = [];
+        Object.keys(this.colorQtyByColor).forEach(color => {
+          const qty = this.colorQtyByColor[color];
+          if (qty > 0) colorBreakdown.push({ color, qty, isCustom: false, countsTowardTotal: true, axisKey: this.primaryAxisKey || '' });
+        });
+        Object.keys(this.secondaryChoice).forEach(axisKey => {
+          const color = this.secondaryChoice[axisKey];
+          if (color) colorBreakdown.push({ color, qty: totalQty, isCustom: false, countsTowardTotal: false, axisKey });
+        });
+      }
+
+      const componentsConsumed = this.buildComponentsConsumed(totalQty, colorBreakdown);
+      if (componentsConsumed.length === 0) {
+        MApp.Toast.error('This process has no recipe configured yet — add its components on the desktop Products & Processes tab first.');
+        return;
+      }
+
+      const formData = {
+        date: document.getElementById('lot-date')?.value || MApp.Util.todayInputValue(),
+        processId: this.selection.process.processId,
+        assignedBy: (document.getElementById('lot-assignedby')?.value || '').trim(),
+        assignedTo: this.selectedAssignedTo,
+        status: this.selectedStatus || 'Pending',
+        remarks: (document.getElementById('lot-remarks')?.value || '').trim(),
+        componentsConsumed: JSON.stringify(componentsConsumed)
+      };
+
+      if (!colorBreakdown) {
+        formData.qty = totalQty;
+      } else {
+        formData.colorBreakdown = JSON.stringify(colorBreakdown);
+        if (this.axes.length >= 2) {
+          const primaryAxis = this.axes.find(a => a.key === this.primaryAxisKey);
+          if (primaryAxis) formData.primaryColorAxis = primaryAxis.label;
+        }
+      }
+
+      if (this.selection.process.isFinalStage && this.selection.productId) {
+        formData.productId = this.selection.productId;
+        formData.productName = this.selection.productName;
+      }
+
+      // Note: re-enabling after this point is NOT a single blanket
+      // setSheetBusy(false) in a finally block — on success, resetLogLotForm()
+      // replaces the body with fresh HTML that already bakes in the correct
+      // "nothing chosen yet" disabled states (Model/Type/Process locked
+      // again); a blanket re-enable afterwards would incorrectly unlock them.
+      // Only the failure path restores the still-populated form via
+      // setSheetBusy, since nothing was reset there.
+      MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', true, 'Logging…');
+      try {
+        const res = await MApp.Api.call('saveProduction', formData);
+        if (!res || !res.success) {
+          MApp.Toast.error((res && res.message) || 'Could not log this lot.');
+          MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, 'Log Lot');
+          return;
+        }
+        MApp.Toast.success(`Lot logged${res.data && res.data.lotNumber ? ' — ' + res.data.lotNumber : ''}.`);
+        await this.resetLogLotForm();
+        const saveBtn = document.getElementById('log-lot-save-btn');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Lot'; }
+        this.load();
+      } catch (err) {
+        MApp.Toast.error(err.message || 'Could not log this lot. Check your connection and try again.');
+        MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, 'Log Lot');
+      }
+    },
+
+    async resetLogLotForm() {
+      this.selection = { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' };
+      this.flatColors = [];
+      this.axes = [];
+      this.primaryAxisKey = '';
+      this.recipeComponents = [];
+      this.colorQtyByColor = {};
+      this.secondaryChoice = {};
+      this.selectedStatus = 'Pending';
+      this.selectedAssignedTo = '';
+      document.getElementById('log-lot-body').innerHTML = this._formHtml();
+    }
+  };
+
+  // ================================================================
+  // DISPATCH — card list + "New Dispatch" sheet + Print Challan, which
+  // reuses View_Print.html's #print-dispatch-container verbatim (that
+  // template is dedicated to dispatch challans only — confirmed not
+  // shared with PO/other print types) via MApp.Print.trigger.
+  // ================================================================
+  MApp.Dispatch = {
+    dispatches: [],
+    clients: [],
+    readyToDispatch: [],
+    contractors: [],
+    _todayOnly: false,
+    selection: { clientName: '', productId: '', productName: '', logisticsContractor: '' },
+
+    mount() {
+      this.load();
+    },
+
+    async load() {
+      const listEl = document.getElementById('dispatch-list');
+      MApp.Util.renderSkeleton(listEl, 4);
+
+      try {
+        const [dispatchRes, clientsRes] = await Promise.all([
+          MApp.Api.call('getDispatchData'),
+          MApp.Api.call('getClientsData')
+        ]);
+
+        if (!dispatchRes || !dispatchRes.success) {
+          MApp.Util.renderError(listEl, dispatchRes && dispatchRes.message, () => this.load());
+          return;
+        }
+
+        this.dispatches = dispatchRes.data || [];
+        this.clients = (clientsRes && clientsRes.success) ? (clientsRes.data || []) : [];
+
+        this._todayOnly = MApp.State.dispatchFilter === 'today';
+        MApp.State.dispatchFilter = '';
+
+        this.render();
+      } catch (err) {
+        MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      }
+    },
+
+    render() {
+      const listEl = document.getElementById('dispatch-list');
+      if (!listEl) return;
+
+      let list = this.dispatches;
+      const banner = this._todayOnly
+        ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
+             <span>Showing today's dispatches only</span>
+             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-clear-filter>Clear</button>
+           </div>`
+        : '';
+      if (this._todayOnly) {
+        list = list.filter(d => MApp.Util.isToday(d.dateRaw));
+      }
+
+      if (list.length === 0) {
+        listEl.innerHTML = banner;
+        const empty = document.createElement('div');
+        listEl.appendChild(empty);
+        MApp.Util.renderEmpty(empty, { title: 'No dispatches yet', body: 'Tap + to record the first dispatch.' });
+      } else {
+        listEl.innerHTML = banner + list.slice(0, 50).map((d, idx) => `
+          <div class="mb-card">
+            <div class="mb-card-row">
+              <div>
+                <div class="mb-card-title">${MApp.Util.escapeHtml(d.dispatchNumber)}</div>
+                <div class="mb-card-sub">${MApp.Util.escapeHtml(d.clientName || 'Direct supply')}</div>
+              </div>
+              <div style="text-align:right;">
+                <div class="mb-card-number">${d.qty}</div>
+                <div class="mb-card-sub">${MApp.Util.formatDateDisplay(d.dateRaw)}</div>
+              </div>
+            </div>
+            <div class="mb-card-sub mb-mt-2">${MApp.Util.escapeHtml(d.productName)}</div>
+            <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" style="min-height:40px;" data-print-idx="${idx}">Print Challan</button>
+          </div>
+        `).join('');
+      }
+
+      const clearBtn = listEl.querySelector('[data-clear-filter]');
+      if (clearBtn) clearBtn.addEventListener('click', () => { this._todayOnly = false; this.render(); });
+
+      listEl.querySelectorAll('[data-print-idx]').forEach(btn => {
+        btn.addEventListener('click', () => this.print(parseInt(btn.dataset.printIdx, 10), list));
+      });
+    },
+
+    print(idx, listRef) {
+      const d = (listRef || this.dispatches)[idx];
+      if (!d) return;
+
+      const client = (this.clients || []).find(c => c.name === d.clientName);
+      const setText = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val || '';
+      };
+
+      setText('print-dispatch-number', d.dispatchNumber);
+      setText('print-dispatch-date', d.dispatchDate);
+      setText('print-dispatch-client', d.clientName || 'Direct Supply');
+      setText('print-dispatch-client-address', client ? client.address : '');
+      setText('print-dispatch-client-gstin', client && client.gstin ? 'GSTIN: ' + client.gstin : '');
+      setText('print-dispatch-transport', d.transport);
+      setText('print-dispatch-order-ref', d.orderNumber);
+      setText('print-dispatch-gr-ref', d.grNumber || d.invoiceNumber || '');
+      setText('print-dispatch-remarks', d.remarks);
+
+      const body = document.getElementById('print-dispatch-items-body');
+      if (body) {
+        body.innerHTML = `
+          <tr>
+            <td style="padding:8px 6px;border:1px solid #ccc;">1</td>
+            <td style="padding:8px 6px;border:1px solid #ccc;text-align:left;">${MApp.Util.escapeHtml(d.productName)} (${MApp.Util.escapeHtml(d.productId)})</td>
+            <td style="padding:8px 6px;border:1px solid #ccc;"></td>
+            <td style="padding:8px 6px;border:1px solid #ccc;">${d.qty}</td>
+            <td style="padding:8px 6px;border:1px solid #ccc;">Pcs</td>
+          </tr>`;
+      }
+
+      MApp.Print.trigger('print-dispatch-container', `Challan ${d.dispatchNumber}`);
+    },
+
+    // ── New Dispatch sheet ──────────────────────────────────────────────
+    async openNewDispatchSheet() {
+      this.selection = { clientName: '', productId: '', productName: '', logisticsContractor: '' };
+
+      document.getElementById('new-dispatch-body').innerHTML = `
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+      MApp.Sheet.open('sheet-new-dispatch');
+
+      const saveBtn = document.getElementById('new-dispatch-save-btn');
+      if (saveBtn) saveBtn.disabled = true;
+
+      try {
+        await this._ensureRefData();
+        document.getElementById('new-dispatch-body').innerHTML = this._formHtml();
+      } catch (err) {
+        MApp.Toast.error('Could not load dispatch reference data: ' + (err.message || ''));
+        this.closeNewDispatchSheet();
+        return;
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    },
+
+    closeNewDispatchSheet() {
+      MApp.Sheet.close('sheet-new-dispatch');
+    },
+
+    async _ensureRefData() {
+      if (this.clients.length === 0) await this.load();
+
+      const [readyRes, contractorsRes] = await Promise.all([
+        MApp.Api.call('getReadyToDispatchData'),
+        MApp.Api.call('getContractorsData')
+      ]);
+      this.readyToDispatch = (readyRes && readyRes.success) ? (readyRes.data || []) : [];
+      this.contractors = (contractorsRes && contractorsRes.success) ? (contractorsRes.data || []) : [];
+    },
+
+    _formHtml() {
+      return `
+        <div class="mb-field">
+          <label for="dispatch-date">Date</label>
+          <input type="date" id="dispatch-date" value="${MApp.Util.todayInputValue()}">
+        </div>
+
+        <div class="mb-field">
+          <label>Client</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="dispatch-client-field" onclick="MApp.Dispatch.pickClient()">Choose a client (optional)...</button>
+        </div>
+
+        <div class="mb-field">
+          <label>Product</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="dispatch-product-field" onclick="MApp.Dispatch.pickProduct()">Choose a product...</button>
+          <div class="mb-field-hint" id="dispatch-ready-hint"></div>
+        </div>
+
+        <div class="mb-field">
+          <label for="dispatch-qty">Quantity</label>
+          <input type="number" id="dispatch-qty" inputmode="decimal" min="0" step="1" placeholder="0">
+        </div>
+
+        <div class="mb-field">
+          <label for="dispatch-transport">Transport / vehicle</label>
+          <input type="text" id="dispatch-transport" placeholder="e.g. Truck no. PB-10-1234">
+        </div>
+
+        <div class="mb-field">
+          <label>Logistics contractor (optional)</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="dispatch-logistics-field" onclick="MApp.Dispatch.pickLogistics()">Choose or add...</button>
+        </div>
+
+        <div class="mb-field">
+          <label for="dispatch-order-number">PI / Estimate reference (optional)</label>
+          <input type="text" id="dispatch-order-number" placeholder="e.g. ORD-1042">
+        </div>
+
+        <div class="mb-field">
+          <label for="dispatch-invoice-number">Invoice number (optional)</label>
+          <input type="text" id="dispatch-invoice-number">
+        </div>
+
+        <div class="mb-field">
+          <label for="dispatch-private-mark">Private mark (optional)</label>
+          <input type="text" id="dispatch-private-mark">
+        </div>
+
+        <div class="mb-field">
+          <label for="dispatch-gr-number">GR number (optional)</label>
+          <input type="text" id="dispatch-gr-number">
+        </div>
+
+        <div class="mb-field">
+          <label for="dispatch-remarks">Remarks (optional)</label>
+          <textarea id="dispatch-remarks" rows="3" placeholder="Notes for this dispatch..."></textarea>
+        </div>
+      `;
+    },
+
+    async pickClient() {
+      const items = (this.clients || []).map(c => ({ value: c.name, label: c.name }));
+      const picked = await MApp.Picker.open({ title: 'Choose a client', items, selectedValue: this.selection.clientName, allowCustom: true });
+      if (!picked) return;
+      this.selection.clientName = picked.value;
+      const el = document.getElementById('dispatch-client-field');
+      if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+    },
+
+    async pickProduct() {
+      const items = (this.readyToDispatch || []).map(p => ({
+        value: p.productId, label: p.productName, sublabel: `Ready: ${p.readyQty}`
+      }));
+      const picked = await MApp.Picker.open({ title: 'Choose a product', items, selectedValue: this.selection.productId });
+      if (!picked) return;
+
+      const match = (this.readyToDispatch || []).find(p => p.productId === picked.value);
+      this.selection.productId = picked.value;
+      this.selection.productName = picked.label;
+
+      const el = document.getElementById('dispatch-product-field');
+      if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+
+      const hint = document.getElementById('dispatch-ready-hint');
+      if (hint) hint.textContent = match ? `${match.readyQty} unit(s) ready to dispatch` : '';
+    },
+
+    async pickLogistics() {
+      const items = (this.contractors || []).map(c => ({ value: c.name, label: c.name }));
+      const picked = await MApp.Picker.open({ title: 'Logistics contractor', items, selectedValue: this.selection.logisticsContractor, allowCustom: true });
+      if (!picked) return;
+      this.selection.logisticsContractor = picked.value;
+      const el = document.getElementById('dispatch-logistics-field');
+      if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+    },
+
+    async save() {
+      if (!this.selection.productId) {
+        MApp.Toast.error('Choose a product first.');
+        return;
+      }
+      const qty = MApp.Util.toNumber(document.getElementById('dispatch-qty')?.value);
+      if (!qty || qty <= 0) {
+        MApp.Toast.error('Enter a quantity greater than zero.');
+        return;
+      }
+
+      const formData = {
+        dispatchDate: document.getElementById('dispatch-date')?.value || MApp.Util.todayInputValue(),
+        clientName: this.selection.clientName || '',
+        productId: this.selection.productId,
+        productName: this.selection.productName,
+        qty: qty,
+        transport: (document.getElementById('dispatch-transport')?.value || '').trim(),
+        logisticsContractor: this.selection.logisticsContractor || '',
+        orderNumber: (document.getElementById('dispatch-order-number')?.value || '').trim(),
+        invoiceNumber: (document.getElementById('dispatch-invoice-number')?.value || '').trim(),
+        privateMark: (document.getElementById('dispatch-private-mark')?.value || '').trim(),
+        grNumber: (document.getElementById('dispatch-gr-number')?.value || '').trim(),
+        remarks: (document.getElementById('dispatch-remarks')?.value || '').trim()
+      };
+
+      MApp.Util.setSheetBusy('new-dispatch-body', 'new-dispatch-save-btn', true, 'Saving…');
+      try {
+        const res = await MApp.Api.call('saveDispatch', formData);
+        if (!res || !res.success) {
+          MApp.Toast.error((res && res.message) || 'Could not save this dispatch.');
+          MApp.Util.setSheetBusy('new-dispatch-body', 'new-dispatch-save-btn', false, null, 'Save Dispatch');
+          return;
+        }
+        MApp.Toast.success(`Dispatch saved${res.data && res.data.dispatchNumber ? ' — ' + res.data.dispatchNumber : ''}.`);
+        this.selection = { clientName: '', productId: '', productName: '', logisticsContractor: '' };
+        document.getElementById('new-dispatch-body').innerHTML = this._formHtml();
+        const saveBtn = document.getElementById('new-dispatch-save-btn');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Dispatch'; }
+        this.load();
+      } catch (err) {
+        MApp.Toast.error(err.message || 'Could not save this dispatch. Check your connection and try again.');
+        MApp.Util.setSheetBusy('new-dispatch-body', 'new-dispatch-save-btn', false, null, 'Save Dispatch');
+      }
+    }
+  };
+
+  // ================================================================
+  // RETURNS — card list (recent only, quick field glance) + "Log Return"
+  // sheet. Logs one item per return, unlike desktop's multi-item form —
+  // a deliberate scope narrowing for fast field entry (saveReturn accepts
+  // a multi-item array; the mobile client just always sends a length-1 one).
+  // ================================================================
+  MApp.Returns = {
+    returns: [],
+    vendors: [],
+    items: [],
+    selection: { vendor: '', itemName: '', itemSize: '', unit: 'Pcs' },
+
+    mount() {
+      this.load();
+    },
+
+    async load() {
+      const listEl = document.getElementById('more-returns-list');
+      if (!listEl) return;
+      MApp.Util.renderSkeleton(listEl, 2);
+
+      try {
+        const res = await MApp.Api.call('getReturnData');
+        if (!res || !res.success) {
+          MApp.Util.renderError(listEl, res && res.message, () => this.load());
+          return;
+        }
+        this.returns = (res.data || []).slice(0, 8);
+        this.render();
+      } catch (err) {
+        MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      }
+    },
+
+    render() {
+      const listEl = document.getElementById('more-returns-list');
+      if (!listEl) return;
+
+      if (this.returns.length === 0) {
+        MApp.Util.renderEmpty(listEl, { title: 'No returns logged', body: 'Tap "Log Return" to record the first one.' });
+        return;
+      }
+
+      listEl.innerHTML = this.returns.map(r => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(r.returnNumber)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(r.vendor)}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="mb-card-number">${r.totalQty}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(r.returnDate || '')}</div>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    },
+
+    async openNewReturnSheet() {
+      this.selection = { vendor: '', itemName: '', itemSize: '', unit: 'Pcs' };
+
+      document.getElementById('log-return-body').innerHTML = `
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+      MApp.Sheet.open('sheet-log-return');
+
+      const saveBtn = document.getElementById('log-return-save-btn');
+      if (saveBtn) saveBtn.disabled = true;
+
+      try {
+        await this._ensureRefData();
+        document.getElementById('log-return-body').innerHTML = this._formHtml();
+      } catch (err) {
+        MApp.Toast.error('Could not load return reference data: ' + (err.message || ''));
+        this.closeNewReturnSheet();
+        return;
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    },
+
+    closeNewReturnSheet() {
+      MApp.Sheet.close('sheet-log-return');
+    },
+
+    async _ensureRefData() {
+      const [vendorsRes, itemsRes] = await Promise.all([
+        MApp.Api.call('getVendorsData'),
+        MApp.Api.call('getItemsData')
+      ]);
+      this.vendors = (vendorsRes && vendorsRes.success) ? (vendorsRes.data || []) : [];
+      this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+    },
+
+    _formHtml() {
+      return `
+        <div class="mb-field">
+          <label for="return-date">Date</label>
+          <input type="date" id="return-date" value="${MApp.Util.todayInputValue()}">
+        </div>
+
+        <div class="mb-field">
+          <label>Vendor</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="return-vendor-field" onclick="MApp.Returns.pickVendor()">Choose a vendor...</button>
+        </div>
+
+        <div class="mb-field">
+          <label>Item</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="return-item-field" onclick="MApp.Returns.pickItem()">Choose an item...</button>
+        </div>
+
+        <div class="mb-field">
+          <label for="return-qty">Quantity</label>
+          <input type="number" id="return-qty" inputmode="decimal" min="0" step="1" placeholder="0">
+        </div>
+
+        <div class="mb-field">
+          <label for="return-price">Rate (per unit)</label>
+          <input type="number" id="return-price" inputmode="decimal" min="0" step="0.01" placeholder="0.00">
+        </div>
+
+        <div class="mb-field">
+          <label for="return-reason">Reason</label>
+          <input type="text" id="return-reason" placeholder="e.g. Defective, Excess, Wrong item">
+        </div>
+
+        <div class="mb-field">
+          <label for="return-remarks">Remarks (optional)</label>
+          <textarea id="return-remarks" rows="3"></textarea>
+        </div>
+      `;
+    },
+
+    async pickVendor() {
+      const items = (this.vendors || []).map(v => ({ value: v.name, label: v.name }));
+      const picked = await MApp.Picker.open({ title: 'Choose a vendor', items, selectedValue: this.selection.vendor, allowCustom: true });
+      if (!picked) return;
+      this.selection.vendor = picked.value;
+      const el = document.getElementById('return-vendor-field');
+      if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+    },
+
+    async pickItem() {
+      const items = (this.items || []).map(it => ({
+        value: it.name + '||' + it.size, label: it.name, sublabel: it.size ? `Size: ${it.size}` : ''
+      }));
+      const picked = await MApp.Picker.open({
+        title: 'Choose an item', items, selectedValue: this.selection.itemName + '||' + this.selection.itemSize
+      });
+      if (!picked) return;
+
+      const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
+      this.selection.itemName = match ? match.name : picked.label;
+      this.selection.itemSize = match ? match.size : '';
+      this.selection.unit = match ? match.baseUnit : 'Pcs';
+
+      const el = document.getElementById('return-item-field');
+      if (el) {
+        el.textContent = picked.label + (this.selection.itemSize ? ` (${this.selection.itemSize})` : '');
+        el.classList.remove('mb-placeholder');
+      }
+    },
+
+    async save() {
+      if (!this.selection.vendor) {
+        MApp.Toast.error('Choose a vendor first.');
+        return;
+      }
+      if (!this.selection.itemName) {
+        MApp.Toast.error('Choose an item first.');
+        return;
+      }
+      const qty = MApp.Util.toNumber(document.getElementById('return-qty')?.value);
+      if (!qty || qty <= 0) {
+        MApp.Toast.error('Enter a quantity greater than zero.');
+        return;
+      }
+      const reason = (document.getElementById('return-reason')?.value || '').trim();
+      if (!reason) {
+        MApp.Toast.error('Enter a reason for the return.');
+        return;
+      }
+
+      const formData = {
+        returnDate: document.getElementById('return-date')?.value || MApp.Util.todayInputValue(),
+        vendor: this.selection.vendor,
+        contact: '',
+        remarks: (document.getElementById('return-remarks')?.value || '').trim(),
+        items: JSON.stringify([{
+          name: this.selection.itemName,
+          size: this.selection.itemSize,
+          narration: '',
+          unit: this.selection.unit || 'Pcs',
+          qty: qty,
+          price: MApp.Util.toNumber(document.getElementById('return-price')?.value),
+          reason: reason
+        }])
+      };
+
+      MApp.Util.setSheetBusy('log-return-body', 'log-return-save-btn', true, 'Saving…');
+      try {
+        const res = await MApp.Api.call('saveReturn', formData);
+        if (!res || !res.success) {
+          MApp.Toast.error((res && res.message) || 'Could not log this return.');
+          MApp.Util.setSheetBusy('log-return-body', 'log-return-save-btn', false, null, 'Log Return');
+          return;
+        }
+        MApp.Toast.success(`Return logged${res.data && res.data.returnNumber ? ' — ' + res.data.returnNumber : ''}.`);
+        this.selection = { vendor: '', itemName: '', itemSize: '', unit: 'Pcs' };
+        document.getElementById('log-return-body').innerHTML = this._formHtml();
+        const saveBtn = document.getElementById('log-return-save-btn');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Return'; }
+        this.load();
+      } catch (err) {
+        MApp.Toast.error(err.message || 'Could not log this return. Check your connection and try again.');
+        MApp.Util.setSheetBusy('log-return-body', 'log-return-save-btn', false, null, 'Log Return');
+      }
+    }
+  };
+
+  // ================================================================
+  // ITEMS LOOKUP (More tab) — read-only search sheet over the full item
+  // master, for a quick "does this item exist / what's it called" check.
+  // ================================================================
+  MApp.Items = {
+    items: [],
+    filtered: [],
+
+    async openLookupSheet() {
+      const listEl = document.getElementById('items-lookup-list');
+      const searchInput = document.getElementById('items-lookup-search');
+      if (searchInput) searchInput.value = '';
+      MApp.Util.renderSkeleton(listEl, 5);
+      MApp.Sheet.open('sheet-items-lookup');
+
+      try {
+        const res = await MApp.Api.call('getItemsData');
+        if (!res || !res.success) {
+          MApp.Util.renderError(listEl, res && res.message, () => this.openLookupSheet());
+          return;
+        }
+        this.items = res.data || [];
+        this.filtered = this.items;
+        this.render();
+      } catch (err) {
+        MApp.Util.renderError(listEl, err && err.message, () => this.openLookupSheet());
+      }
+    },
+
+    closeLookupSheet() {
+      MApp.Sheet.close('sheet-items-lookup');
+    },
+
+    onSearch(term) {
+      const lower = String(term || '').toLowerCase();
+      this.filtered = !lower ? this.items : this.items.filter(it =>
+        it.name.toLowerCase().includes(lower) ||
+        (it.size || '').toLowerCase().includes(lower) ||
+        (it.narration || '').toLowerCase().includes(lower));
+      this.render();
+    },
+
+    render() {
+      const listEl = document.getElementById('items-lookup-list');
+      if (!listEl) return;
+
+      if (this.filtered.length === 0) {
+        MApp.Util.renderEmpty(listEl, { title: 'No items found', body: 'Try a different search term.' });
+        return;
+      }
+
+      listEl.innerHTML = this.filtered.slice(0, 100).map(it => `
+        <div class="mb-card">
+          <div class="mb-card-title">${MApp.Util.escapeHtml(it.name)}</div>
+          <div class="mb-card-sub">${MApp.Util.escapeHtml(it.size || 'No size')} · ${MApp.Util.escapeHtml(it.baseUnit)}${it.narration ? ' · ' + MApp.Util.escapeHtml(it.narration) : ''}</div>
+        </div>
+      `).join('');
+    }
+  };
+
+  // ================================================================
+  // MORE — links out to Returns/Items lookup/desktop UI + About row
+  // ================================================================
+  MApp.More = {
+    mount() {
+      this._wireDesktopLink();
+      this.loadAbout();
+      MApp.Returns.mount();
+    },
+
+    _wireDesktopLink() {
+      const link = document.getElementById('more-desktop-link');
+      if (!link) return;
+      const params = new URLSearchParams(window.location.search);
+      params.delete('ui');
+      const qs = params.toString();
+      link.href = window.location.pathname + (qs ? '?' + qs : '');
+    },
+
+    async loadAbout() {
+      if (MApp.State.lastDashboard) {
+        this._renderAbout(MApp.State.lastDashboard);
+        return;
+      }
+      try {
+        const res = await MApp.Api.call('getMobileDashboard');
+        if (res && res.success) {
+          MApp.State.lastDashboard = res.data;
+          this._renderAbout(res.data);
+        }
+      } catch (err) {
+        // Non-critical — the About row just keeps its default text.
+      }
+    },
+
+    _renderAbout(data) {
+      const el = document.getElementById('more-about-line');
+      if (!el) return;
+      const version = data.appVersion || '1.0.0';
+      const email = data.userEmail || 'unknown user';
+      // .textContent (not innerHTML) — no HTML-escaping needed or wanted here.
+      el.textContent = `Maharaja Bikes ERP — Mobile v${version} — Signed in as ${email}`;
+    }
+  };
+
+  // ================================================================
+  // BOOT
+  // ================================================================
+  document.addEventListener('DOMContentLoaded', () => {
+    MApp.Shell.init();
+  });
+</script>

@@ -1,0 +1,13 @@
+dist/**
+compile_preview.py
+node_modules/**
+package.json
+package-lock.json
+.pw-test/**
+audit_app.py
+audit_report.txt
+check_all_scripts.py
+test_audit_app.py
+test_check_all_scripts.py
+__pycache__/**
+.pytest_cache/**

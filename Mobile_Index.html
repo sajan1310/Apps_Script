@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <!-- Viewport is set server-side by main.js doGet() via addMetaTag — do not
+       add a second <meta name="viewport"> tag here. -->
+  <title>Maharaja Bikes — Mobile</title>
+
+  <!-- Google Fonts: Oswald (display/titles/big numbers) & Inter (body) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600;700&display=swap"
+    rel="stylesheet">
+
+  <?!= include('Mobile_Styles'); ?>
+</head>
+
+<body>
+  <div id="mapp-root">
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         TOP APP BAR — title updates per-tab via MApp.Shell.setTitle().
+         Sub-flows (Log Lot, New Dispatch, Returns, item lookup, ...) open
+         as full-screen sheets with their own header + close button
+         instead of pushing a nav stack, so there's no back button here.
+         ═══════════════════════════════════════════════════════════════ -->
+    <header class="mapp-topbar">
+      <div class="mapp-topbar-title" id="mapp-topbar-title">Home</div>
+    </header>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         CONTENT OUTLET — screens are cloned from Mobile_Views.html
+         <template> tags into here by MApp.Shell.showTab()/navigateTo()
+         ═══════════════════════════════════════════════════════════════ -->
+    <main id="mapp-content" class="mapp-content" role="main"></main>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         BOTTOM TAB BAR — the five field-job tabs
+         ═══════════════════════════════════════════════════════════════ -->
+    <nav class="mapp-tabbar" role="tablist" aria-label="Main navigation">
+      <button type="button" class="mapp-tab" id="mapp-tab-home" role="tab" aria-selected="true" onclick="MApp.Shell.showTab('home')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10"/></svg>
+        <span>Home</span>
+      </button>
+      <button type="button" class="mapp-tab" id="mapp-tab-stock" role="tab" aria-selected="false" onclick="MApp.Shell.showTab('stock')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
+        <span>Stock</span>
+      </button>
+      <button type="button" class="mapp-tab" id="mapp-tab-production" role="tab" aria-selected="false" onclick="MApp.Shell.showTab('production')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5z"/></svg>
+        <span>Production</span>
+      </button>
+      <button type="button" class="mapp-tab" id="mapp-tab-dispatch" role="tab" aria-selected="false" onclick="MApp.Shell.showTab('dispatch')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="14" height="10" rx="1"/><path d="M15 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>
+        <span>Dispatch</span>
+      </button>
+      <button type="button" class="mapp-tab" id="mapp-tab-more" role="tab" aria-selected="false" onclick="MApp.Shell.showTab('more')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+        <span>More</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Toast stack — lives outside #mapp-root so it isn't clipped by any
+       screen's own overflow/scroll container -->
+  <div class="mb-toast-stack" id="mapp-toast-stack" aria-live="polite"></div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       PRINT CONTAINER — reused as-is from the desktop print templates
+       (challan, etc.). Hidden on screen, shown only by @media print rules
+       already defined in View_Print.html.
+       ═══════════════════════════════════════════════════════════════════ -->
+  <?!= include('View_Print'); ?>
+
+  <!-- Screen templates (cloned into #mapp-content by Mobile_Script.html) -->
+  <?!= include('Mobile_Views'); ?>
+
+  <!-- Mobile app logic -->
+  <?!= include('Mobile_Script'); ?>
+</body>
+
+</html>
