@@ -135,7 +135,7 @@ def run():
                     qty.value = '5';
                     qty.dispatchEvent(new Event('input', { bubbles: true }));
                 });
-                $('#productionAssignedTo').val('Sanjay').trigger('change');
+                window.jQuery('#productionAssignedTo').val('Sanjay').trigger('change');
             """)
 
             # Submit via the real handler (fieldset is disabled for the
@@ -161,9 +161,9 @@ def run():
                     // clicking" stress, deliberately left unawaited/discarded,
                     // exactly like a real impatient user would leave them.
                     document.getElementById('productionSize')?.dispatchEvent(new Event('change', { bubbles: true }));
-                    $('#productionAssignedTo').trigger('change');
+                    window.jQuery('#productionAssignedTo').trigger('change');
                     document.getElementById('productionSize')?.dispatchEvent(new Event('change', { bubbles: true }));
-                    $('#productionAssignedTo').trigger('change');
+                    window.jQuery('#productionAssignedTo').trigger('change');
                     const sizeSelect = document.getElementById('productionSize');
                     await App.Production.handleSizeChange(sizeSelect ? sizeSelect.value : '');
 
@@ -231,7 +231,7 @@ def run():
         page.evaluate("App.Production.resetCreateForm()")
         page.evaluate("window.__payableHintCalls = 0;")
 
-        page.evaluate("$('#productionAssignedTo').val('Ramesh').trigger('change');")
+        page.evaluate("window.jQuery('#productionAssignedTo').val('Ramesh').trigger('change');")
         page.wait_for_timeout(100)
         hint_calls = page.evaluate("window.__payableHintCalls")
         # Root cause (found via stack-traced timing diagnostics): Select2 v4

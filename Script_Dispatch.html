@@ -426,11 +426,18 @@
         const selected = App.State.selectedDispatch.slice();
         if (!selected.length) return;
 
+        // Same shifted/modified-row guard as the single-row delete() below —
+        // lets the server skip (not blindly delete) any row that no longer
+        // matches what was on screen when it was selected.
+        const expectedRows = (App.State.globalDispatch || [])
+          .filter(d => App.Selection.isSelected(selected, String(d.rowIdx)))
+          .map(d => ({ rowIdx: d.rowIdx, expectedDispatchNumber: d.dispatchNumber, expectedQty: d.qty }));
+
         App.Utils.confirmAction(
           `Are you sure you want to permanently delete ${selected.length} selected dispatch record(s)? This will increase the Ready to Dispatch quantity for the affected products.`,
           async () => {
             try {
-              const res = await Api.call('deleteDispatchBulk', selected);
+              const res = await Api.call('deleteDispatchBulk', selected, expectedRows);
               App.Utils.showToast(res.message, !res.success);
               if (res.success) {
                 App.State.selectedDispatch = [];

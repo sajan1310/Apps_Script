@@ -13,20 +13,30 @@ def resolve_include(match):
         print(f"Warning: include file {path} not found")
         return f"<!-- Include failed: {filename} -->"
 
-def compile_project():
-    if not os.path.exists("Index.html"):
-        print("Error: Index.html not found in current directory")
+def compile_template(template_name, output_name):
+    template_path = f"{template_name}.html"
+    if not os.path.exists(template_path):
+        print(f"Error: {template_path} not found in current directory")
         return
-    
-    with open("Index.html", "r", encoding="utf-8") as f:
+
+    with open(template_path, "r", encoding="utf-8") as f:
         content = f.read()
-    
+
     compiled = re.sub(r'<\?!=?\s*include\([\'"]([^\'"]+)[\'"]\);\s*\?>', resolve_include, content)
-    
+
     os.makedirs("dist", exist_ok=True)
-    with open("dist/index.html", "w", encoding="utf-8") as f:
+    out_path = f"dist/{output_name}"
+    with open(out_path, "w", encoding="utf-8") as f:
         f.write(compiled)
-    print("Project compiled successfully to dist/index.html")
+    print(f"{template_path} compiled successfully to {out_path}")
+
+def compile_project():
+    # Desktop shell (main.js#doGet default branch)
+    compile_template("Index", "index.html")
+    # Mobile shell (main.js#doGet's ?ui=mobile branch) -- same include()
+    # resolver, just a different entry template, so Playwright verify
+    # scripts have a real compiled file to load for mobile-only screens.
+    compile_template("Mobile_Index", "mobile.html")
 
 if __name__ == "__main__":
     compile_project()

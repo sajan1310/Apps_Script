@@ -4114,7 +4114,11 @@
 <div id="poLedger" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-poLedger">
 
   <!-- ─────────────────────────────────────────────────────────────────
-       STATUS BAR: Filter POs by fulfillment status, and jump to pending
+       STATUS BAR: Filter POs by fulfillment status, and jump to pending.
+       The 3 literal data-status/onclick values below (PO Issued / Partially
+       Received / Completed) must match config.js#PO_STATUS (server) and
+       its client mirror in Script_ApiCore.html#PO_STATUS exactly — static
+       markup can't reference that JS constant directly.
        ───────────────────────────────────────────────────────────────── -->
   <div class="d-flex flex-wrap gap-2 mb-3 align-items-center" id="poStatusBar" role="group" aria-label="Filter Purchase Orders by status">
     <button type="button" class="btn btn-outline-secondary btn-sm fw-500 po-status-filter-btn active" data-status="all" onclick="App.PO.filterByStatus('all')">
@@ -5685,6 +5689,7 @@
                   <th style="min-width: 150px;">Narration</th>
                   <th style="min-width: 150px;">Source</th>
                   <th style="min-width: 110px; text-align: right;">Qty / Unit</th>
+                  <th style="min-width: 100px;" title="Leave blank if Qty/Unit is already in this item's own Base Unit">Unit</th>
                   <th style="min-width: 180px;">Remarks</th>
                   <th style="width: 48px; text-align: center;">✕</th>
                 </tr>
@@ -8167,6 +8172,46 @@
        ═══════════════════════════════════════════════════════════════════════ -->
   <script>
   'use strict';
+  // Script_ApiCore.html — tiny pieces shared, unchanged, by BOTH the desktop
+  // (Script_Core.html/Script_PO.html) and mobile (Mobile_Script.html)
+  // shells. Included by both Index.html (before Script_Core.html) and
+  // Mobile_Index.html (before Mobile_Script.html).
+
+  // The one google.script.run Promise wrapper — desktop's Api.call and
+  // mobile's MApp.Api.call were byte-identical copies of this same
+  // function (see Phase 4's dedupe guideline).
+  function _apiCall(method, ...args) {
+    return new Promise((resolve, reject) => {
+      try {
+        const runner = google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject);
+
+        if (typeof runner[method] !== 'function') {
+          reject(new Error(`Backend method "${method}" is unavailable.`));
+          return;
+        }
+
+        runner[method](...args);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  // Mirrors config.js#PO_STATUS (server) exactly — the one client-side copy
+  // of the 3 status strings module_po.js#_attachPoStatus derives from the
+  // Bill ledger. Badge/chip classes and filter logic in both shells key off
+  // this instead of repeating the literal strings.
+  const PO_STATUS = Object.freeze({
+    ISSUED: 'PO Issued',
+    PARTIAL: 'Partially Received',
+    COMPLETED: 'Completed'
+  });
+</script>
+
+  <script>
+  'use strict';
   // Script_Core.html -- Api wrapper, escapeHtml, shared helpers, App.State/Selection/Utils/Navigation/Logo/Init, bootstrap
 
 
@@ -9217,26 +9262,9 @@
     // ================================================================
     // GAS API WRAPPER
     // ================================================================
-    const Api = {
-      call(method, ...args) {
-        return new Promise((resolve, reject) => {
-          try {
-            const runner = google.script.run
-              .withSuccessHandler(resolve)
-              .withFailureHandler(reject);
-
-            if (typeof runner[method] !== 'function') {
-              reject(new Error(`Backend method "${method}" is unavailable.`));
-              return;
-            }
-
-            runner[method](...args);
-          } catch (err) {
-            reject(err);
-          }
-        });
-      }
-    };
+    // Wrapper itself lives in Script_ApiCore.html, shared with mobile's
+    // MApp.Api.call — see Phase 4's dedupe guideline.
+    const Api = { call: _apiCall };
 
     // ================================================================
     // APP
@@ -9266,6 +9294,8 @@
         billRowsPerPage: 15,
         billSearchTerm: '',
         billDateFilter: '',
+        billAutoMatchTimer: null,    // pending debounce handle for App.Bill.runAutoMatch()
+        billAutoMatchPromise: null,  // in-flight runAutoMatch() call, if any — see App.Bill.flushPendingAutoMatch()
 
         globalReturns: [],
         filteredReturns: [],
@@ -10103,8 +10133,10 @@
           $$('#itemsBody tr').forEach(row => App.PO.autoFillRate(row));
         });
 
-      // Delegated events for dynamic item input changes in the receive bill form
-      let billAutoMatchTimer = null;
+      // Delegated events for dynamic item input changes in the receive bill form.
+      // The pending-timer handle lives on App.State (not a local closure var)
+      // so App.Bill.flushPendingAutoMatch() can clear/await it from the
+      // submit handler — see that function for why.
       const handleBillItemFieldChange = e => {
         if (e.target.matches('.b-item-name')) {
           App.Utils.applyDependentSizeList(e.target, '.b-item-size');
@@ -10123,14 +10155,19 @@
           }
         }
 
-        // Re-suggest PO matches when a DIRECT row's identifying fields settle.
-        // Only for rows the user hasn't explicitly linked (manually or via
-        // the PO multiselect) — see App.Bill.runAutoMatch().
+        // Re-suggest PO matches when a row's identifying fields settle. Only
+        // for rows the user hasn't explicitly linked (manually or via the PO
+        // multiselect) — see App.Bill.runAutoMatch(). Deliberately NOT
+        // gated on dataset.po still being 'DIRECT': an already-auto-matched
+        // row (dataset.po = a real PO number, autoMatched = 'auto') must
+        // keep re-arming here too, or once ANY suggestion lands it can never
+        // be re-evaluated again as the user keeps editing qty/name/etc. —
+        // the suggestion just goes stale forever instead of refreshing.
         if (e.target.matches('.b-item-name, .b-item-size, .b-item-narration, .b-item-qty, .b-item-price')) {
           const row = e.target.closest('tr');
-          if (row && (row.dataset.po || 'DIRECT') === 'DIRECT' && row.dataset.autoMatched !== 'manual') {
-            clearTimeout(billAutoMatchTimer);
-            billAutoMatchTimer = setTimeout(() => App.Bill.runAutoMatch(), 400);
+          if (row && row.dataset.autoMatched !== 'manual') {
+            clearTimeout(App.State.billAutoMatchTimer);
+            App.State.billAutoMatchTimer = setTimeout(() => App.Bill.runAutoMatch(), 400);
           }
         }
       };
@@ -10362,8 +10399,19 @@
 
       document
         .getElementById('billForm')
-        ?.addEventListener('submit', e => {
+        ?.addEventListener('submit', async e => {
           e.preventDefault();
+          // Flush any pending/in-flight PO auto-match first — otherwise a
+          // fast submit right after editing an item field can read
+          // dataset.po/allocs from BEFORE the debounced suggestion (or one
+          // already in flight) has applied, saving a stale split. See
+          // App.Bill.flushPendingAutoMatch().
+          setDisabled('billSubmitBtn', true);
+          try {
+            await App.Bill.flushPendingAutoMatch();
+          } finally {
+            setDisabled('billSubmitBtn', false);
+          }
           const { formData, items } = App.Bill.serializeForm();
           if (!items.length) {
             App.Utils.showToast(
@@ -11031,7 +11079,7 @@
               <td><small class="text-muted">${itemsPreview}</small></td>
               <td class="text-center fw-bold">${escapeHtml(String(po.totalQty ?? 0))}</td>
               <td class="text-success fw-bold">${formatCurrency(po.grandTotal)}</td>
-              <td class="text-center"><span class="badge ${statusInfo.badgeClass} shadow-sm"><i class="bi ${statusInfo.icon} me-1"></i>${escapeHtml(po.status || 'PO Issued')}</span></td>
+              <td class="text-center"><span class="badge ${statusInfo.badgeClass} shadow-sm"><i class="bi ${statusInfo.icon} me-1"></i>${escapeHtml(po.status || PO_STATUS.ISSUED)}</span></td>
               <td>
                 <button class="btn btn-sm btn-outline-dark    btn-action w-100 mb-1" data-action="po-print"  data-index="${index}">Print Document</button>
                 <button class="btn btn-sm btn-outline-primary  btn-action w-100 mb-1" data-action="po-edit"   data-index="${index}">Edit Order</button>
@@ -11153,10 +11201,12 @@
         // Status → badge color/icon, mirroring the badge convention already
         // used for 'PO Issued' entries in the Item Transaction Ledger
         // (bg-primary) and for completed/received states elsewhere (bg-success).
+        // Keyed off the shared PO_STATUS constant (Script_ApiCore.html) so
+        // this can never drift from the 3 values module_po.js actually emits.
         STATUS_BADGES: {
-          'PO Issued': { badgeClass: 'bg-primary', icon: 'bi-file-earmark-text' },
-          'Partially Received': { badgeClass: 'bg-info', icon: 'bi-truck' },
-          'Completed': { badgeClass: 'bg-success', icon: 'bi-check-circle' }
+          [PO_STATUS.ISSUED]: { badgeClass: 'bg-primary', icon: 'bi-file-earmark-text' },
+          [PO_STATUS.PARTIAL]: { badgeClass: 'bg-info', icon: 'bi-truck' },
+          [PO_STATUS.COMPLETED]: { badgeClass: 'bg-success', icon: 'bi-check-circle' }
         },
 
         getStatusBadge(status) {
@@ -11166,7 +11216,7 @@
         // Refreshes the status-bar tile counts from the full (unfiltered) PO
         // list, so counts stay meaningful no matter what's currently filtered.
         updateStatusBar() {
-          const counts = { 'PO Issued': 0, 'Partially Received': 0, 'Completed': 0 };
+          const counts = { [PO_STATUS.ISSUED]: 0, [PO_STATUS.PARTIAL]: 0, [PO_STATUS.COMPLETED]: 0 };
           App.State.globalPOs.forEach(po => {
             if (counts[po.status] !== undefined) counts[po.status]++;
           });
@@ -11176,10 +11226,10 @@
             if (el) el.textContent = val;
           };
           setCount('poStatusCountAll', App.State.globalPOs.length);
-          setCount('poStatusCountIssued', counts['PO Issued']);
-          setCount('poStatusCountPartial', counts['Partially Received']);
-          setCount('poStatusCountCompleted', counts['Completed']);
-          setCount('poStatusCountPending', counts['PO Issued'] + counts['Partially Received']);
+          setCount('poStatusCountIssued', counts[PO_STATUS.ISSUED]);
+          setCount('poStatusCountPartial', counts[PO_STATUS.PARTIAL]);
+          setCount('poStatusCountCompleted', counts[PO_STATUS.COMPLETED]);
+          setCount('poStatusCountPending', counts[PO_STATUS.ISSUED] + counts[PO_STATUS.PARTIAL]);
         },
 
         // Field/direction combos selectable via the "Sort by" dropdown
@@ -13064,15 +13114,33 @@
           select.addEventListener('blur', () => App.Bill.refreshPoMatchBadge(row));
         },
 
-        // Debounced entry point: re-suggests PO matches for every DIRECT,
+        // Debounced entry point: re-suggests PO matches for every
         // not-manually-overridden row in the bill form, using the current
-        // vendor + each row's name/size/narration/qty/unit/price.
-        async runAutoMatch() {
+        // vendor + each row's name/size/narration/qty/unit/price. Runs for
+        // an already-auto-matched row too (not just still-DIRECT ones) so a
+        // later qty/name edit refreshes a stale suggestion instead of that
+        // row being permanently excluded the moment it first matches.
+        //
+        // Tracks its own promise on App.State.billAutoMatchPromise so
+        // flushPendingAutoMatch() (called right before a bill submits) can
+        // await an already-in-flight call instead of racing it — see that
+        // function and applyAutoMatch()'s own apply-time re-check below for
+        // the full race-condition fix.
+        runAutoMatch() {
+          const promise = App.Bill._runAutoMatchNow();
+          App.State.billAutoMatchPromise = promise;
+          promise.finally(() => {
+            if (App.State.billAutoMatchPromise === promise) App.State.billAutoMatchPromise = null;
+          });
+          return promise;
+        },
+
+        async _runAutoMatchNow() {
           const vendor = document.getElementById('billVendor')?.value || '';
           if (!vendor) return;
 
           const candidateRows = Array.from(document.querySelectorAll('#billItemsBody tr[data-row-uid]'))
-            .filter(row => (row.dataset.po || 'DIRECT') === 'DIRECT' && row.dataset.autoMatched !== 'manual');
+            .filter(row => row.dataset.autoMatched !== 'manual');
           if (candidateRows.length === 0) return;
 
           // Price is a preference for disambiguation, not a requirement — a
@@ -13103,6 +13171,22 @@
           }
         },
 
+        // Called right before the bill form actually submits (see the
+        // billForm submit handler, Script_Core.html) so serializeForm() never
+        // reads a row's dataset.po/allocs while a suggestion for it is still
+        // mid-flight or about to fire from the trailing edge of the debounce.
+        async flushPendingAutoMatch() {
+          if (App.State.billAutoMatchTimer) {
+            clearTimeout(App.State.billAutoMatchTimer);
+            App.State.billAutoMatchTimer = null;
+            await App.Bill.runAutoMatch();
+            return;
+          }
+          if (App.State.billAutoMatchPromise) {
+            await App.State.billAutoMatchPromise;
+          }
+        },
+
         // Applies suggested allocations to their source rows. The row stays
         // a single line in the form (qty unchanged) even when the match
         // spans multiple POs — the breakdown is kept in row.dataset.allocs
@@ -13114,6 +13198,13 @@
           results.forEach(r => { byRowUid[r.rowIndex] = r; });
 
           rows.forEach(row => {
+            // Re-check CURRENT state, not the state when this request's
+            // candidateRows snapshot was captured — the user may have
+            // committed a manual PO override for this exact row while this
+            // suggestion request was still in flight. Applying a stale
+            // response here would silently revert that deliberate choice.
+            if (row.dataset.autoMatched === 'manual') return;
+
             const result = byRowUid[row.dataset.rowUid];
             if (!result || !(result.allocations || []).length) {
               row.dataset.allocs = '';
@@ -17486,7 +17577,7 @@
           `Delete ${label}? This will reduce the Warehouse Pool bucket by that quantity.`,
           async () => {
             try {
-              const res = await Api.call('deleteWarehousePoolOpening', rowIdx);
+              const res = await Api.call('deleteWarehousePoolOpening', rowIdx, entry?.outputItemName, entry?.qty);
               App.Utils.showToast(res?.message, !res?.success);
               if (res?.success) {
                 await this.loadWarehouseOpeningData();
@@ -18816,11 +18907,18 @@
         const selected = App.State.selectedProduction.slice();
         if (selected.length === 0) return;
 
+        // Same shifted/modified-row guard as the single-row delete() below —
+        // lets the server skip (not blindly delete) any row that no longer
+        // matches what was on screen when it was selected.
+        const expectedRows = (App.State.globalProduction || [])
+          .filter(p => App.Selection.isSelected(selected, String(p.rowIdx)))
+          .map(p => ({ rowIdx: p.rowIdx, expectedProductId: p.productId, expectedQty: p.qty }));
+
         App.Utils.confirmAction(
           `Are you sure you want to permanently delete ${selected.length} selected production record(s)?`,
           async () => {
             try {
-              const res = await Api.call('deleteProductionBulk', selected);
+              const res = await Api.call('deleteProductionBulk', selected, expectedRows);
               App.Utils.showToast(res.message, !res.success);
               if (res.success) {
                 App.State.selectedProduction = [];
@@ -20147,8 +20245,14 @@
         this.syncPoolColorGroupColumns();
         this.refreshPoolColorGroupCells(color, qty, row.dataset.group);
 
+        // Skip the shared-column update entirely while a DIFFERENT axis also
+        // has this exact color name checked right now — see
+        // _isColorCheckedUnderMultipleAxes: with two axes' colliding rows
+        // both live, this shared column can't correctly represent both at
+        // once, and updating it here would silently overwrite whichever
+        // axis didn't just fire this change with the wrong basis.
         const colIndex = this.getMatrixColumnIndex(color);
-        if (colIndex !== -1) {
+        if (colIndex !== -1 && !this._isColorCheckedUnderMultipleAxes(color)) {
           document.querySelectorAll('#productionColorMatrixBody tr').forEach(matrixRow => {
             const cell = matrixRow.children[colIndex];
             const input = cell?.querySelector('.matrix-qty');
@@ -20322,7 +20426,8 @@
               color: singleColor,
               colorScope: singleColor || undefined,
               qty: totalQty > 0 ? totalQty * c.qtyPerUnit : c.qtyPerUnit,
-              qtyPerUnit: c.qtyPerUnit
+              qtyPerUnit: c.qtyPerUnit,
+              unit: c.unit
             });
           });
 
@@ -20689,7 +20794,8 @@
             size: c.size,
             sourceType: c.sourceType,
             qty: lotQty > 0 ? lotQty * c.qtyPerUnit : c.qtyPerUnit,
-            qtyPerUnit: c.qtyPerUnit
+            qtyPerUnit: c.qtyPerUnit,
+            unit: c.unit
           }));
           await this.refreshPoolAvailability();
         } catch (err) {
@@ -20763,12 +20869,15 @@
         const colorScope = (comp && comp.colorScope) || '';
         const qty = comp && comp.qty !== undefined ? this.formatQty(comp.qty) : '';
         const qtyPerUnitAttr = (comp && comp.qtyPerUnit !== undefined) ? `data-qty-per-unit="${comp.qtyPerUnit}"` : '';
+        // Blank/undefined means "already in the item's own Base Unit" — see
+        // _readProdComponentRow and module_stock.js#_getBilledAndConsumedQtyMaps.
+        const unitAttr = (comp && comp.unit) ? ` data-unit="${escapeHtml(comp.unit)}"` : '';
         const colorScopeAttr = colorScope ? ` data-color-scope="${escapeHtml(colorScope)}"` : '';
         const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
         const colorReadonlyAttrs = colorScope ? ' readonly title="This item only exists in this one Warehouse Pool color — fixed automatically"' : '';
 
         const rowHtml = `
-      <tr id="${rowId}" ${qtyPerUnitAttr}${colorScopeAttr}>
+      <tr id="${rowId}" ${qtyPerUnitAttr}${unitAttr}${colorScopeAttr}>
         <td>
           <select class="form-select prod-comp-item-select" required>
             <option value=""></option>
@@ -20864,6 +20973,24 @@
         return Array.from(headerRow.children).findIndex(th => th.dataset.color === color);
       },
 
+      // The Per-Color matrix's column identity is color-string-only, shared
+      // across every Color Axis (see getMatrixColumnIndex/addMatrixColorColumn
+      // above) — a real composite (axis, color) column identity would close
+      // this for good, but is a much larger refactor (~10 more call sites,
+      // real regression risk — see bug_pool_table_color_leak_and_double_count
+      // in project memory). This detects the one genuinely ambiguous
+      // situation — two independent axes both having this exact color name
+      // CHECKED at the same time — so onColorQtyChanged can back off instead
+      // of overwriting the shared column with the wrong axis's basis.
+      _isColorCheckedUnderMultipleAxes(color) {
+        const colorLower = String(color || '').toLowerCase();
+        const axisKeys = new Set();
+        this.getCheckedColorQtys().forEach(cc => {
+          if ((cc.color || '').toLowerCase() === colorLower) axisKeys.add(cc.axisKey || '');
+        });
+        return axisKeys.size > 1;
+      },
+
       // Builds one color cell's contents for a matrix row: a merged row gets
       // its own item picker + qty input (since this color's real item is
       // independent of every other color's), a manual (select-driven) row
@@ -20906,6 +21033,19 @@
       },
 
       removeMatrixColorColumn(color) {
+        // Another axis's own same-named color may still be checked (two
+        // independent axes can legitimately share a literal color name,
+        // e.g. a Rim axis and a Frame axis both having "Purple") — this
+        // matrix's column is shared (keyed by color string only, see
+        // getMatrixColumnIndex), so removing it here whenever THIS axis's
+        // row gets unchecked would wipe cells still in use by that other,
+        // still-checked axis. By the time this fires, the row that was just
+        // unchecked no longer shows up in getCheckedColorQtys(), so "still
+        // checked" here can only mean a different row/axis needs it.
+        const colorLower = String(color || '').toLowerCase();
+        const stillCheckedElsewhere = this.getCheckedColorQtys().some(cc => (cc.color || '').toLowerCase() === colorLower);
+        if (stillCheckedElsewhere) return;
+
         const idx = this.getMatrixColumnIndex(color);
         if (idx === -1) return;
         const headerRow = document.getElementById('productionColorMatrixHeaderRow');
@@ -21433,7 +21573,8 @@
               sourceType: c.sourceType,
               qty: c.qty,
               color: isLockedPoolColor ? colorGroup : c.color,
-              colorScope: isLockedPoolColor ? colorGroup : undefined
+              colorScope: isLockedPoolColor ? colorGroup : undefined,
+              unit: c.unit
             });
             return;
           }
@@ -21720,7 +21861,10 @@
           color: row.querySelector('.prod-comp-color')?.value.trim() || '',
           sourceType: row.querySelector('.prod-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM',
           qty: toNumber(row.querySelector('.prod-comp-qty')?.value),
-          colorGroup: row.dataset.colorScope || 'COMMON'
+          colorGroup: row.dataset.colorScope || 'COMMON',
+          // Blank = "already in the item's Base Unit" — see addComponentRow's
+          // unitAttr and module_stock.js#_getBilledAndConsumedQtyMaps.
+          unit: row.dataset.unit || ''
         };
       },
 
@@ -23854,6 +23998,7 @@
           </select>
         </td>
         <td><input type="number" class="form-control text-end proc-comp-qty" min="0.0001" step="any" value="${compData && compData.qtyPerUnit ? compData.qtyPerUnit : '1'}"></td>
+        <td><input type="text" class="form-control proc-comp-unit" list="unitList" placeholder="(item's own)" value="${compData && compData.unit ? escapeHtml(compData.unit) : ''}"></td>
         <td><input type="text" class="form-control proc-comp-remarks" placeholder="-" value="${compData && compData.remarks ? escapeHtml(compData.remarks) : ''}"></td>
         <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Process.removeComponentRow('${rowId}')">✕</button></td>
       </tr>
@@ -24135,6 +24280,10 @@
           size: row.querySelector('.proc-comp-size').value.trim(),
           narration: row.querySelector('.proc-comp-narration').value.trim(),
           qtyPerUnit: toNumber(row.querySelector('.proc-comp-qty').value) || 1,
+          // Blank (the default) means "Qty/Unit is already in this item's
+          // own Base Unit" — only a non-blank Unit here triggers real
+          // conversion in module_stock.js#_getBilledAndConsumedQtyMaps.
+          unit: (row.querySelector('.proc-comp-unit')?.value || '').trim(),
           remarks: row.querySelector('.proc-comp-remarks').value.trim(),
           sourceType: row.querySelector('.proc-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM',
           colorGroup,
@@ -24304,6 +24453,7 @@
                   <th style="min-width: 150px;">Narration</th>
                   <th style="min-width: 150px;">Source</th>
                   <th style="min-width: 110px; text-align: right;">Qty / Unit</th>
+                  <th style="min-width: 100px;" title="Leave blank if Qty/Unit is already in this item's own Base Unit">Unit</th>
                   <th style="min-width: 180px;">Remarks</th>
                   <th style="width: 48px; text-align: center;">✕</th>
                 </tr>
@@ -25182,11 +25332,18 @@
         const selected = App.State.selectedDispatch.slice();
         if (!selected.length) return;
 
+        // Same shifted/modified-row guard as the single-row delete() below —
+        // lets the server skip (not blindly delete) any row that no longer
+        // matches what was on screen when it was selected.
+        const expectedRows = (App.State.globalDispatch || [])
+          .filter(d => App.Selection.isSelected(selected, String(d.rowIdx)))
+          .map(d => ({ rowIdx: d.rowIdx, expectedDispatchNumber: d.dispatchNumber, expectedQty: d.qty }));
+
         App.Utils.confirmAction(
           `Are you sure you want to permanently delete ${selected.length} selected dispatch record(s)? This will increase the Ready to Dispatch quantity for the affected products.`,
           async () => {
             try {
-              const res = await Api.call('deleteDispatchBulk', selected);
+              const res = await Api.call('deleteDispatchBulk', selected, expectedRows);
               App.Utils.showToast(res.message, !res.success);
               if (res.success) {
                 App.State.selectedDispatch = [];

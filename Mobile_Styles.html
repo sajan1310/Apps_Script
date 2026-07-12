@@ -348,6 +348,34 @@
   .mb-chip-cancelled { background: var(--mb-enamel-red); }
   .mb-chip-lowstock   { background: var(--mb-enamel-red); }
 
+  /* ── Tappable filter chips (status-bar style pickers, e.g. PO Ledger) ── */
+  .mb-filter-chip-row {
+    display: flex;
+    gap: var(--mb-sp-2);
+    overflow-x: auto;
+    padding-bottom: var(--mb-sp-1);
+    margin-bottom: var(--mb-sp-3);
+  }
+  .mb-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    font-family: var(--mb-font-body);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 14px;
+    min-height: var(--mb-tap-min);
+    border-radius: var(--mb-radius-pill);
+    border: 1.5px solid var(--mb-steel-faint);
+    background: var(--mb-surface);
+    color: var(--mb-steel);
+  }
+  .mb-filter-chip.active {
+    border-color: var(--mb-safety);
+    background: var(--mb-safety);
+    color: #fff;
+  }
+
   /* ── Buttons ─────────────────────────────────────────────────────────── */
   .mb-btn {
     display: inline-flex;
@@ -479,7 +507,8 @@
     border-color: var(--mb-safety);
     outline: none;
   }
-  .mb-field input:disabled, .mb-field select:disabled, .mb-field textarea:disabled {
+  .mb-field input:disabled, .mb-field select:disabled, .mb-field textarea:disabled,
+  .mb-field input[readonly] {
     background: var(--mb-steel-faint);
     color: var(--mb-steel);
   }

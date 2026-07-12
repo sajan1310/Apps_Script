@@ -21,7 +21,11 @@
 <div id="poLedger" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-poLedger">
 
   <!-- ─────────────────────────────────────────────────────────────────
-       STATUS BAR: Filter POs by fulfillment status, and jump to pending
+       STATUS BAR: Filter POs by fulfillment status, and jump to pending.
+       The 3 literal data-status/onclick values below (PO Issued / Partially
+       Received / Completed) must match config.js#PO_STATUS (server) and
+       its client mirror in Script_ApiCore.html#PO_STATUS exactly — static
+       markup can't reference that JS constant directly.
        ───────────────────────────────────────────────────────────────── -->
   <div class="d-flex flex-wrap gap-2 mb-3 align-items-center" id="poStatusBar" role="group" aria-label="Filter Purchase Orders by status">
     <button type="button" class="btn btn-outline-secondary btn-sm fw-500 po-status-filter-btn active" data-status="all" onclick="App.PO.filterByStatus('all')">

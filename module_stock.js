@@ -189,6 +189,13 @@ function _getBilledAndConsumedQtyMaps(ss) {
     if (prodLastRow >= 2) {
       const numCols = Math.max(prodSheet.getLastColumn(), PRODUCTION_COL.COMPONENTS_CONSUMED);
       const prodData = prodSheet.getRange(2, 1, prodLastRow - 1, numCols).getValues();
+
+      // Only built if at least one component actually carries a non-blank
+      // unit — most recipes still have none (see PROCESS_COMPONENTS_COL.UNIT),
+      // so this stays a no-op cost in the common case.
+      let itemUnitMap = null;
+      let unitsMap = null;
+
       for (let i = 0; i < prodData.length; i++) {
         const row = prodData[i];
         const status = String(row[PRODUCTION_COL.STATUS - 1] || '').trim().toLowerCase();
@@ -210,8 +217,30 @@ function _getBilledAndConsumedQtyMaps(ss) {
           if (sourceType === COMPONENT_SOURCE_TYPES.POOL) return;
           const itemName = String(comp.itemName || '').trim().toLowerCase();
           const size = String(comp.size || '').trim().toLowerCase();
-          const qty = Number(comp.qty) || 0;
+          let qty = Number(comp.qty) || 0;
           if (!itemName || qty <= 0) return;
+
+          // Blank unit (the default for every pre-existing recipe row) means
+          // "already in the item's Base Unit" — preserves old behavior
+          // exactly. Only a component whose recipe row was explicitly given
+          // a Unit (see Script_Process.html's recipe editor) converts here,
+          // the same convertQtyToBaseUnit path Bill/PO/Return/Wastage/Issue
+          // already use.
+          const unit = String(comp.unit || '').trim();
+          if (unit && typeof convertQtyToBaseUnit === 'function') {
+            if (!itemUnitMap) itemUnitMap = typeof _getItemUnitInfoMap === 'function' ? _getItemUnitInfoMap() : {};
+            if (!unitsMap) unitsMap = typeof _getUnitsMap === 'function' ? _getUnitsMap() : {};
+            const unitInfo = typeof _lookupItemUnitInfo === 'function'
+              ? _lookupItemUnitInfo(itemUnitMap, itemName, size)
+              : { baseUnit: 'Pcs', purchaseUnit: 'Pcs', weightPerBaseUnit: 0 };
+            try {
+              qty = convertQtyToBaseUnit(qty, unit, unitInfo, unitsMap);
+            } catch (e) {
+              // Unconvertible (e.g. no Weight-per-Base-Unit set yet) — fall
+              // back to the as-entered qty rather than blocking the whole
+              // Stock recalculation over one bad recipe row.
+            }
+          }
 
           const compKey = itemName + '|' + size;
           consumedQtyMap[compKey] = (consumedQtyMap[compKey] || 0) + qty;

@@ -297,6 +297,21 @@ const APP_CONFIG = Object.freeze({
 // A | B | C | D | E | F | G | H | I | J | K | L | M | N | O | P
 // 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16
 // ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * PO status vocabulary — the one source of truth for the 3 derived status
+ * strings module_po.js#_attachPoStatus computes from the Bill ledger.
+ * Mirrored client-side (unchanged) in Script_ApiCore.html, shared by both
+ * the desktop (Script_PO.html) and mobile (Mobile_Script.html) shells, so
+ * badge/chip classes and filter logic key off this instead of repeating the
+ * literal strings in three places.
+ */
+const PO_STATUS = Object.freeze({
+  ISSUED: 'PO Issued',
+  PARTIAL: 'Partially Received',
+  COMPLETED: 'Completed'
+});
+
 const PO_COL = Object.freeze({
   PO_NUMBER:        1,      // Unique identifier
   PO_DATE:          2,      // DD/MM/YYYY
@@ -633,7 +648,8 @@ const PRODUCTION_COL = Object.freeze({
   OUTPUT_ITEM_NAME: 16,      // De-normalized copy of Process Master.Output Item Name at save time
   COMPONENTS_CONSUMED: 17,   // JSON: [{itemName, size, color, sourceType, qty, colorGroup}, ...] — required at log time, drives Stock/Warehouse Pool debits. colorGroup is 'COMMON' (applies to every color in the batch) or a specific Color Master name.
   COLOR: 18,                 // Display string of every color produced in this lot (comma-joined when multiple, blank if the process has no color sub-groups).
-  COLOR_BREAKDOWN: 19        // JSON: [{color, qty}, ...] — per-color quantity split for this lot. One Production row now covers an entire multi-color batch instead of one row per color.
+  COLOR_BREAKDOWN: 19,       // JSON: [{color, qty}, ...] — per-color quantity split for this lot. One Production row now covers an entire multi-color batch instead of one row per color.
+  ORDER_NUMBER: 20           // Structured reference to Client Orders.Order Number, set only when this lot was auto-queued from a PI/Estimate line (_pushOrderLinesToProduction). Blank for manually-logged lots. The REMARKS column also carries a free-text "Auto-queued from PI ..." note for humans; this column is what deleteClientOrder/deleteClientOrdersBulk actually check before allowing a delete.
 });
 
 const PRODUCTION_COL_NAMES = Object.freeze({
@@ -655,7 +671,8 @@ const PRODUCTION_COL_NAMES = Object.freeze({
   'outputItemName': PRODUCTION_COL.OUTPUT_ITEM_NAME,
   'componentsConsumed': PRODUCTION_COL.COMPONENTS_CONSUMED,
   'color': PRODUCTION_COL.COLOR,
-  'colorBreakdown': PRODUCTION_COL.COLOR_BREAKDOWN
+  'colorBreakdown': PRODUCTION_COL.COLOR_BREAKDOWN,
+  'orderNumber': PRODUCTION_COL.ORDER_NUMBER
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -707,7 +724,8 @@ const PROCESS_COMPONENTS_COL = Object.freeze({
   REMARKS:       6,   // Remarks
   SOURCE_TYPE:   7,   // 'ITEM' (raw material, debited from Stock) or 'POOL' (debited from Warehouse Pool). Defaults to 'ITEM'.
   COLOR_GROUP:   8,   // 'COMMON' (applies to every color variant) or a Color Master name (only offered/consumed when a Production lot is logged under that color). Defaults to 'COMMON'.
-  COLOR_AXIS:    9    // Optional label grouping this row's COLOR_GROUP value with its siblings into one independently-selectable "Colors to Produce" checkbox group (e.g. "Mudguard Color") — see computeColorGroupsForProcess. Blank = not manually assigned; falls back to auto-detected Warehouse Pool axis grouping, or the legacy flat bucket if there's no pool axis either.
+  COLOR_AXIS:    9,   // Optional label grouping this row's COLOR_GROUP value with its siblings into one independently-selectable "Colors to Produce" checkbox group (e.g. "Mudguard Color") — see computeColorGroupsForProcess. Blank = not manually assigned; falls back to auto-detected Warehouse Pool axis grouping, or the legacy flat bucket if there's no pool axis either.
+  UNIT: 10            // Optional unit this row's QTY_PER_UNIT is expressed in (e.g. "Kg", "Gross"). Blank (the default for every pre-existing row) means "already in the item's Base Unit," preserving old behavior exactly — module_stock.js#_getBilledAndConsumedQtyMaps only converts via convertQtyToBaseUnit when this is non-blank and differs from the item's own Base Unit.
 });
 
 const PROCESS_COMPONENTS_COL_NAMES = Object.freeze({
@@ -719,7 +737,8 @@ const PROCESS_COMPONENTS_COL_NAMES = Object.freeze({
   'remarks': PROCESS_COMPONENTS_COL.REMARKS,
   'sourceType': PROCESS_COMPONENTS_COL.SOURCE_TYPE,
   'colorGroup': PROCESS_COMPONENTS_COL.COLOR_GROUP,
-  'colorAxis': PROCESS_COMPONENTS_COL.COLOR_AXIS
+  'colorAxis': PROCESS_COMPONENTS_COL.COLOR_AXIS,
+  'unit': PROCESS_COMPONENTS_COL.UNIT
 });
 
 // Allowed values for PROCESS_COMPONENTS_COL.SOURCE_TYPE / a component's source

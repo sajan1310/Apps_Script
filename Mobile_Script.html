@@ -23,26 +23,9 @@
   // or toast, per the "fail loudly and recoverably, never spin forever"
   // requirement (there is no offline mode to fall back to).
   // ================================================================
-  MApp.Api = {
-    call(method, ...args) {
-      return new Promise((resolve, reject) => {
-        try {
-          const runner = google.script.run
-            .withSuccessHandler(resolve)
-            .withFailureHandler(reject);
-
-          if (typeof runner[method] !== 'function') {
-            reject(new Error(`Backend method "${method}" is unavailable.`));
-            return;
-          }
-
-          runner[method](...args);
-        } catch (err) {
-          reject(err);
-        }
-      });
-    }
-  };
+  // Wrapper itself lives in Script_ApiCore.html, shared with desktop's
+  // Api.call — see Phase 4's dedupe guideline.
+  MApp.Api = { call: _apiCall };
 
   // ================================================================
   // TOAST
@@ -170,12 +153,15 @@
         case 'In Progress': return 'mb-chip-inprogress';
         case 'Completed': return 'mb-chip-completed';
         case 'Cancelled': return 'mb-chip-cancelled';
-        // PO status (module_po.js#_attachPoStatus) reuses this same chip set
-        // rather than adding new colors -- blue for issued (mirrors desktop's
-        // bg-primary), amber for partial (an "in-between, needs attention"
-        // cue; desktop uses bg-info/cyan, but that hue has no chip here yet).
-        case 'PO Issued': return 'mb-chip-inprogress';
-        case 'Partially Received': return 'mb-chip-pending';
+        // PO status (module_po.js#_attachPoStatus, mirrored client-side as
+        // the shared PO_STATUS constant in Script_ApiCore.html) reuses this
+        // same chip set rather than adding new colors -- blue for issued
+        // (mirrors desktop's bg-primary), amber for partial (an "in-between,
+        // needs attention" cue; desktop uses bg-info/cyan, but that hue has
+        // no chip here yet). PO_STATUS.COMPLETED already matches the
+        // 'Completed' case above, shared with Production's own status.
+        case PO_STATUS.ISSUED: return 'mb-chip-inprogress';
+        case PO_STATUS.PARTIAL: return 'mb-chip-pending';
         default: return '';
       }
     },
@@ -658,16 +644,18 @@
       if (!panel) return;
       panel.innerHTML = '<div class="mb-skel mb-skel-line" style="width:60%;"></div><div class="mb-skel mb-skel-line" style="width:40%;"></div>';
 
+      const adjustBtn = `<button type="button" class="mb-btn-text" style="padding:8px 0;" onclick="MApp.Stock.openAdjustSheet(${idx})">Adjust stock</button>`;
+
       try {
         await this._ensureLedgerSources();
         const movements = this._computeMovements(item.name, item.size);
 
         if (movements.length === 0) {
-          panel.innerHTML = '<div class="mb-text-sm mb-text-steel" style="padding:var(--mb-sp-2) 0;">No recorded movements for this item yet.</div>';
+          panel.innerHTML = adjustBtn + '<div class="mb-text-sm mb-text-steel" style="padding:var(--mb-sp-2) 0;">No recorded movements for this item yet.</div>';
           return;
         }
 
-        panel.innerHTML = movements.slice(0, 6).map(m => `
+        panel.innerHTML = adjustBtn + movements.slice(0, 6).map(m => `
           <div class="mb-flex-row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--mb-steel-faint);">
             <div>
               <div class="mb-text-sm" style="font-weight:600;color:var(--mb-ink);">${MApp.Util.escapeHtml(m.label)}</div>
@@ -679,7 +667,67 @@
           </div>
         `).join('');
       } catch (err) {
-        panel.innerHTML = `<div class="mb-text-sm" style="color:var(--mb-enamel-red);">Couldn't load movement history: ${MApp.Util.escapeHtml(err.message || '')}</div>`;
+        panel.innerHTML = adjustBtn + `<div class="mb-text-sm" style="color:var(--mb-enamel-red);">Couldn't load movement history: ${MApp.Util.escapeHtml(err.message || '')}</div>`;
+      }
+    },
+
+    // ── MANUAL STOCK ADJUSTMENT — mirrors desktop's App.Stock.handleAdjustSubmit
+    // (module_stock.js#adjustStockManually unchanged server-side). Negative
+    // corrected values are intentionally allowed here (same exception as
+    // desktop) so field operations aren't blocked; the user can fix the
+    // number later once the real cause is investigated.
+    openAdjustSheet(idx) {
+      const item = this.filtered[idx];
+      if (!item) return;
+      this._adjustItem = item;
+
+      const label = document.getElementById('stock-adjust-item-label');
+      if (label) label.value = `${item.name} (${item.size || 'GENERAL'})`;
+      const oldVal = document.getElementById('stock-adjust-old-value');
+      if (oldVal) oldVal.value = item.currentStock;
+      const newVal = document.getElementById('stock-adjust-new-value');
+      if (newVal) newVal.value = item.currentStock;
+      const reason = document.getElementById('stock-adjust-reason');
+      if (reason) reason.value = '';
+
+      MApp.Sheet.open('sheet-stock-adjust');
+    },
+
+    closeAdjustSheet() {
+      MApp.Sheet.close('sheet-stock-adjust');
+    },
+
+    async submitAdjust() {
+      const item = this._adjustItem;
+      if (!item) return;
+
+      const newValue = parseFloat(document.getElementById('stock-adjust-new-value')?.value);
+      const reason = (document.getElementById('stock-adjust-reason')?.value || '').trim();
+
+      if (isNaN(newValue)) {
+        MApp.Toast.error('Corrected stock must be a valid number.');
+        return;
+      }
+      if (!reason) {
+        MApp.Toast.error('Please provide a reason for this adjustment.');
+        return;
+      }
+
+      MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', true, 'Saving…');
+      try {
+        const res = await MApp.Api.call('adjustStockManually', item.name, item.size, newValue, reason);
+        if (!res || !res.success) {
+          MApp.Toast.error((res && res.message) || 'Could not adjust stock.');
+          MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
+          return;
+        }
+        MApp.Toast.success(res.message || 'Stock adjusted.');
+        this.closeAdjustSheet();
+        MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
+        this.load();
+      } catch (err) {
+        MApp.Toast.error(err.message || 'Could not adjust stock. Check your connection and try again.');
+        MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
       }
     },
 
@@ -2062,6 +2110,29 @@
           return;
         }
         this.items = res.data || [];
+
+        // Stock-on-hand lives in a separate sheet (module_stock.js#getStockData),
+        // keyed by (name, size) -- fetched alongside items but allowed to fail
+        // open: this is a secondary enhancement, not the primary data this
+        // screen exists for, so a stock-load failure shouldn't block the
+        // lookup itself (items just render without a stock figure).
+        try {
+          const stockRes = await MApp.Api.call('getStockData');
+          if (stockRes && stockRes.success) {
+            const stockMap = new Map();
+            (stockRes.data || []).forEach(s => {
+              stockMap.set(s.name.toLowerCase() + '|' + s.size.toLowerCase(), s);
+            });
+            this.items.forEach(it => {
+              const stock = stockMap.get(it.name.toLowerCase() + '|' + (it.size || '').toLowerCase());
+              it.currentStock = stock ? stock.currentStock : null;
+              it.isLowStock = stock ? stock.isLowStock : false;
+            });
+          }
+        } catch (stockErr) {
+          // Non-critical -- item lookup still works without stock figures.
+        }
+
         this.filtered = this.items;
         this.render();
       } catch (err) {
@@ -2091,30 +2162,53 @@
         return;
       }
 
+      // currentStock is null when getStockData() failed or this item/size
+      // has no Stock row yet (see openLookupSheet) -- distinct from a real 0.
       listEl.innerHTML = this.filtered.slice(0, 100).map(it => `
         <div class="mb-card">
-          <div class="mb-card-title">${MApp.Util.escapeHtml(it.name)}</div>
-          <div class="mb-card-sub">${MApp.Util.escapeHtml(it.size || 'No size')} · ${MApp.Util.escapeHtml(it.baseUnit)}${it.narration ? ' · ' + MApp.Util.escapeHtml(it.narration) : ''}</div>
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(it.name)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(it.size || 'No size')}${it.narration ? ' · ' + MApp.Util.escapeHtml(it.narration) : ''}</div>
+            </div>
+            ${it.currentStock !== null && it.currentStock !== undefined ? `
+            <div style="text-align:right;">
+              <div class="mb-card-number${it.isLowStock ? ' mb-alert' : ''}">${MApp.Util.formatQty(it.currentStock)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(it.baseUnit)}</div>
+            </div>` : `<div class="mb-card-sub">${MApp.Util.escapeHtml(it.baseUnit)}</div>`}
+          </div>
+          ${it.isLowStock ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-lowstock">Low stock</span></div>' : ''}
         </div>
       `).join('');
     }
   };
 
   // ================================================================
-  // PO LEDGER (read-only) — getPOData already returns po.status and per
-  // -line receivedQty/pendingQty (see module_po.js#_attachPoStatus), so
-  // this is a straight read + status-chip + pending-line surface, no new
-  // server work needed. Print reuses the SAME #print-po-container markup
-  // from View_Print.html the desktop PO Ledger populates (see Script_PO
+  // PO LEDGER — getPOData already returns po.status and per-line
+  // receivedQty/pendingQty (see module_po.js#_attachPoStatus), so the list
+  // is a straight read + status-chip + pending-line surface, no new server
+  // work needed. Print reuses the SAME #print-po-container markup from
+  // View_Print.html the desktop PO Ledger populates (see Script_PO
   // .html#populatePrintData) -- always includes rates/totals (no toggle,
   // unlike desktop's printWithRates/printWithTotal checkboxes) to keep the
   // first mobile pass simple.
+  //
+  // "New PO" (openNewSheet/save) is the one write action here, calling the
+  // SAME module_po.js#savePO used by desktop, unchanged. Like
+  // MApp.Returns, it logs exactly one item per PO instead of desktop's
+  // multi-line form -- fast field entry; a PO with several distinct items
+  // should still be raised on desktop. Editing/deleting an existing PO is
+  // intentionally NOT built here, matching every other mobile write flow
+  // (Production/Dispatch/Returns): mobile only ever creates new records.
   // ================================================================
   MApp.PO = {
     pos: [],
     filtered: [],
     statusFilter: 'all',
     searchTerm: '',
+    vendors: [],
+    items: [],
+    selection: { vendor: '', contact: '', itemName: '', itemSize: '', unit: 'Pcs' },
 
     async openLedgerSheet() {
       const listEl = document.getElementById('po-ledger-list');
@@ -2280,6 +2374,419 @@
       const totalContainer = document.getElementById('print-grand-total-container');
       setText('print-grand-total', grandTotal.toFixed(2));
       if (totalContainer) totalContainer.style.display = 'block';
+    },
+
+    // ── New PO sheet ─────────────────────────────────────────────────────
+    async openNewSheet() {
+      this.selection = { vendor: '', contact: '', itemName: '', itemSize: '', unit: 'Pcs' };
+
+      document.getElementById('new-po-body').innerHTML = `
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+        <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+      MApp.Sheet.open('sheet-new-po');
+
+      const saveBtn = document.getElementById('new-po-save-btn');
+      if (saveBtn) saveBtn.disabled = true;
+
+      try {
+        await this._ensureNewPoRefData();
+        document.getElementById('new-po-body').innerHTML = this._newPoFormHtml();
+      } catch (err) {
+        MApp.Toast.error('Could not load PO reference data: ' + (err.message || ''));
+        this.closeNewSheet();
+        return;
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    },
+
+    closeNewSheet() {
+      MApp.Sheet.close('sheet-new-po');
+    },
+
+    async _ensureNewPoRefData() {
+      const [vendorsRes, itemsRes] = await Promise.all([
+        MApp.Api.call('getVendorsData'),
+        MApp.Api.call('getItemsData')
+      ]);
+      this.vendors = (vendorsRes && vendorsRes.success) ? (vendorsRes.data || []) : [];
+      this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+    },
+
+    _newPoFormHtml() {
+      return `
+        <div class="mb-field">
+          <label for="new-po-date">Date</label>
+          <input type="date" id="new-po-date" value="${MApp.Util.todayInputValue()}">
+        </div>
+
+        <div class="mb-field">
+          <label>Vendor</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="new-po-vendor-field" onclick="MApp.PO.pickVendor()">Choose a vendor...</button>
+        </div>
+
+        <div class="mb-field">
+          <label for="new-po-contact">Contact / dispatch address (optional)</label>
+          <input type="text" id="new-po-contact" maxlength="100">
+        </div>
+
+        <div class="mb-field">
+          <label>Item</label>
+          <button type="button" class="mb-picker-field mb-placeholder" id="new-po-item-field" onclick="MApp.PO.pickItem()">Choose an item...</button>
+        </div>
+
+        <div class="mb-field">
+          <label for="new-po-qty">Quantity</label>
+          <input type="number" id="new-po-qty" inputmode="decimal" min="0" step="1" placeholder="0">
+        </div>
+
+        <div class="mb-field">
+          <label for="new-po-price">Rate (per unit)</label>
+          <input type="number" id="new-po-price" inputmode="decimal" min="0" step="0.01" placeholder="0.00">
+        </div>
+
+        <div class="mb-field">
+          <label for="new-po-remarks">Remarks (optional)</label>
+          <textarea id="new-po-remarks" rows="3" placeholder="Shown in the printed PO document..."></textarea>
+        </div>
+      `;
+    },
+
+    async pickVendor() {
+      const items = (this.vendors || []).map(v => ({ value: v.name, label: v.name }));
+      const picked = await MApp.Picker.open({ title: 'Choose a vendor', items, selectedValue: this.selection.vendor, allowCustom: true });
+      if (!picked) return;
+      this.selection.vendor = picked.value;
+      const el = document.getElementById('new-po-vendor-field');
+      if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+
+      // Mirrors desktop's App.Utils.updateVendorContact -- auto-fill the
+      // contact field from this vendor's last known contact, if any.
+      const match = (this.vendors || []).find(v => v.name === picked.value);
+      if (match && match.contact) {
+        this.selection.contact = match.contact;
+        const contactInput = document.getElementById('new-po-contact');
+        if (contactInput) contactInput.value = match.contact;
+      }
+    },
+
+    async pickItem() {
+      const items = (this.items || []).map(it => ({
+        value: it.name + '||' + it.size, label: it.name, sublabel: it.size ? `Size: ${it.size}` : ''
+      }));
+      const picked = await MApp.Picker.open({
+        title: 'Choose an item', items, selectedValue: this.selection.itemName + '||' + this.selection.itemSize
+      });
+      if (!picked) return;
+
+      const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
+      this.selection.itemName = match ? match.name : picked.label;
+      this.selection.itemSize = match ? match.size : '';
+      this.selection.unit = match ? match.baseUnit : 'Pcs';
+
+      const el = document.getElementById('new-po-item-field');
+      if (el) {
+        el.textContent = picked.label + (this.selection.itemSize ? ` (${this.selection.itemSize})` : '');
+        el.classList.remove('mb-placeholder');
+      }
+    },
+
+    async save() {
+      if (!this.selection.vendor) {
+        MApp.Toast.error('Choose a vendor first.');
+        return;
+      }
+      if (!this.selection.itemName) {
+        MApp.Toast.error('Choose an item first.');
+        return;
+      }
+      const qty = MApp.Util.toNumber(document.getElementById('new-po-qty')?.value);
+      if (!qty || qty <= 0) {
+        MApp.Toast.error('Enter a quantity greater than zero.');
+        return;
+      }
+
+      const formData = {
+        poDate: document.getElementById('new-po-date')?.value || MApp.Util.todayInputValue(),
+        vendor: this.selection.vendor,
+        contact: (document.getElementById('new-po-contact')?.value || '').trim(),
+        poRemarks: (document.getElementById('new-po-remarks')?.value || '').trim(),
+        items: JSON.stringify([{
+          name: this.selection.itemName,
+          size: this.selection.itemSize,
+          narration: '',
+          unit: this.selection.unit || 'Pcs',
+          qty: qty,
+          price: MApp.Util.toNumber(document.getElementById('new-po-price')?.value)
+        }])
+      };
+
+      MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', true, 'Saving…');
+      try {
+        const res = await MApp.Api.call('savePO', formData);
+        if (!res || !res.success) {
+          MApp.Toast.error((res && res.message) || 'Could not save this PO.');
+          MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
+          return;
+        }
+        MApp.Toast.success(`PO saved${res.data && res.data.poNumber ? ' — ' + res.data.poNumber : ''}.`);
+        this.closeNewSheet();
+        MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
+        this._refreshLedger();
+      } catch (err) {
+        MApp.Toast.error(err.message || 'Could not save this PO. Check your connection and try again.');
+        MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
+      }
+    },
+
+    // Best-effort refresh of the ledger list behind the New PO sheet -- a
+    // failure here must not surface as an error toast; the PO itself
+    // already saved successfully by this point (see save() above).
+    async _refreshLedger() {
+      try {
+        const res = await MApp.Api.call('getPOData');
+        if (res && res.success) {
+          this.pos = res.data || [];
+          this._applyFilters();
+        }
+      } catch (err) {
+        // Non-critical -- next manual open of the ledger will show it.
+      }
+    }
+  };
+
+  // ================================================================
+  // BILL LEDGER (read-only) — same pattern as MApp.PO, but bills have no
+  // status field (no filter chips needed) and print reuses
+  // #print-bill-container (Script_Bill.html#populatePrintData) instead.
+  // ================================================================
+  MApp.Bill = {
+    bills: [],
+    filtered: [],
+    searchTerm: '',
+
+    async openLedgerSheet() {
+      const listEl = document.getElementById('bill-ledger-list');
+      const searchInput = document.getElementById('bill-ledger-search');
+      if (searchInput) searchInput.value = '';
+      this.searchTerm = '';
+      MApp.Util.renderSkeleton(listEl, 5);
+      MApp.Sheet.open('sheet-bill-ledger');
+
+      try {
+        const res = await MApp.Api.call('getBillData');
+        if (!res || !res.success) {
+          MApp.Util.renderError(listEl, res && res.message, () => this.openLedgerSheet());
+          return;
+        }
+        this.bills = res.data || [];
+        this._applyFilters();
+      } catch (err) {
+        MApp.Util.renderError(listEl, err && err.message, () => this.openLedgerSheet());
+      }
+    },
+
+    closeLedgerSheet() {
+      MApp.Sheet.close('sheet-bill-ledger');
+    },
+
+    onSearch(term) {
+      this.searchTerm = String(term || '').trim().toLowerCase();
+      this._applyFilters();
+    },
+
+    _applyFilters() {
+      let list = this.bills;
+      if (this.searchTerm) {
+        const term = this.searchTerm;
+        list = list.filter(bill =>
+          String(bill.billNumber || '').toLowerCase().includes(term) ||
+          String(bill.vendor || '').toLowerCase().includes(term));
+      }
+      this.filtered = list;
+      this.render();
+    },
+
+    render() {
+      const listEl = document.getElementById('bill-ledger-list');
+      if (!listEl) return;
+
+      if (this.filtered.length === 0) {
+        MApp.Util.renderEmpty(listEl, {
+          title: 'No bills found',
+          body: this.bills.length === 0 ? 'No bills recorded yet.' : 'Try a different search term.'
+        });
+        return;
+      }
+
+      listEl.innerHTML = this.filtered.slice(0, 100).map(bill => {
+        const idx = this.bills.indexOf(bill);
+        const poRef = (bill.poNumbers || []).length
+          ? bill.poNumbers.map(p => p === 'DIRECT' ? 'Direct' : `PO-${MApp.Util.escapeHtml(String(p))}`).join(', ')
+          : 'N/A';
+
+        return `
+        <div class="mb-card">
+          <div class="mb-card-row" style="justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(bill.billNumber)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(bill.vendor || '')} · ${MApp.Util.escapeHtml(bill.billDate || '')}</div>
+            </div>
+            <button type="button" class="mapp-topbar-btn" aria-label="Print bill ${MApp.Util.escapeHtml(bill.billNumber)}" onclick="MApp.Bill.print(${idx})">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+            </button>
+          </div>
+          <div class="mb-card-sub" style="margin-top:4px;">Qty: ${MApp.Util.formatQty(bill.totalQty)} · Total: ${MApp.Util.formatCurrency(bill.totalAmount)}</div>
+          <div class="mb-card-sub" style="margin-top:4px;">${poRef}</div>
+        </div>`;
+      }).join('');
+    },
+
+    print(index) {
+      const bill = this.bills[index];
+      if (!bill) return;
+      this._populatePrintData(bill);
+      const title = `Bill_${bill.billNumber}_${String(bill.vendor || '').replace(/[^a-zA-Z0-9 \-]/g, '').trim().replace(/\s+/g, '_')}`;
+      MApp.Print.trigger('print-bill-container', title);
+    },
+
+    // Mirrors Script_Bill.html's populatePrintData() -- same #print-bill
+    // -container field IDs (shared markup from View_Print.html). Unlike PO's
+    // print container, the items-table header here is static HTML already,
+    // so only the body + summary fields need populating.
+    _populatePrintData(bill) {
+      const setText = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.innerText = val ?? '';
+      };
+      setText('print-bill-number', bill.billNumber || '');
+      setText('print-bill-date', bill.billDate || '');
+      setText('print-bill-vendor', bill.vendor || '');
+      setText('print-bill-remarks', bill.remarks || '');
+      setText('print-bill-contact', bill.contact || '');
+
+      const poNums = (bill.poNumbers && bill.poNumbers.length) ? bill.poNumbers : (bill.poNumber ? [bill.poNumber] : []);
+      const poRefEl = document.getElementById('print-bill-po-ref');
+      if (poRefEl) {
+        poRefEl.innerHTML = poNums.length
+          ? poNums.map(p => p === 'DIRECT' ? 'Direct Purchase (No PO)' : `PO-${MApp.Util.escapeHtml(String(p))}`).join(' | ')
+          : 'N/A';
+      }
+
+      const bodyHtml = (bill.items || []).map((item, idx) => {
+        const rowBg = idx % 2 === 0 ? '#ffffff' : '#F5F0FB';
+        const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
+        return `<tr style="${rowStyle}">
+          <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+          <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${MApp.Util.escapeHtml(item.name || '')}</td>
+          <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;color:#555;">${MApp.Util.escapeHtml(item.narration || '')}</td>
+          <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;">${MApp.Util.escapeHtml(item.size || '')}</td>
+          <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${MApp.Util.escapeHtml(String(MApp.Util.toNumber(item.qty)))} ${MApp.Util.escapeHtml(item.unit || 'Pcs')}</td>
+          <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${MApp.Util.formatCurrency(item.price)}</td>
+          <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${MApp.Util.escapeHtml(String(item.gstRatePct ?? 0))}%</td>
+          <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;color:#6F42C1;-webkit-print-color-adjust:exact;print-color-adjust:exact;">${MApp.Util.formatCurrency(item.lineTotal)}</td>
+        </tr>`;
+      }).join('');
+      const tblBody = document.getElementById('print-bill-items-body');
+      if (tblBody) tblBody.innerHTML = bodyHtml;
+
+      setText('print-bill-grand-total', MApp.Util.toNumber(bill.totalAmount).toFixed(2));
+    }
+  };
+
+  // ================================================================
+  // DIRECTORY (read-only) — shared by Vendors/Clients/Contractors, one
+  // sheet instance reused across all 3 (see sheet-directory in
+  // Mobile_Views.html): the 3 desktop list APIs are structurally identical
+  // (name, contact, address, gstin/gstPan, remarks) and none of them
+  // returns a pre-computed "outstanding" figure -- that's a client-side
+  // calculation on desktop (e.g. App.Vendor.calculateLedgerAndPending)
+  // built from separate PO/Bill/Return/Payment reads, out of scope for
+  // this read-only first pass. Contact renders as a tel: link (safe to do
+  // now that sanitizeString() no longer corrupts phone numbers -- see
+  // utils.js).
+  // ================================================================
+  MApp.Directory = {
+    CONFIGS: {
+      vendor: { title: 'Vendors', api: 'getVendorsData', emptyBody: 'No vendors registered yet.' },
+      client: { title: 'Clients', api: 'getClientsData', emptyBody: 'No clients registered yet.' },
+      contractor: { title: 'Contractors', api: 'getContractorsData', emptyBody: 'No contractors registered yet.' }
+    },
+    type: null,
+    items: [],
+    filtered: [],
+    searchTerm: '',
+
+    async open(type) {
+      const cfg = this.CONFIGS[type];
+      if (!cfg) return;
+      this.type = type;
+
+      const titleEl = document.getElementById('directory-title');
+      if (titleEl) titleEl.textContent = cfg.title;
+
+      const listEl = document.getElementById('directory-list');
+      const searchInput = document.getElementById('directory-search');
+      if (searchInput) {
+        searchInput.value = '';
+        searchInput.placeholder = `Search ${cfg.title.toLowerCase()}...`;
+      }
+      this.searchTerm = '';
+      MApp.Util.renderSkeleton(listEl, 5);
+      MApp.Sheet.open('sheet-directory');
+
+      try {
+        const res = await MApp.Api.call(cfg.api);
+        if (!res || !res.success) {
+          MApp.Util.renderError(listEl, res && res.message, () => this.open(type));
+          return;
+        }
+        this.items = res.data || [];
+        this.filtered = this.items;
+        this.render();
+      } catch (err) {
+        MApp.Util.renderError(listEl, err && err.message, () => this.open(type));
+      }
+    },
+
+    close() {
+      MApp.Sheet.close('sheet-directory');
+    },
+
+    onSearch(term) {
+      this.searchTerm = String(term || '').trim().toLowerCase();
+      this.filtered = !this.searchTerm ? this.items : this.items.filter(e =>
+        e.name.toLowerCase().includes(this.searchTerm) ||
+        (e.contact || '').toLowerCase().includes(this.searchTerm));
+      this.render();
+    },
+
+    render() {
+      const listEl = document.getElementById('directory-list');
+      if (!listEl) return;
+      const cfg = this.CONFIGS[this.type] || {};
+
+      if (this.filtered.length === 0) {
+        MApp.Util.renderEmpty(listEl, {
+          title: `No ${(cfg.title || 'entries').toLowerCase()} found`,
+          body: this.items.length === 0 ? (cfg.emptyBody || 'None recorded yet.') : 'Try a different search term.'
+        });
+        return;
+      }
+
+      listEl.innerHTML = this.filtered.slice(0, 100).map(e => {
+        const contactHtml = e.contact
+          ? `<a href="tel:${MApp.Util.escapeHtml(e.contact)}" onclick="event.stopPropagation()">${MApp.Util.escapeHtml(e.contact)}</a>`
+          : 'No contact on file';
+        return `
+          <div class="mb-card">
+            <div class="mb-card-title">${MApp.Util.escapeHtml(e.name)}</div>
+            <div class="mb-card-sub">${contactHtml}</div>
+            ${e.address ? `<div class="mb-card-sub" style="margin-top:2px;">${MApp.Util.escapeHtml(e.address)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
     }
   };
 

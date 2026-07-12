@@ -514,6 +514,96 @@ function getBOMFinalStageProcessMap() {
 }
 
 /**
+ * Read-only reconciliation diagnostic — never blocks a save and never
+ * auto-fixes anything. Compares each Product's BOM component quantities
+ * against that product's final-stage Process's own Process Components
+ * recipe for the same items. BOM.qtyPerProduct (costing) and Process
+ * Components.qtyPerUnit (actual shop-floor consumption) are two
+ * independent, legitimately-editable-apart sources of truth for "how much
+ * of item X per unit of output" — this surfaces where they've drifted apart
+ * so a human can judge whether that's intentional or a data-entry slip,
+ * rather than forcing the two to always match.
+ * @returns {Object} API response; data = [{productId, productName, itemName,
+ *   size, bomQtyPerProduct, recipeQtyPerUnit}], one entry per mismatched pair.
+ */
+function getBomProcessComponentsDrift() {
+  try {
+    const sheet = getSheet(APP_CONFIG.SHEETS.BOM);
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return buildResponse(true, [], 'No BOM data to check.');
+
+    const finalStageMap = getBOMFinalStageProcessMap();
+    const data = sheet.getRange(2, 1, lastRow - 1, BOM_COL.SEQUENCE).getValues();
+
+    // Group BOM rows by product.
+    const byProduct = {};
+    data.forEach(row => {
+      const productId = String(row[BOM_COL.PRODUCT_ID - 1] || '').trim();
+      if (!productId) return;
+      const key = productId.toLowerCase();
+      if (!byProduct[key]) {
+        byProduct[key] = { productId, productName: String(row[BOM_COL.PRODUCT_NAME - 1] || '').trim(), rows: [] };
+      }
+      byProduct[key].rows.push({
+        itemName: String(row[BOM_COL.ITEM_NAME - 1] || '').trim(),
+        size: String(row[BOM_COL.SIZE - 1] || '').trim(),
+        qtyPerProduct: Number(row[BOM_COL.QTY_PER_PRODUCT - 1]) || 0
+      });
+    });
+
+    // One recipe lookup per distinct process, not per product.
+    const recipeCache = {};
+    const getRecipe = processId => {
+      const key = processId.toLowerCase();
+      if (!(key in recipeCache)) {
+        const res = getProcessComponentsData(processId);
+        const comps = (res && res.data) || [];
+        const map = {};
+        comps.forEach(c => {
+          if (c.sourceType !== COMPONENT_SOURCE_TYPES.ITEM) return;
+          if (c.colorGroup !== COMPONENT_COLOR_GROUP_COMMON) return;
+          map[c.itemName.toLowerCase() + '|' + (c.size || '').toLowerCase()] = c.qtyPerUnit;
+        });
+        recipeCache[key] = map;
+      }
+      return recipeCache[key];
+    };
+
+    const drift = [];
+    Object.values(byProduct).forEach(product => {
+      // Only unambiguous final-stage processes are in this map (see
+      // getBOMFinalStageProcessMap) — a product with no single clear
+      // final-stage process has nothing to compare against.
+      const process = finalStageMap[product.productId.toLowerCase()];
+      if (!process) return;
+      const recipe = getRecipe(process.processId);
+
+      product.rows.forEach(row => {
+        const recipeQty = recipe[row.itemName.toLowerCase() + '|' + row.size.toLowerCase()];
+        if (recipeQty === undefined) return; // item isn't in the process recipe at all — not this diagnostic's concern
+        if (Math.abs(recipeQty - row.qtyPerProduct) > 0.0001) {
+          drift.push({
+            productId: product.productId,
+            productName: product.productName,
+            itemName: row.itemName,
+            size: row.size,
+            bomQtyPerProduct: row.qtyPerProduct,
+            recipeQtyPerUnit: recipeQty
+          });
+        }
+      });
+    });
+
+    return buildResponse(true, drift, drift.length > 0
+      ? `${drift.length} item(s) differ between BOM costing and the process recipe.`
+      : 'No drift found — BOM and process recipe quantities match everywhere they overlap.');
+  } catch (error) {
+    Log.error('[getBomProcessComponentsDrift] Error:', error.message);
+    return buildResponse(false, null, 'Failed to check BOM/recipe drift: ' + error.message);
+  }
+}
+
+/**
  * Retrieves a cost-free view of all Product BOMs (Product ID, Product Name,
  * and component item/qty/vendor details, but no rates or costs). Available
  * to all users so the Production tab can populate its Product dropdown and

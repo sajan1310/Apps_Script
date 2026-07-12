@@ -349,7 +349,13 @@ function saveProcess(formData) {
     const isEdit = !!formData.processId;
     const lastRow = sheet.getLastRow();
 
-    // Duplicate Lot Prefix / Sequence checks (excluding the row being edited)
+    // Duplicate Lot Prefix / Output Item Name checks (excluding the row being edited).
+    // Output Item Name identity matters beyond display: Warehouse Pool buckets
+    // (module_warehouse.js#_poolKey) are keyed by outputItemName+productTag+color
+    // with NO Process ID in the key, so two ACTIVE processes sharing one Output
+    // Item Name would silently merge/misattribute each other's pool stock. An
+    // inactive process is exempt (it can no longer produce new lots, so it can't
+    // grow that ambiguity) — deactivate the old one before reusing its name.
     if (lastRow >= 2) {
       const existing = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
       for (let i = 0; i < existing.length; i++) {
@@ -359,6 +365,17 @@ function saveProcess(formData) {
         const rowPrefix = String(existing[i][PROCESS_COL.LOT_PREFIX - 1] || '').trim().toUpperCase();
         if (rowPrefix === lotPrefix) {
           return buildResponse(false, null, `Lot Prefix "${lotPrefix}" is already used by another process.`);
+        }
+
+        if (active) {
+          const rowActiveCell = existing[i][PROCESS_COL.ACTIVE - 1];
+          const rowActive = rowActiveCell === true || String(rowActiveCell).toUpperCase() === 'TRUE';
+          const rowOutputItemName = String(existing[i][PROCESS_COL.OUTPUT_ITEM_NAME - 1] || '').trim();
+          if (rowActive && rowOutputItemName.toLowerCase() === outputItemName.toLowerCase()) {
+            const rowProcessName = String(existing[i][PROCESS_COL.PROCESS_NAME - 1] || '').trim();
+            return buildResponse(false, null,
+              `Output Item Name "${outputItemName}" is already used by another active process ("${rowProcessName}"). Two active processes can't share one Warehouse Pool item — pick a different name, or deactivate "${rowProcessName}" first.`);
+          }
         }
       }
     }
@@ -999,6 +1016,26 @@ function ensureProcessComponentsColorAxisColumn(sheet) {
 }
 
 /**
+ * Optional Unit column (see PROCESS_COMPONENTS_COL.UNIT) — blank on every
+ * pre-existing row, preserving today's "qty is already in the item's Base
+ * Unit" behavior exactly. Only a row where the user explicitly picks a Unit
+ * going forward triggers real conversion in module_stock.js.
+ */
+function ensureProcessComponentsUnitColumn(sheet) {
+  try {
+    if (sheet.getLastColumn() < PROCESS_COMPONENTS_COL.UNIT) {
+      sheet.insertColumnsAfter(sheet.getLastColumn(), PROCESS_COMPONENTS_COL.UNIT - sheet.getLastColumn());
+      sheet.getRange(1, PROCESS_COMPONENTS_COL.UNIT, 1, 1)
+        .setValues([['Unit']])
+        .setFontWeight('bold')
+        .setBackground('#f3f3f3');
+    }
+  } catch (error) {
+    Log.error('[ensureProcessComponentsUnitColumn] Error:', error.message);
+  }
+}
+
+/**
  * Retrieves the component checklist for a single process.
  * @param {string} processId
  */
@@ -1016,12 +1053,13 @@ function getProcessComponentsData(processId) {
     ensureProcessComponentsSourceTypeColumn(sheet);
     ensureProcessComponentsColorGroupColumn(sheet);
     ensureProcessComponentsColorAxisColumn(sheet);
+    ensureProcessComponentsUnitColumn(sheet);
 
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) return buildResponse(true, []);
 
     const targetId = String(processId || '').trim().toLowerCase();
-    const data = sheet.getRange(2, 1, lastRow - 1, 9).getValues();
+    const data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
 
     const components = data
       .map(row => ({
@@ -1035,7 +1073,10 @@ function getProcessComponentsData(processId) {
           ? COMPONENT_SOURCE_TYPES.POOL
           : COMPONENT_SOURCE_TYPES.ITEM,
         colorGroup: String(row[PROCESS_COMPONENTS_COL.COLOR_GROUP - 1] || '').trim() || COMPONENT_COLOR_GROUP_COMMON,
-        colorAxis: String(row[PROCESS_COMPONENTS_COL.COLOR_AXIS - 1] || '').trim()
+        colorAxis: String(row[PROCESS_COMPONENTS_COL.COLOR_AXIS - 1] || '').trim(),
+        // Blank = "already in the item's Base Unit" (preserves pre-existing
+        // recipes' behavior exactly) — see PROCESS_COMPONENTS_COL.UNIT.
+        unit: String(row[PROCESS_COMPONENTS_COL.UNIT - 1] || '').trim()
       }))
       .filter(c => c.itemName && (!targetId || c.processId.toLowerCase() === targetId));
 
@@ -1543,6 +1584,7 @@ function _saveProcessComponentsForProcess(processId, components) {
   ensureProcessComponentsSourceTypeColumn(sheet);
   ensureProcessComponentsColorGroupColumn(sheet);
   ensureProcessComponentsColorAxisColumn(sheet);
+  ensureProcessComponentsUnitColumn(sheet);
   deleteRowsById(processId, sheet, 2, PROCESS_COMPONENTS_COL.PROCESS_ID);
 
   const rowsToWrite = (components || [])
@@ -1556,14 +1598,16 @@ function _saveProcessComponentsForProcess(processId, components) {
         ? COMPONENT_SOURCE_TYPES.POOL
         : COMPONENT_SOURCE_TYPES.ITEM,
       colorGroup: sanitizeString(comp.colorGroup || '', 'colorGroup') || COMPONENT_COLOR_GROUP_COMMON,
-      colorAxis: sanitizeString(comp.colorAxis || '', 'colorAxis')
+      colorAxis: sanitizeString(comp.colorAxis || '', 'colorAxis'),
+      // Blank = "already in the item's Base Unit" — see PROCESS_COMPONENTS_COL.UNIT.
+      unit: sanitizeString(comp.unit || '', 'unit')
     }))
     .filter(c => c.itemName)
-    .map(c => [processId, c.itemName, c.size, c.narration, c.qtyPerUnit, c.remarks, c.sourceType, c.colorGroup, c.colorAxis]);
+    .map(c => [processId, c.itemName, c.size, c.narration, c.qtyPerUnit, c.remarks, c.sourceType, c.colorGroup, c.colorAxis, c.unit]);
 
   if (rowsToWrite.length > 0) {
     const startRow = sheet.getLastRow() + 1;
-    sheet.getRange(startRow, 1, rowsToWrite.length, 9).setValues(rowsToWrite);
+    sheet.getRange(startRow, 1, rowsToWrite.length, 10).setValues(rowsToWrite);
   }
 }
 

@@ -1017,6 +1017,7 @@
           </select>
         </td>
         <td><input type="number" class="form-control text-end proc-comp-qty" min="0.0001" step="any" value="${compData && compData.qtyPerUnit ? compData.qtyPerUnit : '1'}"></td>
+        <td><input type="text" class="form-control proc-comp-unit" list="unitList" placeholder="(item's own)" value="${compData && compData.unit ? escapeHtml(compData.unit) : ''}"></td>
         <td><input type="text" class="form-control proc-comp-remarks" placeholder="-" value="${compData && compData.remarks ? escapeHtml(compData.remarks) : ''}"></td>
         <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Process.removeComponentRow('${rowId}')">✕</button></td>
       </tr>
@@ -1298,6 +1299,10 @@
           size: row.querySelector('.proc-comp-size').value.trim(),
           narration: row.querySelector('.proc-comp-narration').value.trim(),
           qtyPerUnit: toNumber(row.querySelector('.proc-comp-qty').value) || 1,
+          // Blank (the default) means "Qty/Unit is already in this item's
+          // own Base Unit" — only a non-blank Unit here triggers real
+          // conversion in module_stock.js#_getBilledAndConsumedQtyMaps.
+          unit: (row.querySelector('.proc-comp-unit')?.value || '').trim(),
           remarks: row.querySelector('.proc-comp-remarks').value.trim(),
           sourceType: row.querySelector('.proc-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM',
           colorGroup,
@@ -1467,6 +1472,7 @@
                   <th style="min-width: 150px;">Narration</th>
                   <th style="min-width: 150px;">Source</th>
                   <th style="min-width: 110px; text-align: right;">Qty / Unit</th>
+                  <th style="min-width: 100px;" title="Leave blank if Qty/Unit is already in this item's own Base Unit">Unit</th>
                   <th style="min-width: 180px;">Remarks</th>
                   <th style="width: 48px; text-align: center;">✕</th>
                 </tr>

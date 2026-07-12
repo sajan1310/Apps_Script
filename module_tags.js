@@ -246,6 +246,23 @@ function _saveTag(sheetKey, label, formData) {
     SpreadsheetApp.flush();
     if (TAG_CACHE_KEY_BY_SHEET_KEY[sheetKey]) invalidateListCache(TAG_CACHE_KEY_BY_SHEET_KEY[sheetKey]);
 
+    // Cascade a genuine rename to every sheet that stores this tag's name as
+    // a plain string reference (mirrors _renameVendorEverywhere/_renameUnitEverywhere
+    // — same class of bug, fixed for Vendor/Contractor/Unit but not Color/
+    // ProcessType until now). Plain string compare, NOT case-insensitive —
+    // a casing-only rename ("abc" -> "ABC") must still cascade, matching the
+    // fix already applied to the other rename cascades for the same reason.
+    if (isEdit && newName !== originalName) {
+      if (sheetKey === 'COLOR_MASTER' && typeof _renameColorEverywhere === 'function') {
+        _renameColorEverywhere(originalName, newName);
+      } else if (sheetKey === 'PROCESS_TYPE_MASTER' && typeof _renameProcessTypeEverywhere === 'function') {
+        _renameProcessTypeEverywhere(originalName, newName);
+      }
+      // MODEL_MASTER: no cascade — Model Master's name isn't stored as a
+      // reference anywhere else in the schema (confirmed by a full-codebase
+      // check), it's a standalone tag with no downstream rows to update.
+    }
+
     const msg = isEdit ? `${label} entry updated successfully.` : `${label} entry added successfully.`;
     logAction(isEdit ? 'UPDATE' : 'CREATE', APP_CONFIG.SHEETS[sheetKey], newName, msg, 'SUCCESS');
 
@@ -257,6 +274,181 @@ function _saveTag(sheetKey, label, formData) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Cascades a Color Master rename to every sheet that stores a color name as
+ * a plain string reference. Mirrors module_units.js#_renameUnitEverywhere's
+ * shape/helper. Skips PROCESS_COMPONENTS_COL.COLOR_AXIS (an axis LABEL like
+ * "Mudguard Color", not a Color Master name) and BOM_COL blank cells (mean
+ * "common to every color", never a match).
+ * @private
+ */
+function _renameColorEverywhere(oldName, newName) {
+  const tOldRaw = String(oldName || '').trim();
+  const tOld = tOldRaw.toLowerCase();
+  const tNew = String(newName || '').trim();
+  if (!tOld || !tNew || tOldRaw === tNew) return;
+
+  const renameInColumn = (sheetName, col, startRow) => {
+    let sheet;
+    try {
+      sheet = getSheet(sheetName);
+    } catch (e) {
+      return; // Sheet doesn't exist yet, nothing to rename
+    }
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < startRow) return;
+
+    const range = sheet.getRange(startRow, col, lastRow - startRow + 1, 1);
+    const values = range.getValues();
+    let changed = false;
+
+    for (let i = 0; i < values.length; i++) {
+      if (String(values[i][0] || '').trim().toLowerCase() === tOld) {
+        values[i][0] = tNew;
+        changed = true;
+      }
+    }
+
+    if (changed) range.setValues(values);
+  };
+
+  // Process Components: COLOR_GROUP is 'COMMON' or a Color Master name —
+  // this only ever matches 'COMMON' if a color is literally named that.
+  renameInColumn(APP_CONFIG.SHEETS.PROCESS_COMPONENTS, PROCESS_COMPONENTS_COL.COLOR_GROUP, 2);
+
+  // BOM: per-row color variant (blank cells mean "common to every color" and
+  // never match a real color name, so they're correctly left untouched).
+  renameInColumn(APP_CONFIG.SHEETS.BOM, BOM_COL.COLOR, 2);
+
+  // Warehouse Pool Opening: manually-recorded balances, keyed partly by color.
+  renameInColumn(APP_CONFIG.SHEETS.WAREHOUSE_POOL_OPENING, WAREHOUSE_POOL_OPENING_COL.COLOR, 2);
+
+  // Process Color Links: a paired color lives in EITHER column on a row
+  // (storage is directional A/B, but a color can appear in either slot).
+  let linksSheet;
+  try {
+    linksSheet = getSheet(APP_CONFIG.SHEETS.PROCESS_COLOR_LINKS);
+  } catch (e) {
+    linksSheet = null;
+  }
+  if (linksSheet) {
+    const lastRow = linksSheet.getLastRow();
+    if (lastRow >= 2) {
+      const range = linksSheet.getRange(2, PROCESS_COLOR_LINKS_COL.COLOR_A, lastRow - 1,
+        PROCESS_COLOR_LINKS_COL.COLOR_B - PROCESS_COLOR_LINKS_COL.COLOR_A + 1);
+      const values = range.getValues();
+      let changed = false;
+      for (let i = 0; i < values.length; i++) {
+        for (let c = 0; c < values[i].length; c++) {
+          if (String(values[i][c] || '').trim().toLowerCase() === tOld) {
+            values[i][c] = tNew;
+            changed = true;
+          }
+        }
+      }
+      if (changed) range.setValues(values);
+    }
+  }
+
+  // Production: COLOR is a display string (comma-joined when a lot produced
+  // multiple colors) and COLOR_BREAKDOWN is a JSON [{color, qty}, ...] array
+  // — both need structured rewriting, not a whole-cell string match.
+  let prodSheet;
+  try {
+    prodSheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+  } catch (e) {
+    prodSheet = null;
+  }
+  if (prodSheet && prodSheet.getLastColumn() >= PRODUCTION_COL.COLOR_BREAKDOWN) {
+    const lastRow = prodSheet.getLastRow();
+    if (lastRow >= 2) {
+      const range = prodSheet.getRange(2, PRODUCTION_COL.COLOR, lastRow - 1,
+        PRODUCTION_COL.COLOR_BREAKDOWN - PRODUCTION_COL.COLOR + 1);
+      const values = range.getValues();
+      let changed = false;
+
+      for (let i = 0; i < values.length; i++) {
+        const colorCell = String(values[i][0] || '').trim();
+        if (colorCell) {
+          const parts = colorCell.split(',').map(p => p.trim());
+          const renamedParts = parts.map(p => p.toLowerCase() === tOld ? tNew : p);
+          const rejoined = renamedParts.join(', ');
+          if (rejoined !== colorCell) {
+            values[i][0] = rejoined;
+            changed = true;
+          }
+        }
+
+        const breakdownRaw = String(values[i][1] || '').trim();
+        if (breakdownRaw) {
+          try {
+            const parsed = JSON.parse(breakdownRaw);
+            if (Array.isArray(parsed)) {
+              let breakdownChanged = false;
+              parsed.forEach(entry => {
+                if (entry && String(entry.color || '').trim().toLowerCase() === tOld) {
+                  entry.color = tNew;
+                  breakdownChanged = true;
+                }
+              });
+              if (breakdownChanged) {
+                values[i][1] = JSON.stringify(parsed);
+                changed = true;
+              }
+            }
+          } catch (e) { /* malformed/legacy cell — leave as-is */ }
+        }
+      }
+
+      if (changed) range.setValues(values);
+    }
+  }
+
+  // Warehouse Pool bucket colors are always DERIVED (rebuilt from scratch
+  // by recalculateWarehousePool) from the sheets just renamed above — recalc
+  // now so the bucket keys pick up the new name immediately, instead of
+  // silently staying on the old name until some unrelated write triggers it.
+  if (typeof recalculateWarehousePool === 'function') {
+    recalculateWarehousePool();
+  }
+}
+
+/**
+ * Cascades a Process Type Master rename to Process Master's own
+ * PROCESS_TYPE column (the only other place a process type name is stored).
+ * @private
+ */
+function _renameProcessTypeEverywhere(oldName, newName) {
+  const tOldRaw = String(oldName || '').trim();
+  const tOld = tOldRaw.toLowerCase();
+  const tNew = String(newName || '').trim();
+  if (!tOld || !tNew || tOldRaw === tNew) return;
+
+  let sheet;
+  try {
+    sheet = getSheet(APP_CONFIG.SHEETS.PROCESS_MASTER);
+  } catch (e) {
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2 || sheet.getLastColumn() < PROCESS_COL.PROCESS_TYPE) return;
+
+  const range = sheet.getRange(2, PROCESS_COL.PROCESS_TYPE, lastRow - 1, 1);
+  const values = range.getValues();
+  let changed = false;
+
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0] || '').trim().toLowerCase() === tOld) {
+      values[i][0] = tNew;
+      changed = true;
+    }
+  }
+
+  if (changed) range.setValues(values);
 }
 
 function saveColor(formData) {

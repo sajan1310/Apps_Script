@@ -120,6 +120,22 @@
   </div>
   <button type="button" class="mb-btn mb-btn-secondary mb-mb-4" onclick="MApp.Returns.openNewReturnSheet()">Log Return</button>
 
+  <div class="mapp-section-label mb-mt-4">Ledgers</div>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.PO.openLedgerSheet()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">PO Ledger</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Status, pending qty &amp; print, per PO</div>
+  </button>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Bill.openLedgerSheet()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Bill Ledger</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Recorded bills &amp; print, per bill</div>
+  </button>
+
   <div class="mapp-section-label mb-mt-4">Lookup</div>
   <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Items.openLookupSheet()">
     <div class="mb-card-row">
@@ -127,6 +143,29 @@
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
     </div>
     <div class="mb-card-sub">Search the full item master</div>
+  </button>
+
+  <div class="mapp-section-label mb-mt-4">Directory</div>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Directory.open('vendor')">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Vendors</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Name, tap-to-call contact, address</div>
+  </button>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Directory.open('client')">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Clients</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Name, tap-to-call contact, address</div>
+  </button>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Directory.open('contractor')">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Contractors</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Name, tap-to-call contact, address</div>
   </button>
 
   <div class="mapp-section-label mb-mt-4">Desktop</div>
@@ -195,6 +234,136 @@
   </div>
   <div class="mb-sheet-footer">
     <button type="button" class="mb-btn mb-btn-primary" id="log-return-save-btn" onclick="MApp.Returns.save()">Log Return</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — STOCK ADJUSTMENT (Stock tab, per-item "Adjust stock" action)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-stock-adjust" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Adjust Stock</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Stock.closeAdjustSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="stock-adjust-body">
+    <div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-4);">
+      <span>Use this only to correct stock errors (e.g. after a physical recount). The correction is logged in the audit log.</span>
+    </div>
+    <div class="mb-field">
+      <label>Item</label>
+      <input type="text" id="stock-adjust-item-label" readonly>
+    </div>
+    <div class="mb-field">
+      <label>Current stock (system value)</label>
+      <input type="text" id="stock-adjust-old-value" readonly>
+    </div>
+    <div class="mb-field">
+      <label for="stock-adjust-new-value">Corrected stock value</label>
+      <input type="number" id="stock-adjust-new-value" inputmode="decimal" step="any">
+    </div>
+    <div class="mb-field">
+      <label for="stock-adjust-reason">Reason for adjustment</label>
+      <textarea id="stock-adjust-reason" rows="2" placeholder="e.g. Physical recount found 49 units"></textarea>
+    </div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="stock-adjust-save-btn" onclick="MApp.Stock.submitAdjust()">Save Correction</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — PO LEDGER (More tab) — list is read-only; the FAB opens the
+     one write action, "New PO" (sheet-new-po below).
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-po-ledger" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>PO Ledger</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.PO.closeLedgerSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="text" id="po-ledger-search" placeholder="Search PO number or vendor..." oninput="MApp.PO.onSearch(this.value)" autocomplete="off">
+    </div>
+    <!-- The 3 literal data-status/onclick values below must match
+         config.js#PO_STATUS (server) and its client mirror in
+         Script_ApiCore.html#PO_STATUS exactly — static markup can't
+         reference that JS constant directly. -->
+    <div class="mb-filter-chip-row" id="po-ledger-status-bar">
+      <button type="button" class="mb-filter-chip active" data-status="all" onclick="MApp.PO.filterByStatus('all')">All</button>
+      <button type="button" class="mb-filter-chip" data-status="PO Issued" onclick="MApp.PO.filterByStatus('PO Issued')">PO Issued</button>
+      <button type="button" class="mb-filter-chip" data-status="Partially Received" onclick="MApp.PO.filterByStatus('Partially Received')">Partial</button>
+      <button type="button" class="mb-filter-chip" data-status="Completed" onclick="MApp.PO.filterByStatus('Completed')">Completed</button>
+    </div>
+    <div id="po-ledger-list"></div>
+  </div>
+  <button type="button" class="mb-fab" onclick="MApp.PO.openNewSheet()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    New PO
+  </button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — NEW PO (More tab > PO Ledger, write action) — logs one item
+     per PO (same fast-entry scope narrowing as Log Return); a PO with
+     several distinct items should still be raised on desktop.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-new-po" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>New PO</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.PO.closeNewSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="new-po-body">
+    <!-- Rendered by MApp.PO._newPoFormHtml() -->
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="new-po-save-btn" onclick="MApp.PO.save()">Save PO</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — BILL LEDGER (More tab, read-only)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-bill-ledger" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Bill Ledger</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Bill.closeLedgerSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="text" id="bill-ledger-search" placeholder="Search bill number or vendor..." oninput="MApp.Bill.onSearch(this.value)" autocomplete="off">
+    </div>
+    <div id="bill-ledger-list"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — DIRECTORY (More tab, read-only) -- shared by Vendors/Clients/
+     Contractors (MApp.Directory.open('vendor'|'client'|'contractor')),
+     since all 3 are structurally identical (name, contact, address).
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-directory" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2 id="directory-title">Directory</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Directory.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="text" id="directory-search" placeholder="Search..." oninput="MApp.Directory.onSearch(this.value)" autocomplete="off">
+    </div>
+    <div id="directory-list"></div>
   </div>
 </div>
 

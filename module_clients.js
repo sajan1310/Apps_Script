@@ -731,6 +731,7 @@ function _pushOrderLinesToProduction(orderNumber, clientName, lines) {
   ensureProductionWarehouseColumns(prodSheet);
   ensureProductionColorColumn(prodSheet);
   ensureProductionColorBreakdownColumn(prodSheet);
+  ensureProductionOrderNumberColumn(prodSheet);
 
   const finalStageByProduct = getBOMFinalStageProcessMap();
   const dateObj = new Date();
@@ -754,13 +755,15 @@ function _pushOrderLinesToProduction(orderNumber, clientName, lines) {
         color: '',
         sourceType: c.sourceType === COMPONENT_SOURCE_TYPES.POOL ? COMPONENT_SOURCE_TYPES.POOL : COMPONENT_SOURCE_TYPES.ITEM,
         qty: (Number(c.qtyPerUnit) || 0) * line.qty,
-        colorGroup: COMPONENT_COLOR_GROUP_COMMON
+        colorGroup: COMPONENT_COLOR_GROUP_COMMON,
+        // Blank = "already in the item's Base Unit" — see PROCESS_COMPONENTS_COL.UNIT.
+        unit: c.unit || ''
       }))
       .filter(c => c.itemName && c.qty > 0);
 
     const lotNumber = _generateLotNumber(prodSheet, process.lotPrefix);
 
-    const row = new Array(PRODUCTION_COL.COLOR_BREAKDOWN).fill('');
+    const row = new Array(PRODUCTION_COL.ORDER_NUMBER).fill('');
     row[PRODUCTION_COL.DATE - 1] = dateObj;
     row[PRODUCTION_COL.PRODUCT_ID - 1] = line.productId;
     row[PRODUCTION_COL.PRODUCT_NAME - 1] = line.productName;
@@ -771,6 +774,7 @@ function _pushOrderLinesToProduction(orderNumber, clientName, lines) {
     row[PRODUCTION_COL.LOT_NUMBER - 1] = lotNumber;
     row[PRODUCTION_COL.OUTPUT_ITEM_NAME - 1] = process.outputItemName;
     row[PRODUCTION_COL.COMPONENTS_CONSUMED - 1] = JSON.stringify(componentsConsumed);
+    row[PRODUCTION_COL.ORDER_NUMBER - 1] = orderNumber;
 
     rowsToWrite.push(row);
     result.autoQueued.add(line.productId.toLowerCase());
@@ -778,7 +782,7 @@ function _pushOrderLinesToProduction(orderNumber, clientName, lines) {
 
   if (rowsToWrite.length > 0) {
     const startRow = prodSheet.getLastRow() + 1;
-    prodSheet.getRange(startRow, 1, rowsToWrite.length, PRODUCTION_COL.COLOR_BREAKDOWN).setValues(rowsToWrite);
+    prodSheet.getRange(startRow, 1, rowsToWrite.length, PRODUCTION_COL.ORDER_NUMBER).setValues(rowsToWrite);
     result.lotsCreated = rowsToWrite.length;
     logAction('CREATE', APP_CONFIG.SHEETS.PRODUCTION, orderNumber, `Auto-queued ${rowsToWrite.length} production lot(s) from PI ${orderNumber} (${clientName}).`, 'SUCCESS');
   }
@@ -788,7 +792,8 @@ function _pushOrderLinesToProduction(orderNumber, clientName, lines) {
 
 /**
  * Deletes all line items of a PI / Estimate. Blocks deletion if the order
- * is referenced by any Dispatch record.
+ * is referenced by any Dispatch record, or already has a Production lot
+ * auto-queued from it (PRODUCTION_COL.ORDER_NUMBER).
  * @param {string} orderNumber
  */
 function deleteClientOrder(orderNumber) {
@@ -822,6 +827,28 @@ function deleteClientOrder(orderNumber) {
       }
     }
 
+    // Also block if a Production lot was already auto-queued from this order
+    // (PRODUCTION_COL.ORDER_NUMBER — see _pushOrderLinesToProduction). This
+    // used to be un-checkable: the only trace was a free-text Remarks note.
+    let prodSheet;
+    try {
+      prodSheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+    } catch (e) {
+      // Production sheet doesn't exist yet, so nothing references this order
+    }
+
+    if (prodSheet) {
+      ensureProductionOrderNumberColumn(prodSheet);
+      const pLastRow = prodSheet.getLastRow();
+      if (pLastRow >= 2 && prodSheet.getLastColumn() >= PRODUCTION_COL.ORDER_NUMBER) {
+        const prodRefs = prodSheet.getRange(2, PRODUCTION_COL.ORDER_NUMBER, pLastRow - 1, 1).getValues();
+        const inProduction = prodRefs.some(row => String(row[0]).trim().toLowerCase() === orderClean.toLowerCase());
+        if (inProduction) {
+          return buildResponse(false, null, `Cannot delete PI / Estimate "${orderClean}": it already has a Production lot queued from it.`);
+        }
+      }
+    }
+
     const rowsDeleted = deleteRowsById(orderClean, sheet, 2, CLIENT_ORDERS_COL.ORDER_NUMBER);
     if (rowsDeleted === 0) {
       return buildResponse(false, null, `PI / Estimate "${orderClean}" not found.`);
@@ -844,8 +871,8 @@ function deleteClientOrder(orderNumber) {
 
 /**
  * Deletes multiple PI / Estimates in a single batch. Orders referenced by
- * any Dispatch record are skipped and reported back rather than failing
- * the whole batch.
+ * any Dispatch record, or already auto-queued into Production, are skipped
+ * and reported back rather than failing the whole batch.
  * @param {Array<string>} orderNumbers
  */
 function deleteClientOrdersBulk(orderNumbers) {
@@ -882,6 +909,28 @@ function deleteClientOrdersBulk(orderNumbers) {
       }
     }
 
+    // Also block any order already auto-queued into Production (see
+    // deleteClientOrder's matching check — same PRODUCTION_COL.ORDER_NUMBER
+    // reference, previously un-checkable here).
+    let prodSheet;
+    try {
+      prodSheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+    } catch (e) {
+      // Production sheet doesn't exist yet, so nothing is in use
+    }
+
+    if (prodSheet) {
+      ensureProductionOrderNumberColumn(prodSheet);
+      const pLastRow = prodSheet.getLastRow();
+      if (pLastRow >= 2 && prodSheet.getLastColumn() >= PRODUCTION_COL.ORDER_NUMBER) {
+        const prodRefs = prodSheet.getRange(2, PRODUCTION_COL.ORDER_NUMBER, pLastRow - 1, 1).getValues();
+        const inProductionOrders = new Set(prodRefs.map(row => String(row[0]).trim().toLowerCase()));
+        requested.forEach(o => {
+          if (inProductionOrders.has(o.toLowerCase())) inUseSet.add(o);
+        });
+      }
+    }
+
     const toDelete = requested.filter(o => !inUseSet.has(o));
     const targetSet = new Set(toDelete);
 
@@ -894,7 +943,7 @@ function deleteClientOrdersBulk(orderNumbers) {
 
     let msg = `Deleted ${toDelete.length} PI / Estimate(s) (${rowsDeleted} line(s) removed).`;
     if (inUseSet.size > 0) {
-      msg += ` Skipped ${inUseSet.size} PI / Estimate(s) with dispatch records: ${Array.from(inUseSet).join(', ')}.`;
+      msg += ` Skipped ${inUseSet.size} PI / Estimate(s) with dispatch records or a queued Production lot against them: ${Array.from(inUseSet).join(', ')}.`;
     }
     logAction('BULK_DELETE', APP_CONFIG.SHEETS.CLIENT_ORDERS, 'multiple', msg, 'SUCCESS');
 

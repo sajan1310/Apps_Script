@@ -79,6 +79,9 @@
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteBOMs" type="button" onclick="App.BOM.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
         </button>
+        <button class="btn btn-outline-secondary fw-bold shadow-sm" type="button" title="Compares each product's BOM costing quantities against its final-stage process's own recipe quantities for the same items — informational only, never changes anything" onclick="App.BOM.checkRecipeDrift()">
+          <i class="bi bi-clipboard-check"></i> Check Recipe Drift
+        </button>
         <button class="btn btn-primary fw-bold shadow-sm" onclick="App.BOM.openCreateModal()">+ Create Product</button>
       </div>
     </div>
@@ -191,6 +194,7 @@
                   <th style="min-width: 150px;">Narration</th>
                   <th style="min-width: 150px;">Source</th>
                   <th style="min-width: 110px; text-align: right;">Qty / Unit</th>
+                  <th style="min-width: 100px;" title="Leave blank if Qty/Unit is already in this item's own Base Unit">Unit</th>
                   <th style="min-width: 180px;">Remarks</th>
                   <th style="width: 48px; text-align: center;">✕</th>
                 </tr>

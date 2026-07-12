@@ -1320,7 +1320,7 @@
           `Delete ${label}? This will reduce the Warehouse Pool bucket by that quantity.`,
           async () => {
             try {
-              const res = await Api.call('deleteWarehousePoolOpening', rowIdx);
+              const res = await Api.call('deleteWarehousePoolOpening', rowIdx, entry?.outputItemName, entry?.qty);
               App.Utils.showToast(res?.message, !res?.success);
               if (res?.success) {
                 await this.loadWarehouseOpeningData();

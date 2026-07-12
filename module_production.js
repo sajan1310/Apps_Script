@@ -196,6 +196,26 @@ function ensureProductionColorBreakdownColumn(sheet) {
 }
 
 /**
+ * Structured Order Number reference (see PRODUCTION_COL.ORDER_NUMBER) —
+ * closes the gap where deleteClientOrder/deleteClientOrdersBulk could only
+ * check Dispatch, never Production, since the PI->Production link used to
+ * live only in a free-text Remarks note.
+ */
+function ensureProductionOrderNumberColumn(sheet) {
+  try {
+    if (sheet.getLastColumn() < PRODUCTION_COL.ORDER_NUMBER) {
+      sheet.insertColumnsAfter(sheet.getLastColumn(), PRODUCTION_COL.ORDER_NUMBER - sheet.getLastColumn());
+      sheet.getRange(1, PRODUCTION_COL.ORDER_NUMBER, 1, 1)
+        .setValues([['Order Number']])
+        .setFontWeight('bold')
+        .setBackground('#f3f3f3');
+    }
+  } catch (error) {
+    Log.error('[ensureProductionOrderNumberColumn] Error:', error.message);
+  }
+}
+
+/**
  * Reads all Process Master rows (active and inactive) directly from the
  * sheet, sorted by Sequence ascending. Internal helper shared by
  * saveProduction/_computeProcessWipMap so they don't pay the
@@ -320,6 +340,7 @@ function getProductionData() {
     ensureProductionWarehouseColumns(sheet);
     ensureProductionColorColumn(sheet);
     ensureProductionColorBreakdownColumn(sheet);
+    ensureProductionOrderNumberColumn(sheet);
 
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) {
@@ -497,6 +518,7 @@ function saveProduction(formData) {
     ensureProductionWarehouseColumns(sheet);
     ensureProductionColorColumn(sheet);
     ensureProductionColorBreakdownColumn(sheet);
+    ensureProductionOrderNumberColumn(sheet);
 
     const processId = sanitizeString(formData.processId, 'processId');
     if (!processId) {
@@ -725,7 +747,10 @@ function saveProduction(formData) {
           ? COMPONENT_SOURCE_TYPES.POOL
           : COMPONENT_SOURCE_TYPES.ITEM,
         qty: validateNumber(c.qty, 0, 10000000),
-        colorGroup: sanitizeString(c.colorGroup || '', 'colorGroup') || COMPONENT_COLOR_GROUP_COMMON
+        colorGroup: sanitizeString(c.colorGroup || '', 'colorGroup') || COMPONENT_COLOR_GROUP_COMMON,
+        // Blank = "already in the item's Base Unit" — see PROCESS_COMPONENTS_COL.UNIT
+        // and module_stock.js#_getBilledAndConsumedQtyMaps.
+        unit: sanitizeString(c.unit || '', 'unit')
       }))
       .filter(c => c.itemName && c.qty > 0);
 
@@ -964,6 +989,26 @@ function deleteProduction(rowIdx, expectedProductId, expectedQty) {
       String(idQtyRow[PRODUCTION_COL.COMPONENTS_CONSUMED - PRODUCTION_COL.PRODUCT_ID] || '').trim()
     );
 
+    // Un-tagged (intermediate-stage) lots credit the Warehouse Pool; if a
+    // downstream lot already drew on that credit, removing it here can leave
+    // the pool negative. Non-blocking (see _checkPoolCreditRemovalWarning) —
+    // only surfaced when this row actually IS untagged, since a final-stage
+    // (productId-tagged) lot's credit is drawn down by Dispatch instead, a
+    // different mechanism this check doesn't cover.
+    let poolCreditWarning = null;
+    if (!productId && sheet.getLastColumn() >= PRODUCTION_COL.COLOR_BREAKDOWN &&
+        typeof _checkPoolCreditRemovalWarning === 'function') {
+      const extraVals = sheet.getRange(targetRow, PRODUCTION_COL.OUTPUT_ITEM_NAME, 1,
+        PRODUCTION_COL.COLOR_BREAKDOWN - PRODUCTION_COL.OUTPUT_ITEM_NAME + 1).getValues()[0];
+      const outputItemName = String(extraVals[0]).trim();
+      let colorBreakdown = null;
+      try {
+        const parsed = JSON.parse(String(extraVals[PRODUCTION_COL.COLOR_BREAKDOWN - PRODUCTION_COL.OUTPUT_ITEM_NAME] || '') || '[]');
+        if (Array.isArray(parsed) && parsed.length > 0) colorBreakdown = parsed;
+      } catch (e) { /* legacy/flat lot — treated as flat below */ }
+      poolCreditWarning = _checkPoolCreditRemovalWarning(outputItemName, colorBreakdown, qty);
+    }
+
     sheet.deleteRow(targetRow);
 
     if (hadItemSourced && typeof recalculateStock === 'function') {
@@ -976,7 +1021,9 @@ function deleteProduction(rowIdx, expectedProductId, expectedQty) {
     const msg = `Production record deleted for Product "${productId}" (Qty was ${qty}).`;
     logAction('DELETE', APP_CONFIG.SHEETS.PRODUCTION, productId, msg, 'SUCCESS');
 
-    return buildResponse(true, null, 'Production log deleted successfully.');
+    return buildResponse(true, null, poolCreditWarning
+      ? `Production log deleted successfully. ${poolCreditWarning}`
+      : 'Production log deleted successfully.');
   } catch (error) {
     Log.error('[deleteProduction] Error:', error.message);
     logAction('ERROR', 'deleteProduction', String(rowIdx), error.message, 'ERROR');
@@ -989,8 +1036,12 @@ function deleteProduction(rowIdx, expectedProductId, expectedQty) {
 /**
  * Deletes multiple production log entries in a single batch.
  * @param {Array<number|string>} rowIdxs - 1-based sheet row indexes to delete
+ * @param {Array<{rowIdx:number|string, expectedProductId:string, expectedQty:number}>} [expectedRows] -
+ *   Optional per-row guard (same mismatch check as the single-row deleteProduction)
+ *   so a row that shifted/changed since the client loaded its list is skipped
+ *   instead of silently deleting whatever now sits at that row number.
  */
-function deleteProductionBulk(rowIdxs) {
+function deleteProductionBulk(rowIdxs, expectedRows) {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(PRODUCTION_LOCK_TIMEOUT_MS)) {
     return buildResponse(false, null, 'System is busy. Please try again.');
@@ -1001,7 +1052,7 @@ function deleteProductionBulk(rowIdxs) {
     if (!sheet) throw new Error('Production sheet not found.');
 
     const lastRow = sheet.getLastRow();
-    const targetRows = (rowIdxs || [])
+    let targetRows = (rowIdxs || [])
       .map(r => parseInt(r, 10))
       .filter(r => !isNaN(r) && r >= 2 && r <= lastRow);
 
@@ -1009,19 +1060,68 @@ function deleteProductionBulk(rowIdxs) {
       return buildResponse(true, null, 'No production records selected.');
     }
 
-    const targetRowSet = new Set(targetRows);
+    const expectedByRow = {};
+    (expectedRows || []).forEach(e => {
+      if (e && e.rowIdx !== undefined) expectedByRow[String(e.rowIdx)] = e;
+    });
 
-    // Single batched read of the Components Consumed column for every row
-    // in range, instead of one getRange().getValue() round-trip per row.
-    let hadItemSourced;
-    if (sheet.getLastColumn() < PRODUCTION_COL.COMPONENTS_CONSUMED) {
-      hadItemSourced = true;
-    } else {
-      const componentsCol = sheet.getRange(2, PRODUCTION_COL.COMPONENTS_CONSUMED, lastRow - 1, 1).getValues();
-      hadItemSourced = targetRows.some(row =>
-        _rowHasItemSourcedComponentFromRaw(String(componentsCol[row - 2][0] || '').trim()));
+    // Single batched read (Product ID through Color Breakdown, when present)
+    // covering every row in range, instead of one getRange().getValue()
+    // round-trip per row — extended past Components Consumed (same span
+    // deleteProduction() reads for one row) to also cover Output Item Name
+    // and Color Breakdown, needed for the pool-credit-removal warning below.
+    const hasComponentsCol = sheet.getLastColumn() >= PRODUCTION_COL.COMPONENTS_CONSUMED;
+    const hasColorBreakdownCol = sheet.getLastColumn() >= PRODUCTION_COL.COLOR_BREAKDOWN;
+    const rowWidth = (hasColorBreakdownCol ? PRODUCTION_COL.COLOR_BREAKDOWN
+      : hasComponentsCol ? PRODUCTION_COL.COMPONENTS_CONSUMED : 4) - PRODUCTION_COL.PRODUCT_ID + 1;
+    const idQtyComponentsRows = sheet.getRange(2, PRODUCTION_COL.PRODUCT_ID, lastRow - 1, rowWidth).getValues();
+
+    let skippedMismatch = 0;
+    let hadItemSourced = false;
+    const poolCreditWarnings = [];
+    targetRows = targetRows.filter(rowNum => {
+      const rowVals = idQtyComponentsRows[rowNum - 2];
+      const productId = String(rowVals[PRODUCTION_COL.PRODUCT_ID - PRODUCTION_COL.PRODUCT_ID]).trim();
+      const qty = Number(rowVals[PRODUCTION_COL.QTY - PRODUCTION_COL.PRODUCT_ID]) || 0;
+
+      const expected = expectedByRow[String(rowNum)];
+      if (expected && expected.expectedProductId !== undefined && expected.expectedQty !== undefined) {
+        if (productId.toLowerCase() !== String(expected.expectedProductId || '').trim().toLowerCase() ||
+            Math.abs(qty - Number(expected.expectedQty)) > 0.0001) {
+          skippedMismatch++;
+          return false;
+        }
+      }
+
+      // Legacy sheets predating the Warehouse Pool model don't have this
+      // column at all — default to "yes, recalc" so we don't silently skip
+      // a Stock rebuild we can't actually rule out on old data.
+      if (!hasComponentsCol || _rowHasItemSourcedComponentFromRaw(
+        String(rowVals[PRODUCTION_COL.COMPONENTS_CONSUMED - PRODUCTION_COL.PRODUCT_ID] || '').trim())) {
+        hadItemSourced = true;
+      }
+
+      // Same non-blocking pool-credit-removal check as deleteProduction()
+      // (see _checkPoolCreditRemovalWarning) — only applies to untagged
+      // (intermediate-stage) rows.
+      if (!productId && hasColorBreakdownCol && typeof _checkPoolCreditRemovalWarning === 'function') {
+        const outputItemName = String(rowVals[PRODUCTION_COL.OUTPUT_ITEM_NAME - PRODUCTION_COL.PRODUCT_ID] || '').trim();
+        let colorBreakdown = null;
+        try {
+          const parsed = JSON.parse(String(rowVals[PRODUCTION_COL.COLOR_BREAKDOWN - PRODUCTION_COL.PRODUCT_ID] || '') || '[]');
+          if (Array.isArray(parsed) && parsed.length > 0) colorBreakdown = parsed;
+        } catch (e) { /* legacy/flat lot — treated as flat below */ }
+        const warning = _checkPoolCreditRemovalWarning(outputItemName, colorBreakdown, qty);
+        if (warning) poolCreditWarnings.push(warning);
+      }
+      return true;
+    });
+
+    if (targetRows.length === 0) {
+      return buildResponse(false, null, 'Data mismatch: the selected record(s) have been modified or shifted. Please refresh.');
     }
 
+    const targetRowSet = new Set(targetRows);
     const { rowsDeleted } = rewriteSheetExcludingRows(sheet, 2, (_row, rowNum) => targetRowSet.has(rowNum));
 
     if (hadItemSourced && typeof recalculateStock === 'function') {
@@ -1031,7 +1131,10 @@ function deleteProductionBulk(rowIdxs) {
 
     SpreadsheetApp.flush();
 
-    const msg = `Deleted ${rowsDeleted} production record(s).`;
+    let msg = skippedMismatch > 0
+      ? `Deleted ${rowsDeleted} production record(s). Skipped ${skippedMismatch} that were modified or shifted — please refresh and retry those.`
+      : `Deleted ${rowsDeleted} production record(s).`;
+    if (poolCreditWarnings.length > 0) msg += ' ' + poolCreditWarnings.join(' ');
     logAction('BULK_DELETE', APP_CONFIG.SHEETS.PRODUCTION, 'multiple', msg, 'SUCCESS');
 
     return buildResponse(true, null, msg);

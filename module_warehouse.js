@@ -436,7 +436,7 @@ function getWarehousePoolAdjustmentHistory() {
 /**
  * Deletes an opening-balance entry and rebuilds the pool.
  */
-function deleteWarehousePoolOpening(rowIdx) {
+function deleteWarehousePoolOpening(rowIdx, expectedOutputItemName, expectedQty) {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(WAREHOUSE_LOCK_TIMEOUT_MS)) {
     return buildResponse(false, null, 'System is busy. Please try again.');
@@ -451,7 +451,18 @@ function deleteWarehousePoolOpening(rowIdx) {
       return buildResponse(false, null, 'Invalid opening stock entry selected for deletion.');
     }
 
-    const outputItemName = String(sheet.getRange(targetRow, WAREHOUSE_POOL_OPENING_COL.OUTPUT_ITEM_NAME).getValue()).trim();
+    const rowVals = sheet.getRange(targetRow, WAREHOUSE_POOL_OPENING_COL.OUTPUT_ITEM_NAME, 1,
+      WAREHOUSE_POOL_OPENING_COL.QTY - WAREHOUSE_POOL_OPENING_COL.OUTPUT_ITEM_NAME + 1).getValues()[0];
+    const outputItemName = String(rowVals[0]).trim();
+    const qty = Number(rowVals[WAREHOUSE_POOL_OPENING_COL.QTY - WAREHOUSE_POOL_OPENING_COL.OUTPUT_ITEM_NAME]) || 0;
+
+    // Safety check to ensure we do not delete a shifted/modified row.
+    if (expectedOutputItemName !== undefined && expectedQty !== undefined) {
+      if (outputItemName.toLowerCase() !== String(expectedOutputItemName || '').trim().toLowerCase() ||
+          Math.abs(qty - Number(expectedQty)) > 0.0001) {
+        return buildResponse(false, null, 'Data mismatch: The entry has been modified or shifted. Please refresh.');
+      }
+    }
 
     sheet.deleteRow(targetRow);
     recalculateWarehousePool();
@@ -822,6 +833,45 @@ function getPoolAvailableQtyMap() {
   } catch (e) {
     return map;
   }
+}
+
+/**
+ * Warns (never blocks) when removing a Completed lot's own credit to the
+ * Warehouse Pool — via un-completing its status or deleting it outright —
+ * would leave a bucket negative, i.e. a downstream lot already consumed
+ * this credit. Mirrors the informational-only pattern _validatePoolAvailability
+ * already uses for the opposite direction (a lot's own POOL-sourced
+ * consumption); this is intentionally non-blocking, matching the "allow
+ * negative pool/stock so operations aren't blocked" exception.
+ * @param {string} outputItemName
+ * @param {Array<{color:string, qty:number}>|null} colorBreakdown - null/empty for a flat (non-color) lot
+ * @param {number} flatQty - used when colorBreakdown is empty
+ * @returns {string|null} warning message, or null if nothing would go negative
+ */
+function _checkPoolCreditRemovalWarning(outputItemName, colorBreakdown, flatQty) {
+  const name = String(outputItemName || '').trim();
+  if (!name) return null;
+
+  const poolMap = getPoolAvailableQtyMap();
+  const entry = poolMap[name.toLowerCase()];
+  if (!entry) return null;
+
+  const credits = (colorBreakdown && colorBreakdown.length > 0)
+    ? colorBreakdown.map(e => ({ color: String(e.color || '').trim(), qty: Number(e.qty) || 0 }))
+    : [{ color: '', qty: Number(flatQty) || 0 }];
+
+  const shortfalls = [];
+  credits.forEach(c => {
+    if (c.qty <= 0) return;
+    const currentAvailable = entry.byColor[c.color.toLowerCase()] || 0;
+    const wouldBe = currentAvailable - c.qty;
+    if (wouldBe < -0.0001) {
+      shortfalls.push(`"${name}"${c.color ? ' (' + c.color + ')' : ''}: ${wouldBe.toFixed(2)}`);
+    }
+  });
+
+  if (shortfalls.length === 0) return null;
+  return `Warning: this leaves the Warehouse Pool negative for ${shortfalls.join(', ')} — a downstream lot already consumed this credit. The pool balance will show negative until corrected.`;
 }
 
 /**

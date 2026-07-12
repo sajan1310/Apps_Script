@@ -855,9 +855,9 @@ function _attachPoStatus(po, billedMap) {
     if (orderedBaseQty - billedBaseQty > 0.0001) allLinesComplete = false;
   });
 
-  po.status = anyBilled && allLinesComplete ? 'Completed'
-    : anyBilled ? 'Partially Received'
-    : 'PO Issued';
+  po.status = anyBilled && allLinesComplete ? PO_STATUS.COMPLETED
+    : anyBilled ? PO_STATUS.PARTIAL
+    : PO_STATUS.ISSUED;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

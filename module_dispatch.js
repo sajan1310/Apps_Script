@@ -314,6 +314,71 @@ function getDispatchData() {
 }
 
 /**
+ * Sums Qty Ordered across every Client Orders line matching (orderNumber,
+ * productId) case-insensitively (normally just one line, but sums in case
+ * the same product appears twice on one order). Returns null if no such
+ * line exists at all (order number and/or product not found on it), which
+ * callers use to distinguish "nothing to check against" from "0 remaining".
+ * @private
+ */
+function _getClientOrderLineQty(orderNumber, productId) {
+  let sheet;
+  try {
+    sheet = getSheet(APP_CONFIG.SHEETS.CLIENT_ORDERS);
+  } catch (e) {
+    return null;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+
+  const data = sheet.getRange(2, 1, lastRow - 1, CLIENT_ORDERS_COL.PRODUCTION_PUSHED).getValues();
+  const targetOrder = orderNumber.toLowerCase();
+  const targetProduct = productId.toLowerCase();
+  let total = 0;
+  let found = false;
+
+  data.forEach(row => {
+    const rowOrder = String(row[CLIENT_ORDERS_COL.ORDER_NUMBER - 1] || '').trim().toLowerCase();
+    if (rowOrder !== targetOrder) return;
+    const rowProduct = String(row[CLIENT_ORDERS_COL.PRODUCT_ID - 1] || '').trim().toLowerCase();
+    if (rowProduct !== targetProduct) return;
+    total += Number(row[CLIENT_ORDERS_COL.QTY_ORDERED - 1]) || 0;
+    found = true;
+  });
+
+  return found ? total : null;
+}
+
+/**
+ * Sums Dispatch Qty across every existing dispatch row matching
+ * (orderNumber, productId), optionally excluding one row (the record
+ * currently being edited, so it isn't double-counted against itself).
+ * @private
+ */
+function _getDispatchedQtyForOrder(dispatchSheet, orderNumber, productId, excludeRowIdx) {
+  const lastRow = dispatchSheet.getLastRow();
+  if (lastRow < 2) return 0;
+
+  const data = dispatchSheet.getRange(2, 1, lastRow - 1, DISPATCH_COL.QTY).getValues();
+  const targetOrder = orderNumber.toLowerCase();
+  const targetProduct = productId.toLowerCase();
+  let total = 0;
+
+  data.forEach((row, idx) => {
+    const rowNum = idx + 2;
+    if (excludeRowIdx && rowNum === excludeRowIdx) return;
+    const rowOrder = String(row[DISPATCH_COL.ORDER_NUMBER - 1] || '').trim().toLowerCase();
+    if (rowOrder !== targetOrder) return;
+    const rowProduct = String(row[DISPATCH_COL.PRODUCT_ID - 1] || '').trim().toLowerCase();
+    if (rowProduct !== targetProduct) return;
+    total += Number(row[DISPATCH_COL.QTY - 1]) || 0;
+  });
+
+  return total;
+}
+
+/**
  * Saves a dispatch record (creates a new entry or updates an existing row).
  * Validates that the dispatched quantity does not exceed the currently
  * available "Ready to Dispatch" quantity for the product.
@@ -349,7 +414,7 @@ function saveDispatch(formData) {
 
     let dateVal = formData.dispatchDate;
     if (!dateVal) dateVal = new Date();
-    const dateStr = toSafeDateString(new Date(dateVal));
+    const dateStr = toSafeDateString(dateVal);
 
     const orderNumber = sanitizeString(formData.orderNumber || '', 'orderNumber');
     const clientName = sanitizeString(formData.clientName || '', 'clientName');
@@ -390,6 +455,26 @@ function saveDispatch(formData) {
 
     if (qty > availableQty + 0.0001) {
       return buildResponse(false, null, `Only ${availableQty} unit(s) of "${productName}" are Ready to Dispatch.`);
+    }
+
+    // Validate against the SPECIFIC PI/Estimate line's own remaining qty, not
+    // just aggregate product stock — without this, two different orders for
+    // the same product share one pool with no guard, letting one dispatch
+    // over-fulfill a small order's line using stock meant for a different
+    // order of the same product. Only checked when an Order Number is
+    // actually referenced; a "Direct" dispatch (no orderNumber) has no order
+    // line to check against.
+    let orderLineQty = null;
+    if (orderNumber) {
+      orderLineQty = _getClientOrderLineQty(orderNumber, productId);
+      if (orderLineQty !== null) {
+        const alreadyDispatchedForOrder = _getDispatchedQtyForOrder(sheet, orderNumber, productId, isEdit ? targetRow : null);
+        const availableForOrder = orderLineQty - alreadyDispatchedForOrder;
+        if (qty > availableForOrder + 0.0001) {
+          return buildResponse(false, null,
+            `Only ${availableForOrder} unit(s) of "${productName}" remain pending on PI/Estimate "${orderNumber}" (ordered ${orderLineQty}, already dispatched ${alreadyDispatchedForOrder} against it). Use a different order reference, or Direct, if this dispatch is really for other stock.`);
+        }
+      }
     }
 
     const dispatchNumber = isEdit
@@ -441,27 +526,13 @@ function saveDispatch(formData) {
 
     let successMsg = isEdit ? 'Dispatch record updated successfully.' : 'Dispatch recorded successfully.';
 
-    // Soft-validate the optional Order Number reference (warn, don't block)
-    if (orderNumber) {
-      let ordersSheet;
-      try {
-        ordersSheet = getSheet(APP_CONFIG.SHEETS.CLIENT_ORDERS);
-      } catch (e) {
-        ordersSheet = null;
-      }
-
-      let found = false;
-      if (ordersSheet) {
-        const oLastRow = ordersSheet.getLastRow();
-        if (oLastRow >= 2) {
-          const refs = ordersSheet.getRange(2, CLIENT_ORDERS_COL.ORDER_NUMBER, oLastRow - 1, 1).getValues();
-          found = refs.some(row => String(row[0]).trim().toLowerCase() === orderNumber.toLowerCase());
-        }
-      }
-
-      if (!found) {
-        successMsg += ` Note: PI / Estimate "${orderNumber}" was not found (it may have been edited or removed).`;
-      }
+    // Soft-validate the optional Order Number reference (warn, don't block) —
+    // reuses the orderLineQty lookup above instead of re-reading the sheet.
+    // orderLineQty === null means no line for THIS product was found under
+    // that order number at all (order number itself may still exist with
+    // other products on it, or may not exist/may have been removed).
+    if (orderNumber && orderLineQty === null) {
+      successMsg += ` Note: PI / Estimate "${orderNumber}" has no line for "${productName}" (it may have been edited or removed).`;
     }
 
     return buildResponse(true, { dispatchNumber: dispatchNumber }, successMsg);
@@ -527,8 +598,12 @@ function deleteDispatch(rowIdx, expectedDispatchNumber, expectedQty) {
 /**
  * Deletes multiple dispatch log entries in a single batch.
  * @param {Array<number|string>} rowIdxs - 1-based sheet row indexes to delete
+ * @param {Array<{rowIdx:number|string, expectedDispatchNumber:string, expectedQty:number}>} [expectedRows] -
+ *   Optional per-row guard (same mismatch check as the single-row deleteDispatch)
+ *   so a row that shifted/changed since the client loaded its list is skipped
+ *   instead of silently deleting whatever now sits at that row number.
  */
-function deleteDispatchBulk(rowIdxs) {
+function deleteDispatchBulk(rowIdxs, expectedRows) {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(DISPATCH_LOCK_TIMEOUT_MS)) {
     return buildResponse(false, null, 'System is busy. Please try again.');
@@ -539,12 +614,42 @@ function deleteDispatchBulk(rowIdxs) {
     if (!sheet) throw new Error('Dispatch sheet not found.');
 
     const lastRow = sheet.getLastRow();
-    const targetRows = (rowIdxs || [])
+    let targetRows = (rowIdxs || [])
       .map(r => parseInt(r, 10))
       .filter(r => !isNaN(r) && r >= 2 && r <= lastRow);
 
     if (targetRows.length === 0) {
       return buildResponse(true, null, 'No dispatch records selected.');
+    }
+
+    const expectedByRow = {};
+    (expectedRows || []).forEach(e => {
+      if (e && e.rowIdx !== undefined) expectedByRow[String(e.rowIdx)] = e;
+    });
+
+    // Single batched read (Dispatch Number through Qty) covering every row
+    // in range, instead of one getRange().getValue() round-trip per row.
+    const idQtyRows = sheet.getRange(2, 1, lastRow - 1, DISPATCH_COL.QTY).getValues();
+
+    let skippedMismatch = 0;
+    targetRows = targetRows.filter(rowNum => {
+      const expected = expectedByRow[String(rowNum)];
+      if (!expected || expected.expectedDispatchNumber === undefined || expected.expectedQty === undefined) {
+        return true;
+      }
+      const rowVals = idQtyRows[rowNum - 2];
+      const dispatchNumber = String(rowVals[DISPATCH_COL.DISPATCH_NUMBER - 1]).trim();
+      const qty = Number(rowVals[DISPATCH_COL.QTY - 1]) || 0;
+      if (dispatchNumber.toLowerCase() !== String(expected.expectedDispatchNumber || '').trim().toLowerCase() ||
+          Math.abs(qty - Number(expected.expectedQty)) > 0.0001) {
+        skippedMismatch++;
+        return false;
+      }
+      return true;
+    });
+
+    if (targetRows.length === 0) {
+      return buildResponse(false, null, 'Data mismatch: the selected record(s) have been modified or shifted. Please refresh.');
     }
 
     const targetRowSet = new Set(targetRows);
@@ -556,7 +661,9 @@ function deleteDispatchBulk(rowIdxs) {
 
     SpreadsheetApp.flush();
 
-    const msg = `Deleted ${rowsDeleted} dispatch record(s).`;
+    const msg = skippedMismatch > 0
+      ? `Deleted ${rowsDeleted} dispatch record(s). Skipped ${skippedMismatch} that were modified or shifted — please refresh and retry those.`
+      : `Deleted ${rowsDeleted} dispatch record(s).`;
     logAction('BULK_DELETE', APP_CONFIG.SHEETS.DISPATCH, 'multiple', msg, 'SUCCESS');
 
     return buildResponse(true, null, msg);

@@ -1050,26 +1050,9 @@
     // ================================================================
     // GAS API WRAPPER
     // ================================================================
-    const Api = {
-      call(method, ...args) {
-        return new Promise((resolve, reject) => {
-          try {
-            const runner = google.script.run
-              .withSuccessHandler(resolve)
-              .withFailureHandler(reject);
-
-            if (typeof runner[method] !== 'function') {
-              reject(new Error(`Backend method "${method}" is unavailable.`));
-              return;
-            }
-
-            runner[method](...args);
-          } catch (err) {
-            reject(err);
-          }
-        });
-      }
-    };
+    // Wrapper itself lives in Script_ApiCore.html, shared with mobile's
+    // MApp.Api.call — see Phase 4's dedupe guideline.
+    const Api = { call: _apiCall };
 
     // ================================================================
     // APP
@@ -1099,6 +1082,8 @@
         billRowsPerPage: 15,
         billSearchTerm: '',
         billDateFilter: '',
+        billAutoMatchTimer: null,    // pending debounce handle for App.Bill.runAutoMatch()
+        billAutoMatchPromise: null,  // in-flight runAutoMatch() call, if any — see App.Bill.flushPendingAutoMatch()
 
         globalReturns: [],
         filteredReturns: [],
@@ -1936,8 +1921,10 @@
           $$('#itemsBody tr').forEach(row => App.PO.autoFillRate(row));
         });
 
-      // Delegated events for dynamic item input changes in the receive bill form
-      let billAutoMatchTimer = null;
+      // Delegated events for dynamic item input changes in the receive bill form.
+      // The pending-timer handle lives on App.State (not a local closure var)
+      // so App.Bill.flushPendingAutoMatch() can clear/await it from the
+      // submit handler — see that function for why.
       const handleBillItemFieldChange = e => {
         if (e.target.matches('.b-item-name')) {
           App.Utils.applyDependentSizeList(e.target, '.b-item-size');
@@ -1956,14 +1943,19 @@
           }
         }
 
-        // Re-suggest PO matches when a DIRECT row's identifying fields settle.
-        // Only for rows the user hasn't explicitly linked (manually or via
-        // the PO multiselect) — see App.Bill.runAutoMatch().
+        // Re-suggest PO matches when a row's identifying fields settle. Only
+        // for rows the user hasn't explicitly linked (manually or via the PO
+        // multiselect) — see App.Bill.runAutoMatch(). Deliberately NOT
+        // gated on dataset.po still being 'DIRECT': an already-auto-matched
+        // row (dataset.po = a real PO number, autoMatched = 'auto') must
+        // keep re-arming here too, or once ANY suggestion lands it can never
+        // be re-evaluated again as the user keeps editing qty/name/etc. —
+        // the suggestion just goes stale forever instead of refreshing.
         if (e.target.matches('.b-item-name, .b-item-size, .b-item-narration, .b-item-qty, .b-item-price')) {
           const row = e.target.closest('tr');
-          if (row && (row.dataset.po || 'DIRECT') === 'DIRECT' && row.dataset.autoMatched !== 'manual') {
-            clearTimeout(billAutoMatchTimer);
-            billAutoMatchTimer = setTimeout(() => App.Bill.runAutoMatch(), 400);
+          if (row && row.dataset.autoMatched !== 'manual') {
+            clearTimeout(App.State.billAutoMatchTimer);
+            App.State.billAutoMatchTimer = setTimeout(() => App.Bill.runAutoMatch(), 400);
           }
         }
       };
@@ -2195,8 +2187,19 @@
 
       document
         .getElementById('billForm')
-        ?.addEventListener('submit', e => {
+        ?.addEventListener('submit', async e => {
           e.preventDefault();
+          // Flush any pending/in-flight PO auto-match first — otherwise a
+          // fast submit right after editing an item field can read
+          // dataset.po/allocs from BEFORE the debounced suggestion (or one
+          // already in flight) has applied, saving a stale split. See
+          // App.Bill.flushPendingAutoMatch().
+          setDisabled('billSubmitBtn', true);
+          try {
+            await App.Bill.flushPendingAutoMatch();
+          } finally {
+            setDisabled('billSubmitBtn', false);
+          }
           const { formData, items } = App.Bill.serializeForm();
           if (!items.length) {
             App.Utils.showToast(

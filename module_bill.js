@@ -882,8 +882,8 @@ function _ensureBillSheetColumns(sheet) {
   const hasNarration = headers.some(h => String(h).trim().toLowerCase() === 'narration');
 
   if (!hasNarration) {
-    sheet.insertColumnBefore(8);
-    sheet.getRange(1, 8).setValue('Narration');
+    sheet.insertColumnBefore(BILL_COL.NARRATION);
+    sheet.getRange(1, BILL_COL.NARRATION).setValue('Narration');
     SpreadsheetApp.flush();
   }
 

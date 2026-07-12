@@ -509,11 +509,18 @@
         const selected = App.State.selectedProduction.slice();
         if (selected.length === 0) return;
 
+        // Same shifted/modified-row guard as the single-row delete() below —
+        // lets the server skip (not blindly delete) any row that no longer
+        // matches what was on screen when it was selected.
+        const expectedRows = (App.State.globalProduction || [])
+          .filter(p => App.Selection.isSelected(selected, String(p.rowIdx)))
+          .map(p => ({ rowIdx: p.rowIdx, expectedProductId: p.productId, expectedQty: p.qty }));
+
         App.Utils.confirmAction(
           `Are you sure you want to permanently delete ${selected.length} selected production record(s)?`,
           async () => {
             try {
-              const res = await Api.call('deleteProductionBulk', selected);
+              const res = await Api.call('deleteProductionBulk', selected, expectedRows);
               App.Utils.showToast(res.message, !res.success);
               if (res.success) {
                 App.State.selectedProduction = [];
@@ -1840,8 +1847,14 @@
         this.syncPoolColorGroupColumns();
         this.refreshPoolColorGroupCells(color, qty, row.dataset.group);
 
+        // Skip the shared-column update entirely while a DIFFERENT axis also
+        // has this exact color name checked right now — see
+        // _isColorCheckedUnderMultipleAxes: with two axes' colliding rows
+        // both live, this shared column can't correctly represent both at
+        // once, and updating it here would silently overwrite whichever
+        // axis didn't just fire this change with the wrong basis.
         const colIndex = this.getMatrixColumnIndex(color);
-        if (colIndex !== -1) {
+        if (colIndex !== -1 && !this._isColorCheckedUnderMultipleAxes(color)) {
           document.querySelectorAll('#productionColorMatrixBody tr').forEach(matrixRow => {
             const cell = matrixRow.children[colIndex];
             const input = cell?.querySelector('.matrix-qty');
@@ -2015,7 +2028,8 @@
               color: singleColor,
               colorScope: singleColor || undefined,
               qty: totalQty > 0 ? totalQty * c.qtyPerUnit : c.qtyPerUnit,
-              qtyPerUnit: c.qtyPerUnit
+              qtyPerUnit: c.qtyPerUnit,
+              unit: c.unit
             });
           });
 
@@ -2382,7 +2396,8 @@
             size: c.size,
             sourceType: c.sourceType,
             qty: lotQty > 0 ? lotQty * c.qtyPerUnit : c.qtyPerUnit,
-            qtyPerUnit: c.qtyPerUnit
+            qtyPerUnit: c.qtyPerUnit,
+            unit: c.unit
           }));
           await this.refreshPoolAvailability();
         } catch (err) {
@@ -2456,12 +2471,15 @@
         const colorScope = (comp && comp.colorScope) || '';
         const qty = comp && comp.qty !== undefined ? this.formatQty(comp.qty) : '';
         const qtyPerUnitAttr = (comp && comp.qtyPerUnit !== undefined) ? `data-qty-per-unit="${comp.qtyPerUnit}"` : '';
+        // Blank/undefined means "already in the item's own Base Unit" — see
+        // _readProdComponentRow and module_stock.js#_getBilledAndConsumedQtyMaps.
+        const unitAttr = (comp && comp.unit) ? ` data-unit="${escapeHtml(comp.unit)}"` : '';
         const colorScopeAttr = colorScope ? ` data-color-scope="${escapeHtml(colorScope)}"` : '';
         const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
         const colorReadonlyAttrs = colorScope ? ' readonly title="This item only exists in this one Warehouse Pool color — fixed automatically"' : '';
 
         const rowHtml = `
-      <tr id="${rowId}" ${qtyPerUnitAttr}${colorScopeAttr}>
+      <tr id="${rowId}" ${qtyPerUnitAttr}${unitAttr}${colorScopeAttr}>
         <td>
           <select class="form-select prod-comp-item-select" required>
             <option value=""></option>
@@ -2557,6 +2575,24 @@
         return Array.from(headerRow.children).findIndex(th => th.dataset.color === color);
       },
 
+      // The Per-Color matrix's column identity is color-string-only, shared
+      // across every Color Axis (see getMatrixColumnIndex/addMatrixColorColumn
+      // above) — a real composite (axis, color) column identity would close
+      // this for good, but is a much larger refactor (~10 more call sites,
+      // real regression risk — see bug_pool_table_color_leak_and_double_count
+      // in project memory). This detects the one genuinely ambiguous
+      // situation — two independent axes both having this exact color name
+      // CHECKED at the same time — so onColorQtyChanged can back off instead
+      // of overwriting the shared column with the wrong axis's basis.
+      _isColorCheckedUnderMultipleAxes(color) {
+        const colorLower = String(color || '').toLowerCase();
+        const axisKeys = new Set();
+        this.getCheckedColorQtys().forEach(cc => {
+          if ((cc.color || '').toLowerCase() === colorLower) axisKeys.add(cc.axisKey || '');
+        });
+        return axisKeys.size > 1;
+      },
+
       // Builds one color cell's contents for a matrix row: a merged row gets
       // its own item picker + qty input (since this color's real item is
       // independent of every other color's), a manual (select-driven) row
@@ -2599,6 +2635,19 @@
       },
 
       removeMatrixColorColumn(color) {
+        // Another axis's own same-named color may still be checked (two
+        // independent axes can legitimately share a literal color name,
+        // e.g. a Rim axis and a Frame axis both having "Purple") — this
+        // matrix's column is shared (keyed by color string only, see
+        // getMatrixColumnIndex), so removing it here whenever THIS axis's
+        // row gets unchecked would wipe cells still in use by that other,
+        // still-checked axis. By the time this fires, the row that was just
+        // unchecked no longer shows up in getCheckedColorQtys(), so "still
+        // checked" here can only mean a different row/axis needs it.
+        const colorLower = String(color || '').toLowerCase();
+        const stillCheckedElsewhere = this.getCheckedColorQtys().some(cc => (cc.color || '').toLowerCase() === colorLower);
+        if (stillCheckedElsewhere) return;
+
         const idx = this.getMatrixColumnIndex(color);
         if (idx === -1) return;
         const headerRow = document.getElementById('productionColorMatrixHeaderRow');
@@ -3126,7 +3175,8 @@
               sourceType: c.sourceType,
               qty: c.qty,
               color: isLockedPoolColor ? colorGroup : c.color,
-              colorScope: isLockedPoolColor ? colorGroup : undefined
+              colorScope: isLockedPoolColor ? colorGroup : undefined,
+              unit: c.unit
             });
             return;
           }
@@ -3413,7 +3463,10 @@
           color: row.querySelector('.prod-comp-color')?.value.trim() || '',
           sourceType: row.querySelector('.prod-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM',
           qty: toNumber(row.querySelector('.prod-comp-qty')?.value),
-          colorGroup: row.dataset.colorScope || 'COMMON'
+          colorGroup: row.dataset.colorScope || 'COMMON',
+          // Blank = "already in the item's Base Unit" — see addComponentRow's
+          // unitAttr and module_stock.js#_getBilledAndConsumedQtyMaps.
+          unit: row.dataset.unit || ''
         };
       },
 

@@ -77,6 +77,9 @@
   <!-- Screen templates (cloned into #mapp-content by Mobile_Script.html) -->
   <?!= include('Mobile_Views'); ?>
 
+  <!-- Shared google.script.run wrapper (same as desktop's Api.call) -->
+  <?!= include('Script_ApiCore'); ?>
+
   <!-- Mobile app logic -->
   <?!= include('Mobile_Script'); ?>
 </body>

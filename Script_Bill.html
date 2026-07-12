@@ -897,15 +897,33 @@
           select.addEventListener('blur', () => App.Bill.refreshPoMatchBadge(row));
         },
 
-        // Debounced entry point: re-suggests PO matches for every DIRECT,
+        // Debounced entry point: re-suggests PO matches for every
         // not-manually-overridden row in the bill form, using the current
-        // vendor + each row's name/size/narration/qty/unit/price.
-        async runAutoMatch() {
+        // vendor + each row's name/size/narration/qty/unit/price. Runs for
+        // an already-auto-matched row too (not just still-DIRECT ones) so a
+        // later qty/name edit refreshes a stale suggestion instead of that
+        // row being permanently excluded the moment it first matches.
+        //
+        // Tracks its own promise on App.State.billAutoMatchPromise so
+        // flushPendingAutoMatch() (called right before a bill submits) can
+        // await an already-in-flight call instead of racing it — see that
+        // function and applyAutoMatch()'s own apply-time re-check below for
+        // the full race-condition fix.
+        runAutoMatch() {
+          const promise = App.Bill._runAutoMatchNow();
+          App.State.billAutoMatchPromise = promise;
+          promise.finally(() => {
+            if (App.State.billAutoMatchPromise === promise) App.State.billAutoMatchPromise = null;
+          });
+          return promise;
+        },
+
+        async _runAutoMatchNow() {
           const vendor = document.getElementById('billVendor')?.value || '';
           if (!vendor) return;
 
           const candidateRows = Array.from(document.querySelectorAll('#billItemsBody tr[data-row-uid]'))
-            .filter(row => (row.dataset.po || 'DIRECT') === 'DIRECT' && row.dataset.autoMatched !== 'manual');
+            .filter(row => row.dataset.autoMatched !== 'manual');
           if (candidateRows.length === 0) return;
 
           // Price is a preference for disambiguation, not a requirement — a
@@ -936,6 +954,22 @@
           }
         },
 
+        // Called right before the bill form actually submits (see the
+        // billForm submit handler, Script_Core.html) so serializeForm() never
+        // reads a row's dataset.po/allocs while a suggestion for it is still
+        // mid-flight or about to fire from the trailing edge of the debounce.
+        async flushPendingAutoMatch() {
+          if (App.State.billAutoMatchTimer) {
+            clearTimeout(App.State.billAutoMatchTimer);
+            App.State.billAutoMatchTimer = null;
+            await App.Bill.runAutoMatch();
+            return;
+          }
+          if (App.State.billAutoMatchPromise) {
+            await App.State.billAutoMatchPromise;
+          }
+        },
+
         // Applies suggested allocations to their source rows. The row stays
         // a single line in the form (qty unchanged) even when the match
         // spans multiple POs — the breakdown is kept in row.dataset.allocs
@@ -947,6 +981,13 @@
           results.forEach(r => { byRowUid[r.rowIndex] = r; });
 
           rows.forEach(row => {
+            // Re-check CURRENT state, not the state when this request's
+            // candidateRows snapshot was captured — the user may have
+            // committed a manual PO override for this exact row while this
+            // suggestion request was still in flight. Applying a stale
+            // response here would silently revert that deliberate choice.
+            if (row.dataset.autoMatched === 'manual') return;
+
             const result = byRowUid[row.dataset.rowUid];
             if (!result || !(result.allocations || []).length) {
               row.dataset.allocs = '';

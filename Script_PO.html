@@ -82,7 +82,7 @@
               <td><small class="text-muted">${itemsPreview}</small></td>
               <td class="text-center fw-bold">${escapeHtml(String(po.totalQty ?? 0))}</td>
               <td class="text-success fw-bold">${formatCurrency(po.grandTotal)}</td>
-              <td class="text-center"><span class="badge ${statusInfo.badgeClass} shadow-sm"><i class="bi ${statusInfo.icon} me-1"></i>${escapeHtml(po.status || 'PO Issued')}</span></td>
+              <td class="text-center"><span class="badge ${statusInfo.badgeClass} shadow-sm"><i class="bi ${statusInfo.icon} me-1"></i>${escapeHtml(po.status || PO_STATUS.ISSUED)}</span></td>
               <td>
                 <button class="btn btn-sm btn-outline-dark    btn-action w-100 mb-1" data-action="po-print"  data-index="${index}">Print Document</button>
                 <button class="btn btn-sm btn-outline-primary  btn-action w-100 mb-1" data-action="po-edit"   data-index="${index}">Edit Order</button>
@@ -204,10 +204,12 @@
         // Status → badge color/icon, mirroring the badge convention already
         // used for 'PO Issued' entries in the Item Transaction Ledger
         // (bg-primary) and for completed/received states elsewhere (bg-success).
+        // Keyed off the shared PO_STATUS constant (Script_ApiCore.html) so
+        // this can never drift from the 3 values module_po.js actually emits.
         STATUS_BADGES: {
-          'PO Issued': { badgeClass: 'bg-primary', icon: 'bi-file-earmark-text' },
-          'Partially Received': { badgeClass: 'bg-info', icon: 'bi-truck' },
-          'Completed': { badgeClass: 'bg-success', icon: 'bi-check-circle' }
+          [PO_STATUS.ISSUED]: { badgeClass: 'bg-primary', icon: 'bi-file-earmark-text' },
+          [PO_STATUS.PARTIAL]: { badgeClass: 'bg-info', icon: 'bi-truck' },
+          [PO_STATUS.COMPLETED]: { badgeClass: 'bg-success', icon: 'bi-check-circle' }
         },
 
         getStatusBadge(status) {
@@ -217,7 +219,7 @@
         // Refreshes the status-bar tile counts from the full (unfiltered) PO
         // list, so counts stay meaningful no matter what's currently filtered.
         updateStatusBar() {
-          const counts = { 'PO Issued': 0, 'Partially Received': 0, 'Completed': 0 };
+          const counts = { [PO_STATUS.ISSUED]: 0, [PO_STATUS.PARTIAL]: 0, [PO_STATUS.COMPLETED]: 0 };
           App.State.globalPOs.forEach(po => {
             if (counts[po.status] !== undefined) counts[po.status]++;
           });
@@ -227,10 +229,10 @@
             if (el) el.textContent = val;
           };
           setCount('poStatusCountAll', App.State.globalPOs.length);
-          setCount('poStatusCountIssued', counts['PO Issued']);
-          setCount('poStatusCountPartial', counts['Partially Received']);
-          setCount('poStatusCountCompleted', counts['Completed']);
-          setCount('poStatusCountPending', counts['PO Issued'] + counts['Partially Received']);
+          setCount('poStatusCountIssued', counts[PO_STATUS.ISSUED]);
+          setCount('poStatusCountPartial', counts[PO_STATUS.PARTIAL]);
+          setCount('poStatusCountCompleted', counts[PO_STATUS.COMPLETED]);
+          setCount('poStatusCountPending', counts[PO_STATUS.ISSUED] + counts[PO_STATUS.PARTIAL]);
         },
 
         // Field/direction combos selectable via the "Sort by" dropdown
