@@ -1799,6 +1799,51 @@
         App.Selection.updateButton('btnBulkPrintBOMs', count, '<i class="bi bi-printer"></i> Print Selected');
       },
 
+      // Read-only diagnostic (module_bom.js#getBomProcessComponentsDrift) —
+      // never blocks or changes anything, just surfaces where a product's
+      // BOM costing qty and its process's actual recipe qty for the same
+      // item have drifted apart, so a human can judge whether that's
+      // intentional or a data-entry slip.
+      async checkRecipeDrift() {
+        try {
+          const res = await Api.call('getBomProcessComponentsDrift');
+          if (!res?.success) {
+            App.Utils.showToast(res?.message || 'Failed to check recipe drift.', true);
+            return;
+          }
+          const drift = res.data || [];
+          if (drift.length === 0) {
+            App.Utils.showToast(res.message || 'No drift found — BOM and process recipe quantities match everywhere they overlap.');
+            return;
+          }
+
+          const rowsHtml = drift.map(d => `
+            <tr>
+              <td>${escapeHtml(d.productName)} <small class="text-muted">(${escapeHtml(d.productId)})</small></td>
+              <td>${escapeHtml(d.itemName)}${d.size ? ' <small class="text-muted">(' + escapeHtml(d.size) + ')</small>' : ''}</td>
+              <td class="text-end">${escapeHtml(String(d.bomQtyPerProduct))}</td>
+              <td class="text-end">${escapeHtml(String(d.recipeQtyPerUnit))}</td>
+            </tr>`).join('');
+
+          const body = document.getElementById('bomDriftModalBody');
+          if (body) {
+            body.innerHTML = `
+              <p class="text-muted small">These ${drift.length} item(s) have a different Qty/Product on the BOM (costing) than Qty/Unit on the process recipe (actual shop-floor consumption) — both are separately editable, so this is informational only. Nothing here is auto-fixed or blocked.</p>
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered">
+                  <thead class="table-light">
+                    <tr><th>Product</th><th>Item</th><th class="text-end">BOM Qty/Product</th><th class="text-end">Recipe Qty/Unit</th></tr>
+                  </thead>
+                  <tbody>${rowsHtml}</tbody>
+                </table>
+              </div>`;
+          }
+          safeModalShow('bomDriftModal');
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to check recipe drift.', true);
+        }
+      },
+
       toggleComponents(productId, expand) {
         const cell = document.getElementById(`bom_cpreview_${productId}`);
         if (!cell) return;

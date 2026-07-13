@@ -122,7 +122,7 @@ let processId;
     processName: 'Fitted Frame Assembly',
     sequence: 1,
     lotPrefix: 'FFA',
-    outputItemName: 'Fitted Frame',
+    outputItemName: 'Fitted Frame Test Output',
     isFinalStage: false,
     active: true,
     remarks: '',

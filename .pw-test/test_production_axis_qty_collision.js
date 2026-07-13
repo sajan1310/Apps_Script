@@ -233,7 +233,7 @@ function seedPoolColors(outputItemName, processId, colors) {
 console.log('\n=== Setup: two pool items feeding two independent Color Axes, sharing the color name "Purple" ===');
 const rimId = createProcess('Rim Component', 'ZR', 'Rim Component', []);
 const frameId = createProcess('Frame Component', 'ZF', 'Frame Component', []);
-const fittingId = createProcess('Fitting Frame', 'FZ', 'Fitted Frame', [
+const fittingId = createProcess('Fitting Frame', 'FZ', 'Fitted Frame Test Output', [
   { itemName: 'Rim Component', sourceType: COMPONENT_SOURCE_TYPES.POOL, qtyPerUnit: 1, colorGroup: COMPONENT_COLOR_GROUP_COMMON },
   { itemName: 'Frame Component', sourceType: COMPONENT_SOURCE_TYPES.POOL, qtyPerUnit: 1, colorGroup: COMPONENT_COLOR_GROUP_COMMON }
 ]);

@@ -3587,6 +3587,24 @@
   </div>
 </div>
 
+<!-- BOM vs Process Recipe Drift Modal (read-only diagnostic, App.BOM.checkRecipeDrift) -->
+<div class="modal fade" id="bomDriftModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-secondary text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">
+          <i class="bi bi-clipboard-check me-2"></i>BOM / Recipe Drift
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light" id="bomDriftModalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
   <!-- ═══════════════════════════════════════════════════════════════════════
        MAIN APPLICATION CONTAINER
        ═══════════════════════════════════════════════════════════════════════ -->
@@ -5576,6 +5594,9 @@
         </button>
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteBOMs" type="button" onclick="App.BOM.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
+        </button>
+        <button class="btn btn-outline-secondary fw-bold shadow-sm" type="button" title="Compares each product's BOM costing quantities against its final-stage process's own recipe quantities for the same items — informational only, never changes anything" onclick="App.BOM.checkRecipeDrift()">
+          <i class="bi bi-clipboard-check"></i> Check Recipe Drift
         </button>
         <button class="btn btn-primary fw-bold shadow-sm" onclick="App.BOM.openCreateModal()">+ Create Product</button>
       </div>
@@ -15059,6 +15080,51 @@
         const count = App.State.selectedBOMs.length;
         App.Selection.updateButton('btnBulkDeleteBOMs', count, '<i class="bi bi-trash"></i> Delete Selected');
         App.Selection.updateButton('btnBulkPrintBOMs', count, '<i class="bi bi-printer"></i> Print Selected');
+      },
+
+      // Read-only diagnostic (module_bom.js#getBomProcessComponentsDrift) —
+      // never blocks or changes anything, just surfaces where a product's
+      // BOM costing qty and its process's actual recipe qty for the same
+      // item have drifted apart, so a human can judge whether that's
+      // intentional or a data-entry slip.
+      async checkRecipeDrift() {
+        try {
+          const res = await Api.call('getBomProcessComponentsDrift');
+          if (!res?.success) {
+            App.Utils.showToast(res?.message || 'Failed to check recipe drift.', true);
+            return;
+          }
+          const drift = res.data || [];
+          if (drift.length === 0) {
+            App.Utils.showToast(res.message || 'No drift found — BOM and process recipe quantities match everywhere they overlap.');
+            return;
+          }
+
+          const rowsHtml = drift.map(d => `
+            <tr>
+              <td>${escapeHtml(d.productName)} <small class="text-muted">(${escapeHtml(d.productId)})</small></td>
+              <td>${escapeHtml(d.itemName)}${d.size ? ' <small class="text-muted">(' + escapeHtml(d.size) + ')</small>' : ''}</td>
+              <td class="text-end">${escapeHtml(String(d.bomQtyPerProduct))}</td>
+              <td class="text-end">${escapeHtml(String(d.recipeQtyPerUnit))}</td>
+            </tr>`).join('');
+
+          const body = document.getElementById('bomDriftModalBody');
+          if (body) {
+            body.innerHTML = `
+              <p class="text-muted small">These ${drift.length} item(s) have a different Qty/Product on the BOM (costing) than Qty/Unit on the process recipe (actual shop-floor consumption) — both are separately editable, so this is informational only. Nothing here is auto-fixed or blocked.</p>
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered">
+                  <thead class="table-light">
+                    <tr><th>Product</th><th>Item</th><th class="text-end">BOM Qty/Product</th><th class="text-end">Recipe Qty/Unit</th></tr>
+                  </thead>
+                  <tbody>${rowsHtml}</tbody>
+                </table>
+              </div>`;
+          }
+          safeModalShow('bomDriftModal');
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to check recipe drift.', true);
+        }
       },
 
       toggleComponents(productId, expand) {

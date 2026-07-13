@@ -223,7 +223,7 @@ let framePaintingId;
     processName: 'Frame Painting',
     sequence: 1,
     lotPrefix: 'ZFP',
-    outputItemName: 'Painted Frame',
+    outputItemName: 'Painted Frame Test Output',
     isFinalStage: false,
     active: true,
     remarks: '',
@@ -250,9 +250,12 @@ let framePaintingId;
   assert(byName['Blue Paint'] && byName['Blue Paint'].colorGroup === 'Blue', 'Blue Paint tagged Blue (got "' + (byName['Blue Paint'] && byName['Blue Paint'].colorGroup) + '")');
 
   const compSheet = ss.getSheetByName(APP_CONFIG.SHEETS.PROCESS_COMPONENTS);
-  assert(compSheet.getLastColumn() === 9, 'Process Components sheet has 9 columns (got ' + compSheet.getLastColumn() + ')');
+  // 10, not 9 -- PROCESS_COMPONENTS_COL.UNIT (Fix #3, 2026-07-13) added a
+  // 10th column after Color Axis.
+  assert(compSheet.getLastColumn() === 10, 'Process Components sheet has 10 columns (got ' + compSheet.getLastColumn() + ')');
   assert(compSheet.getRange(1, 8, 1, 1).getValue() === 'Color Group', 'column 8 header is "Color Group"');
   assert(compSheet.getRange(1, 9, 1, 1).getValue() === 'Color Axis', 'column 9 header is "Color Axis"');
+  assert(compSheet.getRange(1, 10, 1, 1).getValue() === 'Unit', 'column 10 header is "Unit"');
 
   const colorsRes = getProcessColorGroups(framePaintingId);
   assert(colorsRes.success, 'getProcessColorGroups succeeds');
@@ -294,7 +297,7 @@ let packingId;
     processName: 'Bicycle Packing',
     sequence: 4,
     lotPrefix: 'ZPK',
-    outputItemName: 'Packed Bicycle',
+    outputItemName: 'Packed Bicycle Test Output',
     isFinalStage: true,
     active: true,
     remarks: '',
