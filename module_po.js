@@ -1128,6 +1128,20 @@ function suggestPoAllocations(vendor, items, billDate) {
     const itemUnitMap = _getItemUnitInfoMap();
     const unitsMap = _getUnitsMap();
 
+    // Grouped once by (name,size) so each bill line's lookup below is O(1)
+    // instead of filtering the FULL candidates list (every open PO line for
+    // this vendor) per bill line — O(items x candidates), on every bill save
+    // with unlinked lines. Each group holds the SAME candidate objects (not
+    // copies), so mutating c.remainingBaseQty further down still correctly
+    // reduces capacity for every other bill row sharing this key, exactly as
+    // the old per-row filter() over the full array did.
+    const candidatesByKey = new Map();
+    candidates.forEach(function(c) {
+      const key = c.name.toLowerCase() + '|' + c.size.toLowerCase();
+      if (!candidatesByKey.has(key)) candidatesByKey.set(key, []);
+      candidatesByKey.get(key).push(c);
+    });
+
     const results = items.map(function(item) {
       const rowIndex = item.rowIndex;
       const name = String(item.name || '').trim();
@@ -1157,11 +1171,8 @@ function suggestPoAllocations(vendor, items, billDate) {
       // unit this bill line was actually entered in.
       const ratio = baseQty > 0 ? qty / baseQty : 1;
 
-      const sameNameSize = candidates.filter(function(c) {
-        return c.name.toLowerCase() === name.toLowerCase() &&
-          c.size.toLowerCase() === size.toLowerCase() &&
-          c.remainingBaseQty > 0.0001;
-      });
+      const sameNameSize = (candidatesByKey.get(name.toLowerCase() + '|' + size.toLowerCase()) || [])
+        .filter(function(c) { return c.remainingBaseQty > 0.0001; });
 
       // Price is a preference, not a hard requirement: if the bill gives a
       // price and it disambiguates between PO lines at different rates

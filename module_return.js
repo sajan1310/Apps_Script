@@ -133,7 +133,8 @@ function getReturnData() {
           remarks: String(r[RETURN_COL.REMARKS - 1] || ''),
           items: [],
           totalQty: 0,
-          totalAmount: 0
+          totalAmount: 0,
+          _rowIdx: i
         };
       }
 
@@ -158,11 +159,15 @@ function getReturnData() {
       returnMap[returnNum].totalAmount += lineTotal;
     }
 
+    // Sort by return date (newest first), then by row order (newest first)
+    // to break ties between same-day returns.
     const sorted = Object.values(returnMap).sort(function(a, b) {
       const timeA = a.returnDateRaw ? new Date(a.returnDateRaw).getTime() : 0;
       const timeB = b.returnDateRaw ? new Date(b.returnDateRaw).getTime() : 0;
-      return timeB - timeA;
+      if (timeB !== timeA) return timeB - timeA;
+      return b._rowIdx - a._rowIdx;
     });
+    sorted.forEach(function(r) { delete r._rowIdx; });
 
     return buildResponse(true, sorted);
   } catch (error) {

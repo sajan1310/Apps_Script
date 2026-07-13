@@ -480,14 +480,23 @@
 
         const currentRowIdx = toNumber(document.getElementById('dispatchRowIdx')?.value, 0);
 
+        // Pre-aggregated once (excluding the row currently being edited, if
+        // any — currentRowIdx is constant for this whole call) instead of
+        // filtering the full globalDispatch array per order line below —
+        // this modal opens on every Create/Edit Dispatch action.
+        const dispatchedByKey = new Map();
+        (App.State.globalDispatch || []).forEach(d => {
+          if (d.rowIdx === currentRowIdx) return;
+          const key = `${d.orderNumber}|${d.productId}`;
+          dispatchedByKey.set(key, (dispatchedByKey.get(key) || 0) + (Number(d.qty) || 0));
+        });
+
         let html = '<option value="">— Direct Supply (No Order) —</option>';
         (App.State.globalOrders || []).forEach(o => {
           if (o.status !== 'Order Confirmed') return;
 
           (o.lines || []).forEach(line => {
-            const dispatched = (App.State.globalDispatch || [])
-              .filter(d => d.orderNumber === o.orderNumber && d.productId === line.productId && d.rowIdx !== currentRowIdx)
-              .reduce((sum, d) => sum + (Number(d.qty) || 0), 0);
+            const dispatched = dispatchedByKey.get(`${o.orderNumber}|${line.productId}`) || 0;
             const pending = (Number(line.qty) || 0) - dispatched;
             const value = `${o.orderNumber}|${line.productId}`;
             if (pending <= 0.0001 && value !== currentValue) return;

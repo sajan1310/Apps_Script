@@ -241,8 +241,28 @@ function deleteContractorsBulk(contractorNames) {
     // Skip any contractor with Production/Dispatch/Payment history — deleting
     // them would orphan that history under a name no longer in the master
     // list, silently hiding their balance due (see _contractorInUseMessage).
-    const skipped = requestedNames.filter(n => _contractorInUseMessage(n));
-    const deletableNames = requestedNames.filter(n => !skipped.includes(n));
+    // Each referencing sheet is read ONCE here into a name Set, instead of
+    // _contractorInUseMessage() re-reading all 3 sheets from scratch for
+    // EVERY requested name (O(K x 3N) instead of O(3N + K)) — same pattern
+    // as deleteClientOrdersBulk. The bulk path only needs the yes/no
+    // in-use verdict, not _contractorInUseMessage's per-sheet reason text.
+    const inUseNames = new Set();
+    const addNamesFromSheet = (sheetName, col) => {
+      let sh;
+      try { sh = getSheet(sheetName); } catch (e) { return; }
+      const lastRow = sh.getLastRow();
+      if (lastRow < 2) return;
+      sh.getRange(2, col, lastRow - 1, 1).getValues().forEach(row => {
+        const n = String(row[0] || '').trim().toLowerCase();
+        if (n) inUseNames.add(n);
+      });
+    };
+    addNamesFromSheet(APP_CONFIG.SHEETS.PRODUCTION, PRODUCTION_COL.ASSIGNED_TO);
+    addNamesFromSheet(APP_CONFIG.SHEETS.DISPATCH, DISPATCH_COL.LOGISTICS_CONTRACTOR);
+    addNamesFromSheet(APP_CONFIG.SHEETS.CONTRACTOR_PAYMENTS, CONTRACTOR_PAYMENTS_COL.CONTRACTOR_NAME);
+
+    const skipped = requestedNames.filter(n => inUseNames.has(n.toLowerCase()));
+    const deletableNames = requestedNames.filter(n => !inUseNames.has(n.toLowerCase()));
     const targetSet = new Set(deletableNames.map(n => n.toLowerCase()));
 
     const lastRow = sheet.getLastRow();

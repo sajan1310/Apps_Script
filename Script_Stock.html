@@ -613,6 +613,7 @@
     App.State.globalStock = [];
     App.State.filteredStock = [];
     App.State.stockSearchTerm = '';
+    App.State.stockDeadSortMode = 'default'; // 'default' | 'last' | 'first' — dead stock display position
     App.State.globalWarehousePool = [];
     App.State.globalWarehousePoolOpening = [];
     App.State.globalWarehousePoolAdjustments = [];
@@ -642,6 +643,13 @@
         }
 
         try {
+          const savedSort = localStorage.getItem('stockDeadSortMode');
+          if (savedSort === 'default' || savedSort === 'last' || savedSort === 'first') {
+            App.State.stockDeadSortMode = savedSort;
+          }
+          const sortSelect = document.getElementById('stockDeadSort');
+          if (sortSelect) sortSelect.value = App.State.stockDeadSortMode;
+
           const res = await Api.call('getStockData');
           if (!res?.success) {
             App.Utils.showToast(res?.message || 'Failed to load stock data.', true);
@@ -1551,6 +1559,29 @@
         safeModalShow('poolLedgerModal');
       },
 
+      // Sets where dead-stock items appear relative to the rest of the
+      // (already latest-entry-first) list: left in place, pushed to the
+      // bottom, or pulled to the top. Persisted so the choice survives a
+      // reload. Only reorders for display — App.State.filteredStock (the
+      // search/filter result) is untouched.
+      setDeadSortMode(mode) {
+        if (mode !== 'default' && mode !== 'last' && mode !== 'first') return;
+        App.State.stockDeadSortMode = mode;
+        localStorage.setItem('stockDeadSortMode', mode);
+        App.State.stockCurrentPage = 1;
+        this.renderTable();
+      },
+
+      // Stable sort (ties keep their relative order) so dead-stock
+      // repositioning never disturbs the underlying latest-first ordering
+      // within the dead / non-dead groups themselves.
+      applyDeadSort(list) {
+        const mode = App.State.stockDeadSortMode;
+        if (mode === 'last') return [...list].sort((a, b) => (a.deadStock ? 1 : 0) - (b.deadStock ? 1 : 0));
+        if (mode === 'first') return [...list].sort((a, b) => (b.deadStock ? 1 : 0) - (a.deadStock ? 1 : 0));
+        return list;
+      },
+
       renderTable() {
         const tbody = document.getElementById('stockTableBody');
         if (!tbody) return;
@@ -1566,8 +1597,9 @@
         if (emptyState) emptyState.style.display = 'none';
 
         const { filteredStock, stockCurrentPage: cur, stockRowsPerPage: rpp } = App.State;
+        const displayStock = this.applyDeadSort(filteredStock);
         const start = (cur - 1) * rpp;
-        const pageItems = filteredStock.slice(start, start + rpp);
+        const pageItems = displayStock.slice(start, start + rpp);
 
         const selectAllChk = document.getElementById('selectAllStock');
         if (selectAllChk) {

@@ -822,10 +822,14 @@
           .filter(p => !sizeFilter || App.Utils.getSizeFromOutputItemName(p.outputItemName) === sizeFilter)
           .filter(p => !modelFilter || App.Utils.getModelFromOutputItemName(p.outputItemName) === modelFilter);
 
-        const typesPresent = new Set(matches.map(p => p.processType || 'General'));
+        // Case-insensitive: a process's own stored processType can differ in
+        // casing from Process Type Master's row (legacy/imported data) — a
+        // raw Set.has() would then silently drop that type from the
+        // dropdown entirely, even though matching processes exist.
+        const typesPresent = new Set(matches.map(p => String(p.processType || 'General').trim().toLowerCase()));
         const typeNames = (App.State.globalProcessTypes || []).map(t => t.name);
-        const ordered = typeNames.filter(t => typesPresent.has(t));
-        if (typesPresent.has('General')) ordered.push('General');
+        const ordered = typeNames.filter(t => typesPresent.has(t.trim().toLowerCase()));
+        if (typesPresent.has('general')) ordered.push('General');
 
         let html = modelFilter ? '<option value="">Choose a Process Type...</option>' : '<option value="">Choose a Model first...</option>';
         ordered.forEach(t => {
@@ -910,7 +914,7 @@
           .filter(p => p.active)
           .filter(p => !sizeFilter || App.Utils.getSizeFromOutputItemName(p.outputItemName) === sizeFilter)
           .filter(p => !modelFilter || App.Utils.getModelFromOutputItemName(p.outputItemName) === modelFilter)
-          .filter(p => !typeFilter || (p.processType || 'General') === typeFilter);
+          .filter(p => !typeFilter || App.Utils.sameText(p.processType || 'General', typeFilter));
 
         let html = typeFilter ? '<option value="">Choose a Process...</option>' : '<option value="">Choose a Process Type first...</option>';
 
@@ -3554,7 +3558,20 @@
       // _currentLotTotalQty, which already applies the same primary-axis-only
       // summing saveProduction uses), so reading productionQty there always
       // read 0 and left this hint permanently blank for every color lot.
-      async refreshPayableHint() {
+      // Debounced — this is called from onColorQtyChanged on every keystroke
+      // in a color qty input, and each call hits the server
+      // (getContractorRateForProcess). Without debouncing, typing a
+      // multi-digit quantity fired one network round trip per digit; only
+      // the last keystroke's resulting hint is ever seen, so the
+      // intermediate calls were pure waste. None of this function's 5 call
+      // sites await it or depend on its return value, so delaying the
+      // actual fetch is safe everywhere it's used.
+      refreshPayableHint() {
+        clearTimeout(this._payableHintDebounceTimer);
+        this._payableHintDebounceTimer = setTimeout(() => this._refreshPayableHintNow(), 300);
+      },
+
+      async _refreshPayableHintNow() {
         const hintEl = document.getElementById('productionPayableHint');
         if (!hintEl) return;
 

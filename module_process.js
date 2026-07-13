@@ -356,8 +356,12 @@ function saveProcess(formData) {
     // Item Name would silently merge/misattribute each other's pool stock. An
     // inactive process is exempt (it can no longer produce new lots, so it can't
     // grow that ambiguity) — deactivate the old one before reusing its name.
+    // Declared here (not scoped to the `if` below) so the isEdit branch
+    // further down can reuse this same read to locate its target row,
+    // instead of issuing a second getRange().getValues() read of the
+    // identical Process ID column.
+    const existing = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 10).getValues() : [];
     if (lastRow >= 2) {
-      const existing = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
       for (let i = 0; i < existing.length; i++) {
         const rowProcessId = String(existing[i][PROCESS_COL.PROCESS_ID - 1] || '').trim();
         if (isEdit && rowProcessId.toLowerCase() === String(formData.processId).trim().toLowerCase()) continue;
@@ -382,10 +386,12 @@ function saveProcess(formData) {
 
     if (isEdit) {
       const processId = sanitizeString(formData.processId, 'processId');
-      const data = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues() : [];
+      // Reuses `existing` (already read above for the duplicate Lot Prefix /
+      // Output Item Name check) instead of a second getRange().getValues()
+      // read of the same Process ID column.
       let targetRow = -1;
-      for (let i = 0; i < data.length; i++) {
-        if (String(data[i][0]).trim().toLowerCase() === processId.toLowerCase()) {
+      for (let i = 0; i < existing.length; i++) {
+        if (String(existing[i][PROCESS_COL.PROCESS_ID - 1]).trim().toLowerCase() === processId.toLowerCase()) {
           targetRow = i + 2;
           break;
         }

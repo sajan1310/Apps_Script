@@ -407,18 +407,20 @@
               pendingMap.has(`${(item.name || '').toLowerCase()}|${(item.size || '').toLowerCase()}`)
             );
           } else if (term.includes('low stock')) {
-            base = App.State.globalItems.filter(item =>
-              (App.State.globalStock || []).some(
-                s => App.Utils.sameText(s.name, item.name) && App.Utils.sameText(s.size || '', item.size || '') && s.isLowStock
-              )
-            );
+            const stockMap = this._getStockMap();
+            base = App.State.globalItems.filter(item => {
+              const s = stockMap.get(this._stockKeyFor(item));
+              return !!s && s.isLowStock;
+            });
           } else if (term.includes('no metadata')) {
             const pendingMap = App.Utils.getPendingByItem();
-            base = App.State.globalItems.filter(item => this.getMetaInfo(item, pendingMap).parts.length === 0);
+            const stockMap = this._getStockMap();
+            base = App.State.globalItems.filter(item => this.getMetaInfo(item, pendingMap, stockMap).parts.length === 0);
           } else if (term.includes('zero stock')) {
             const pendingMap = App.Utils.getPendingByItem();
+            const stockMap = this._getStockMap();
             base = App.State.globalItems.filter(item => {
-              const { stockEntry } = this.getMetaInfo(item, pendingMap);
+              const { stockEntry } = this.getMetaInfo(item, pendingMap, stockMap);
               return stockEntry != null && Number(stockEntry.currentStock) === 0;
             });
           } else {
@@ -437,8 +439,8 @@
 
         // Computes which METADATA_FILTER_OPTIONS values apply to an item,
         // mirroring the logic getMetaInfo uses to render the Meta Data cell.
-        getMetadataFlags(item, pendingMap) {
-          const { parts, stockEntry } = this.getMetaInfo(item, pendingMap);
+        getMetadataFlags(item, pendingMap, stockMap) {
+          const { parts, stockEntry } = this.getMetaInfo(item, pendingMap, stockMap);
           const flags = new Set();
 
           const isPending = pendingMap.has(`${(item.name || '').toLowerCase()}|${(item.size || '').toLowerCase()}`);
@@ -459,6 +461,7 @@
           if (!name.length && !size.length && !narration.length && !vendor.length && !metadata.length) return items;
 
           const pendingMap = metadata.length ? App.Utils.getPendingByItem() : null;
+          const stockMap = metadata.length ? this._getStockMap() : null;
 
           return items.filter(item => {
             if (name.length && !name.includes(item.name || '')) return false;
@@ -469,11 +472,30 @@
               if (!vendor.some(v => itemVendors.includes(v))) return false;
             }
             if (metadata.length) {
-              const flags = this.getMetadataFlags(item, pendingMap);
+              const flags = this.getMetadataFlags(item, pendingMap, stockMap);
               if (!metadata.some(m => flags.has(m))) return false;
             }
             return true;
           });
+        },
+
+        // Builds this item's lookup key for _getStockMap(), matching
+        // App.Utils.sameText's trim+lowercase comparison semantics.
+        _stockKeyFor(item) {
+          return `${String(item.name || '').trim().toLowerCase()}|${String(item.size || '').trim().toLowerCase()}`;
+        },
+
+        // Map<name|size, stockEntry> built once from App.State.globalStock —
+        // used by getMetaInfo/getMetadataFlags and the 'low stock'/'zero
+        // stock' quick filters, instead of each doing its own
+        // globalStock.find()/.some() per item (O(items x stock) over the
+        // FULL item list otherwise).
+        _getStockMap() {
+          const map = new Map();
+          (App.State.globalStock || []).forEach(s => {
+            map.set(this._stockKeyFor(s), s);
+          });
+          return map;
         },
 
         // Builds a stable string key for an item row (Name + Size), mirroring
@@ -484,10 +506,8 @@
 
         // Shared by renderTable (display) and filterData ('no metadata' / 'zero stock')
         // so both agree on what counts as "no metadata" for an item.
-        getMetaInfo(item, pendingMap) {
-          const stockEntry = App.State.globalStock.find(
-            s => App.Utils.sameText(s.name, item.name) && App.Utils.sameText(s.size || '', item.size || '')
-          );
+        getMetaInfo(item, pendingMap, stockMap) {
+          const stockEntry = (stockMap || this._getStockMap()).get(this._stockKeyFor(item));
           const stockPart = stockEntry != null
             ? `<strong>Stock:</strong> <span class="${stockEntry.isLowStock ? 'text-danger fw-bold' : 'text-success fw-bold'}">${stockEntry.currentStock}</span>${stockEntry.isLowStock ? ' <span class="badge bg-danger ms-1 py-0 px-1" style="font-size:0.65rem;">Low</span>' : ''}`
             : null;
@@ -540,6 +560,7 @@
           }
 
           const pendingMap = App.Utils.getPendingByItem();
+          const stockMap = this._getStockMap();
 
           tbody.innerHTML = pageItems
             .map(item => {
@@ -553,7 +574,7 @@
                 )
                 .join('');
 
-              const { parts: metaParts } = this.getMetaInfo(item, pendingMap);
+              const { parts: metaParts } = this.getMetaInfo(item, pendingMap, stockMap);
 
               const encodedName = encodeURIComponent(item.name || '');
               const encodedSize = encodeURIComponent(item.size || '');

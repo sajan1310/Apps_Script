@@ -325,7 +325,8 @@ function getBillData() {
           remarks: String(r[OFF.remarks] || ''),
           items: [],  // Structured, not pre-formatted
           totalQty: 0,
-          totalAmount: 0
+          totalAmount: 0,
+          _rowIdx: i
         };
       }
 
@@ -363,12 +364,17 @@ function getBillData() {
       billMap[key].totalAmount += lineTotal;
     }
 
-    // Convert to array and sort by bill date (newest first)
+    // Convert to array and sort by bill date (newest first), then by row
+    // order (newest first) to break ties between same-day bills so the most
+    // recently entered one still comes first rather than falling back to
+    // ascending sheet order.
     const sorted = Object.values(billMap).sort(function(a, b) {
       const timeA = a.billDateRaw ? new Date(a.billDateRaw).getTime() : 0;
       const timeB = b.billDateRaw ? new Date(b.billDateRaw).getTime() : 0;
-      return timeB - timeA;  // Descending (newest first)
+      if (timeB !== timeA) return timeB - timeA;  // Descending (newest first)
+      return b._rowIdx - a._rowIdx;
     });
+    sorted.forEach(function(b) { delete b._rowIdx; });
 
     return buildResponse(true, sorted);
   } catch (error) {

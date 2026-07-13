@@ -351,17 +351,15 @@ function getStockData() {
         currentStock,
         threshold,
         isLowStock: currentStock < threshold,
-        deadStock
+        deadStock,
+        rowIdx: i + 2 // 2-indexed row position; new stock rows are always appended
       });
     }
-    
-    // Sort stock items alphabetically by Item Name, then by Size
-    records.sort((a, b) => {
-      const nameComp = a.name.localeCompare(b.name);
-      if (nameComp !== 0) return nameComp;
-      return a.size.localeCompare(b.size);
-    });
-    
+
+    // Sort by row order descending — newest-created stock row first, since
+    // rows are appended (never inserted) when items are added.
+    records.sort((a, b) => b.rowIdx - a.rowIdx);
+
     return buildResponse(true, records);
   } catch (error) {
     Log.error('[getStockData] Error:', error.message);
@@ -797,16 +795,35 @@ function syncStockForItem(action, payload) {
       sheet = getSheet(APP_CONFIG.SHEETS.STOCK);
     }
 
+    // Name+Size columns read ONCE here and reused for every lookup below —
+    // 'rename'/'merge' each need TWO lookups (old key + new key) against the
+    // exact same snapshot, so calling _findStockRow() a second time would
+    // just re-read the identical range the first call already fetched.
+    const _stockLastRow = sheet.getLastRow();
+    const _stockNameSizeData = _stockLastRow >= 2
+      ? sheet.getRange(2, STOCK_COL.ITEM_NAME, _stockLastRow - 1, 2).getValues()
+      : [];
+    const _findRowInSnapshot = (name, size) => {
+      const targetName = String(name || '').trim().toLowerCase();
+      const targetSize = String(size || '').trim().toLowerCase();
+      for (let i = 0; i < _stockNameSizeData.length; i++) {
+        const rowName = String(_stockNameSizeData[i][0] || '').trim().toLowerCase();
+        const rowSize = String(_stockNameSizeData[i][1] || '').trim().toLowerCase();
+        if (rowName === targetName && rowSize === targetSize) return i + 2;
+      }
+      return -1;
+    };
+
     if (action === 'ensure') {
       const { name, size, initialStock } = payload;
-      if (_findStockRow(sheet, name, size) === -1) {
+      if (_findRowInSnapshot(name, size) === -1) {
         const qty = Number(initialStock) || 0;
         sheet.appendRow([name, size, qty, qty, 0, false]);
       }
     } else if (action === 'rename') {
       const { oldName, oldSize, newName, newSize } = payload;
-      const oldRow = _findStockRow(sheet, oldName, oldSize);
-      const newRowExists = _findStockRow(sheet, newName, newSize) !== -1;
+      const oldRow = _findRowInSnapshot(oldName, oldSize);
+      const newRowExists = _findRowInSnapshot(newName, newSize) !== -1;
 
       if (oldRow === -1) {
         if (!newRowExists) {
@@ -820,8 +837,8 @@ function syncStockForItem(action, payload) {
       // (it may still belong to other items sharing the old name + size).
     } else if (action === 'merge') {
       const { oldName, oldSize, newName, newSize } = payload;
-      const oldRow = _findStockRow(sheet, oldName, oldSize);
-      const newRow = _findStockRow(sheet, newName, newSize);
+      const oldRow = _findRowInSnapshot(oldName, oldSize);
+      const newRow = _findRowInSnapshot(newName, newSize);
 
       if (oldRow === -1) {
         // Nothing to merge in; ensure the target row exists.
@@ -842,7 +859,7 @@ function syncStockForItem(action, payload) {
       }
     } else if (action === 'remove') {
       const { name, size } = payload;
-      const row = _findStockRow(sheet, name, size);
+      const row = _findRowInSnapshot(name, size);
       if (row !== -1) {
         sheet.deleteRow(row);
       }

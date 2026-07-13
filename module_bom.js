@@ -357,6 +357,11 @@ function getBOMData(token) {
     const numCols = Math.max(sheet.getLastColumn(), BOM_COL.SEQUENCE);
     const data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
     const productMap = {};
+    // Companion Set per product for O(1) color-dedup membership checks below
+    // — kept OUTSIDE productMap (not a field on it) so it never leaks into
+    // the response object returned to the client; productMap[id].colors
+    // stays a plain array, insertion-ordered, as before.
+    const colorsSeenByProduct = new Map();
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
@@ -379,6 +384,7 @@ function getBOMData(token) {
           remarks: String(row[BOM_COL.REMARKS - 1] || '').trim(),
           sequence: Number(row[BOM_COL.SEQUENCE - 1]) || 0
         };
+        colorsSeenByProduct.set(productId, new Set());
       }
 
       const rate = Number(row[BOM_COL.RATE - 1]) || 0;
@@ -400,8 +406,12 @@ function getBOMData(token) {
         color: color
       });
 
-      if (color && !productMap[productId].colors.includes(color)) {
-        productMap[productId].colors.push(color);
+      if (color) {
+        const seen = colorsSeenByProduct.get(productId);
+        if (!seen.has(color)) {
+          seen.add(color);
+          productMap[productId].colors.push(color);
+        }
       }
 
       productMap[productId].totalCost += lineCost;
@@ -637,6 +647,11 @@ function getBOMProductionData() {
     const numCols = Math.max(sheet.getLastColumn(), BOM_COL.SEQUENCE);
     const data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
     const productMap = {};
+    // Companion Set per product for O(1) color-dedup membership checks below
+    // — kept OUTSIDE productMap (not a field on it) so it never leaks into
+    // the response object returned to the client; productMap[id].colors
+    // stays a plain array, insertion-ordered, as before.
+    const colorsSeenByProduct = new Map();
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
@@ -654,6 +669,7 @@ function getBOMProductionData() {
           colors: [],
           sequence: Number(row[BOM_COL.SEQUENCE - 1]) || 0
         };
+        colorsSeenByProduct.set(productId, new Set());
       }
 
       const processId = String(row[BOM_COL.PROCESS_GROUP - 1] || '').trim();
@@ -669,8 +685,12 @@ function getBOMProductionData() {
         color: color
       });
 
-      if (color && !productMap[productId].colors.includes(color)) {
-        productMap[productId].colors.push(color);
+      if (color) {
+        const seen = colorsSeenByProduct.get(productId);
+        if (!seen.has(color)) {
+          seen.add(color);
+          productMap[productId].colors.push(color);
+        }
       }
     }
 

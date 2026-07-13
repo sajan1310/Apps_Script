@@ -22,6 +22,11 @@
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center">
         <input type="text" id="searchStock" class="form-control me-2" placeholder="Search Item Name or Size..." autocomplete="off" onkeyup="App.Stock.filterData(this.value)">
+        <select id="stockDeadSort" class="form-select me-2" style="max-width: 220px;" title="Dead Stock position" onchange="App.Stock.setDeadSortMode(this.value)">
+          <option value="default">Dead Stock: Default Order</option>
+          <option value="last">Dead Stock: Move to Bottom</option>
+          <option value="first">Dead Stock: Move to Top</option>
+        </select>
         <button class="btn btn-outline-primary fw-bold shadow-sm" type="button" onclick="App.Stock.selectAllFiltered()" style="white-space: nowrap;">
           <i class="bi bi-check2-square"></i> Select All
         </button>

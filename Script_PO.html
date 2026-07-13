@@ -1168,6 +1168,27 @@
             parseRecordDate(b.poDateRaw, b.poDate) - parseRecordDate(a.poDateRaw, a.poDate)
           );
 
+          // Pre-indexed once: (vendor|name|size|narration) -> most recent
+          // purchase date. sortedPOs is already newest-first, so the FIRST
+          // time a key is seen while iterating in that order is its most
+          // recent purchase — the same result the old per-row "break on
+          // first hit within newest-first POs" scan produced, just computed
+          // once instead of once per item x vendor pair (this loop was
+          // O(items x vendors x POs x POitems) before).
+          const lastPurchaseByKey = new Map();
+          sortedPOs.forEach(po => {
+            const vLower = (po.vendor || '').trim().toLowerCase();
+            (po.items || []).forEach(i => {
+              const key = [
+                vLower,
+                (i.name || '').trim().toLowerCase(),
+                (i.size || '').trim().toLowerCase(),
+                (i.narration || '').trim().toLowerCase()
+              ].join('|');
+              if (!lastPurchaseByKey.has(key)) lastPurchaseByKey.set(key, po.poDate || '');
+            });
+          });
+
           // Build one row per item×vendor
           const rows = [];
           for (const item of (App.State.globalItems || [])) {
@@ -1176,16 +1197,7 @@
               const nameLower = (item.name || '').trim().toLowerCase();
               const sizeLower = (item.size || '').trim().toLowerCase();
               const narrationLower = (item.narration || '').trim().toLowerCase();
-              let lastDate = '';
-              for (const po of sortedPOs) {
-                if ((po.vendor || '').trim().toLowerCase() !== vLower) continue;
-                const hit = (po.items || []).some(i =>
-                  (i.name || '').trim().toLowerCase() === nameLower &&
-                  (i.size || '').trim().toLowerCase() === sizeLower &&
-                  (i.narration || '').trim().toLowerCase() === narrationLower
-                );
-                if (hit) { lastDate = po.poDate || ''; break; }
-              }
+              const lastDate = lastPurchaseByKey.get([vLower, nameLower, sizeLower, narrationLower].join('|')) || '';
               rows.push({ name: item.name, size: item.size || '', narration: item.narration || '', vendor: v.vendor, rate: v.rate, lastDate });
             }
           }

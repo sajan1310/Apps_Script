@@ -5135,6 +5135,11 @@
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center">
         <input type="text" id="searchStock" class="form-control me-2" placeholder="Search Item Name or Size..." autocomplete="off" onkeyup="App.Stock.filterData(this.value)">
+        <select id="stockDeadSort" class="form-select me-2" style="max-width: 220px;" title="Dead Stock position" onchange="App.Stock.setDeadSortMode(this.value)">
+          <option value="default">Dead Stock: Default Order</option>
+          <option value="last">Dead Stock: Move to Bottom</option>
+          <option value="first">Dead Stock: Move to Top</option>
+        </select>
         <button class="btn btn-outline-primary fw-bold shadow-sm" type="button" onclick="App.Stock.selectAllFiltered()" style="white-space: nowrap;">
           <i class="bi bi-check2-square"></i> Select All
         </button>
@@ -12186,6 +12191,27 @@
             parseRecordDate(b.poDateRaw, b.poDate) - parseRecordDate(a.poDateRaw, a.poDate)
           );
 
+          // Pre-indexed once: (vendor|name|size|narration) -> most recent
+          // purchase date. sortedPOs is already newest-first, so the FIRST
+          // time a key is seen while iterating in that order is its most
+          // recent purchase — the same result the old per-row "break on
+          // first hit within newest-first POs" scan produced, just computed
+          // once instead of once per item x vendor pair (this loop was
+          // O(items x vendors x POs x POitems) before).
+          const lastPurchaseByKey = new Map();
+          sortedPOs.forEach(po => {
+            const vLower = (po.vendor || '').trim().toLowerCase();
+            (po.items || []).forEach(i => {
+              const key = [
+                vLower,
+                (i.name || '').trim().toLowerCase(),
+                (i.size || '').trim().toLowerCase(),
+                (i.narration || '').trim().toLowerCase()
+              ].join('|');
+              if (!lastPurchaseByKey.has(key)) lastPurchaseByKey.set(key, po.poDate || '');
+            });
+          });
+
           // Build one row per item×vendor
           const rows = [];
           for (const item of (App.State.globalItems || [])) {
@@ -12194,16 +12220,7 @@
               const nameLower = (item.name || '').trim().toLowerCase();
               const sizeLower = (item.size || '').trim().toLowerCase();
               const narrationLower = (item.narration || '').trim().toLowerCase();
-              let lastDate = '';
-              for (const po of sortedPOs) {
-                if ((po.vendor || '').trim().toLowerCase() !== vLower) continue;
-                const hit = (po.items || []).some(i =>
-                  (i.name || '').trim().toLowerCase() === nameLower &&
-                  (i.size || '').trim().toLowerCase() === sizeLower &&
-                  (i.narration || '').trim().toLowerCase() === narrationLower
-                );
-                if (hit) { lastDate = po.poDate || ''; break; }
-              }
+              const lastDate = lastPurchaseByKey.get([vLower, nameLower, sizeLower, narrationLower].join('|')) || '';
               rows.push({ name: item.name, size: item.size || '', narration: item.narration || '', vendor: v.vendor, rate: v.rate, lastDate });
             }
           }
@@ -13725,18 +13742,20 @@
               pendingMap.has(`${(item.name || '').toLowerCase()}|${(item.size || '').toLowerCase()}`)
             );
           } else if (term.includes('low stock')) {
-            base = App.State.globalItems.filter(item =>
-              (App.State.globalStock || []).some(
-                s => App.Utils.sameText(s.name, item.name) && App.Utils.sameText(s.size || '', item.size || '') && s.isLowStock
-              )
-            );
+            const stockMap = this._getStockMap();
+            base = App.State.globalItems.filter(item => {
+              const s = stockMap.get(this._stockKeyFor(item));
+              return !!s && s.isLowStock;
+            });
           } else if (term.includes('no metadata')) {
             const pendingMap = App.Utils.getPendingByItem();
-            base = App.State.globalItems.filter(item => this.getMetaInfo(item, pendingMap).parts.length === 0);
+            const stockMap = this._getStockMap();
+            base = App.State.globalItems.filter(item => this.getMetaInfo(item, pendingMap, stockMap).parts.length === 0);
           } else if (term.includes('zero stock')) {
             const pendingMap = App.Utils.getPendingByItem();
+            const stockMap = this._getStockMap();
             base = App.State.globalItems.filter(item => {
-              const { stockEntry } = this.getMetaInfo(item, pendingMap);
+              const { stockEntry } = this.getMetaInfo(item, pendingMap, stockMap);
               return stockEntry != null && Number(stockEntry.currentStock) === 0;
             });
           } else {
@@ -13755,8 +13774,8 @@
 
         // Computes which METADATA_FILTER_OPTIONS values apply to an item,
         // mirroring the logic getMetaInfo uses to render the Meta Data cell.
-        getMetadataFlags(item, pendingMap) {
-          const { parts, stockEntry } = this.getMetaInfo(item, pendingMap);
+        getMetadataFlags(item, pendingMap, stockMap) {
+          const { parts, stockEntry } = this.getMetaInfo(item, pendingMap, stockMap);
           const flags = new Set();
 
           const isPending = pendingMap.has(`${(item.name || '').toLowerCase()}|${(item.size || '').toLowerCase()}`);
@@ -13777,6 +13796,7 @@
           if (!name.length && !size.length && !narration.length && !vendor.length && !metadata.length) return items;
 
           const pendingMap = metadata.length ? App.Utils.getPendingByItem() : null;
+          const stockMap = metadata.length ? this._getStockMap() : null;
 
           return items.filter(item => {
             if (name.length && !name.includes(item.name || '')) return false;
@@ -13787,11 +13807,30 @@
               if (!vendor.some(v => itemVendors.includes(v))) return false;
             }
             if (metadata.length) {
-              const flags = this.getMetadataFlags(item, pendingMap);
+              const flags = this.getMetadataFlags(item, pendingMap, stockMap);
               if (!metadata.some(m => flags.has(m))) return false;
             }
             return true;
           });
+        },
+
+        // Builds this item's lookup key for _getStockMap(), matching
+        // App.Utils.sameText's trim+lowercase comparison semantics.
+        _stockKeyFor(item) {
+          return `${String(item.name || '').trim().toLowerCase()}|${String(item.size || '').trim().toLowerCase()}`;
+        },
+
+        // Map<name|size, stockEntry> built once from App.State.globalStock —
+        // used by getMetaInfo/getMetadataFlags and the 'low stock'/'zero
+        // stock' quick filters, instead of each doing its own
+        // globalStock.find()/.some() per item (O(items x stock) over the
+        // FULL item list otherwise).
+        _getStockMap() {
+          const map = new Map();
+          (App.State.globalStock || []).forEach(s => {
+            map.set(this._stockKeyFor(s), s);
+          });
+          return map;
         },
 
         // Builds a stable string key for an item row (Name + Size), mirroring
@@ -13802,10 +13841,8 @@
 
         // Shared by renderTable (display) and filterData ('no metadata' / 'zero stock')
         // so both agree on what counts as "no metadata" for an item.
-        getMetaInfo(item, pendingMap) {
-          const stockEntry = App.State.globalStock.find(
-            s => App.Utils.sameText(s.name, item.name) && App.Utils.sameText(s.size || '', item.size || '')
-          );
+        getMetaInfo(item, pendingMap, stockMap) {
+          const stockEntry = (stockMap || this._getStockMap()).get(this._stockKeyFor(item));
           const stockPart = stockEntry != null
             ? `<strong>Stock:</strong> <span class="${stockEntry.isLowStock ? 'text-danger fw-bold' : 'text-success fw-bold'}">${stockEntry.currentStock}</span>${stockEntry.isLowStock ? ' <span class="badge bg-danger ms-1 py-0 px-1" style="font-size:0.65rem;">Low</span>' : ''}`
             : null;
@@ -13858,6 +13895,7 @@
           }
 
           const pendingMap = App.Utils.getPendingByItem();
+          const stockMap = this._getStockMap();
 
           tbody.innerHTML = pageItems
             .map(item => {
@@ -13871,7 +13909,7 @@
                 )
                 .join('');
 
-              const { parts: metaParts } = this.getMetaInfo(item, pendingMap);
+              const { parts: metaParts } = this.getMetaInfo(item, pendingMap, stockMap);
 
               const encodedName = encodeURIComponent(item.name || '');
               const encodedSize = encodeURIComponent(item.size || '');
@@ -16971,6 +17009,7 @@
     App.State.globalStock = [];
     App.State.filteredStock = [];
     App.State.stockSearchTerm = '';
+    App.State.stockDeadSortMode = 'default'; // 'default' | 'last' | 'first' — dead stock display position
     App.State.globalWarehousePool = [];
     App.State.globalWarehousePoolOpening = [];
     App.State.globalWarehousePoolAdjustments = [];
@@ -17000,6 +17039,13 @@
         }
 
         try {
+          const savedSort = localStorage.getItem('stockDeadSortMode');
+          if (savedSort === 'default' || savedSort === 'last' || savedSort === 'first') {
+            App.State.stockDeadSortMode = savedSort;
+          }
+          const sortSelect = document.getElementById('stockDeadSort');
+          if (sortSelect) sortSelect.value = App.State.stockDeadSortMode;
+
           const res = await Api.call('getStockData');
           if (!res?.success) {
             App.Utils.showToast(res?.message || 'Failed to load stock data.', true);
@@ -17185,9 +17231,15 @@
       computeLeafRowsForProcess(process, term) {
         const buckets = (App.State.globalWarehousePool || []).filter(r => r.processId === process.processId);
         const knownColors = (App.State.warehousePoolColorsByProcess || {})[process.processId] || [];
-        const existingColors = new Set(buckets.map(r => r.color));
+        // Case-insensitive: knownColors is derived server-side from recipe/
+        // pool color strings that may have been typed with different casing
+        // than an existing bucket's own `color` (e.g. "Red" bucket vs a
+        // "red" entry in knownColors) — a raw Set.has() would then show
+        // BOTH the real bucket and a spurious zero-qty placeholder for what
+        // is really the same color.
+        const existingColors = new Set(buckets.map(r => String(r.color || '').trim().toLowerCase()));
         const missingColorRows = knownColors
-          .filter(c => !existingColors.has(c))
+          .filter(c => !existingColors.has(String(c || '').trim().toLowerCase()))
           .map(c => this._placeholderBucket(process, c));
         const rows = buckets.concat(missingColorRows)
           .sort((a, b) => a.color.localeCompare(b.color) || a.productTag.localeCompare(b.productTag));
@@ -17903,6 +17955,29 @@
         safeModalShow('poolLedgerModal');
       },
 
+      // Sets where dead-stock items appear relative to the rest of the
+      // (already latest-entry-first) list: left in place, pushed to the
+      // bottom, or pulled to the top. Persisted so the choice survives a
+      // reload. Only reorders for display — App.State.filteredStock (the
+      // search/filter result) is untouched.
+      setDeadSortMode(mode) {
+        if (mode !== 'default' && mode !== 'last' && mode !== 'first') return;
+        App.State.stockDeadSortMode = mode;
+        localStorage.setItem('stockDeadSortMode', mode);
+        App.State.stockCurrentPage = 1;
+        this.renderTable();
+      },
+
+      // Stable sort (ties keep their relative order) so dead-stock
+      // repositioning never disturbs the underlying latest-first ordering
+      // within the dead / non-dead groups themselves.
+      applyDeadSort(list) {
+        const mode = App.State.stockDeadSortMode;
+        if (mode === 'last') return [...list].sort((a, b) => (a.deadStock ? 1 : 0) - (b.deadStock ? 1 : 0));
+        if (mode === 'first') return [...list].sort((a, b) => (b.deadStock ? 1 : 0) - (a.deadStock ? 1 : 0));
+        return list;
+      },
+
       renderTable() {
         const tbody = document.getElementById('stockTableBody');
         if (!tbody) return;
@@ -17918,8 +17993,9 @@
         if (emptyState) emptyState.style.display = 'none';
 
         const { filteredStock, stockCurrentPage: cur, stockRowsPerPage: rpp } = App.State;
+        const displayStock = this.applyDeadSort(filteredStock);
         const start = (cur - 1) * rpp;
-        const pageItems = filteredStock.slice(start, start + rpp);
+        const pageItems = displayStock.slice(start, start + rpp);
 
         const selectAllChk = document.getElementById('selectAllStock');
         if (selectAllChk) {
@@ -19434,10 +19510,14 @@
           .filter(p => !sizeFilter || App.Utils.getSizeFromOutputItemName(p.outputItemName) === sizeFilter)
           .filter(p => !modelFilter || App.Utils.getModelFromOutputItemName(p.outputItemName) === modelFilter);
 
-        const typesPresent = new Set(matches.map(p => p.processType || 'General'));
+        // Case-insensitive: a process's own stored processType can differ in
+        // casing from Process Type Master's row (legacy/imported data) — a
+        // raw Set.has() would then silently drop that type from the
+        // dropdown entirely, even though matching processes exist.
+        const typesPresent = new Set(matches.map(p => String(p.processType || 'General').trim().toLowerCase()));
         const typeNames = (App.State.globalProcessTypes || []).map(t => t.name);
-        const ordered = typeNames.filter(t => typesPresent.has(t));
-        if (typesPresent.has('General')) ordered.push('General');
+        const ordered = typeNames.filter(t => typesPresent.has(t.trim().toLowerCase()));
+        if (typesPresent.has('general')) ordered.push('General');
 
         let html = modelFilter ? '<option value="">Choose a Process Type...</option>' : '<option value="">Choose a Model first...</option>';
         ordered.forEach(t => {
@@ -19522,7 +19602,7 @@
           .filter(p => p.active)
           .filter(p => !sizeFilter || App.Utils.getSizeFromOutputItemName(p.outputItemName) === sizeFilter)
           .filter(p => !modelFilter || App.Utils.getModelFromOutputItemName(p.outputItemName) === modelFilter)
-          .filter(p => !typeFilter || (p.processType || 'General') === typeFilter);
+          .filter(p => !typeFilter || App.Utils.sameText(p.processType || 'General', typeFilter));
 
         let html = typeFilter ? '<option value="">Choose a Process...</option>' : '<option value="">Choose a Process Type first...</option>';
 
@@ -22166,7 +22246,20 @@
       // _currentLotTotalQty, which already applies the same primary-axis-only
       // summing saveProduction uses), so reading productionQty there always
       // read 0 and left this hint permanently blank for every color lot.
-      async refreshPayableHint() {
+      // Debounced — this is called from onColorQtyChanged on every keystroke
+      // in a color qty input, and each call hits the server
+      // (getContractorRateForProcess). Without debouncing, typing a
+      // multi-digit quantity fired one network round trip per digit; only
+      // the last keystroke's resulting hint is ever seen, so the
+      // intermediate calls were pure waste. None of this function's 5 call
+      // sites await it or depend on its return value, so delaying the
+      // actual fetch is safe everywhere it's used.
+      refreshPayableHint() {
+        clearTimeout(this._payableHintDebounceTimer);
+        this._payableHintDebounceTimer = setTimeout(() => this._refreshPayableHintNow(), 300);
+      },
+
+      async _refreshPayableHintNow() {
         const hintEl = document.getElementById('productionPayableHint');
         if (!hintEl) return;
 
@@ -23253,7 +23346,18 @@
         },
         type: {
           label: 'Process Type',
-          getValue: p => p.processType || 'General',
+          // Canonicalizes to Process Type Master's own casing (case-
+          // insensitive lookup) same as size/model already do via
+          // getSizeFromOutputItemName/getModelFromOutputItemName — a stray
+          // casing mismatch between a process's stored processType and its
+          // Master row (e.g. imported/legacy data) would otherwise split one
+          // real group into two ("General" and "general" rendered as
+          // separate group headers) instead of merging.
+          getValue: p => {
+            const raw = p.processType || 'General';
+            const match = (App.State.globalProcessTypes || []).find(t => App.Utils.sameText(t.name, raw));
+            return match ? match.name : raw;
+          },
           rank: value => {
             const names = (App.State.globalProcessTypes || []).map(t => t.name);
             const i = names.indexOf(value);
@@ -25648,14 +25752,23 @@
 
         const currentRowIdx = toNumber(document.getElementById('dispatchRowIdx')?.value, 0);
 
+        // Pre-aggregated once (excluding the row currently being edited, if
+        // any — currentRowIdx is constant for this whole call) instead of
+        // filtering the full globalDispatch array per order line below —
+        // this modal opens on every Create/Edit Dispatch action.
+        const dispatchedByKey = new Map();
+        (App.State.globalDispatch || []).forEach(d => {
+          if (d.rowIdx === currentRowIdx) return;
+          const key = `${d.orderNumber}|${d.productId}`;
+          dispatchedByKey.set(key, (dispatchedByKey.get(key) || 0) + (Number(d.qty) || 0));
+        });
+
         let html = '<option value="">— Direct Supply (No Order) —</option>';
         (App.State.globalOrders || []).forEach(o => {
           if (o.status !== 'Order Confirmed') return;
 
           (o.lines || []).forEach(line => {
-            const dispatched = (App.State.globalDispatch || [])
-              .filter(d => d.orderNumber === o.orderNumber && d.productId === line.productId && d.rowIdx !== currentRowIdx)
-              .reduce((sum, d) => sum + (Number(d.qty) || 0), 0);
+            const dispatched = dispatchedByKey.get(`${o.orderNumber}|${line.productId}`) || 0;
             const pending = (Number(line.qty) || 0) - dispatched;
             const value = `${o.orderNumber}|${line.productId}`;
             if (pending <= 0.0001 && value !== currentValue) return;
@@ -28579,8 +28692,8 @@
 
       // ── Client Ledger (PI / Estimates + Dispatch History) ─────
       calculateClientLedger(clientName) {
-        const orders = (App.State.globalOrders || []).filter(o => o.clientName === clientName);
-        const dispatches = (App.State.globalDispatch || []).filter(d => d.clientName === clientName);
+        const orders = (App.State.globalOrders || []).filter(o => App.Utils.sameText(o.clientName, clientName));
+        const dispatches = (App.State.globalDispatch || []).filter(d => App.Utils.sameText(d.clientName, clientName));
         return { orders, dispatches };
       },
 
@@ -28592,7 +28705,7 @@
 
         (App.State.globalOrders || []).forEach(o => {
           if (o.status !== 'Order Confirmed') return;
-          if (clientName && o.clientName !== clientName) return;
+          if (clientName && !App.Utils.sameText(o.clientName, clientName)) return;
 
           const { label, badgeClass } = this.calculatePIDisplayStatus(o);
 

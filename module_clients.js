@@ -320,9 +320,27 @@ function deleteClientsBulk(clientNames) {
 
     // Skip any client with PI/Estimate or Dispatch history — deleting them
     // would orphan that history under a name no longer in the master list,
-    // making it unreachable from the Client Ledger (see _clientInUseMessage).
-    const skipped = requestedNames.filter(n => _clientInUseMessage(n));
-    const deletableNames = requestedNames.filter(n => !skipped.includes(n));
+    // making it unreachable from the Client Ledger. Each referencing sheet
+    // is read ONCE here into a name Set, instead of _clientInUseMessage()
+    // re-reading both sheets from scratch for EVERY requested name (O(K x 2N)
+    // instead of O(2N + K)) — same pattern as deleteClientOrdersBulk. The
+    // bulk path only needs the yes/no in-use verdict, not a reason string.
+    const inUseNames = new Set();
+    const addNamesFromSheet = (sheetName, col) => {
+      let sh;
+      try { sh = getSheet(sheetName); } catch (e) { return; }
+      const lastRow = sh.getLastRow();
+      if (lastRow < 2) return;
+      sh.getRange(2, col, lastRow - 1, 1).getValues().forEach(row => {
+        const n = String(row[0] || '').trim().toLowerCase();
+        if (n) inUseNames.add(n);
+      });
+    };
+    addNamesFromSheet(APP_CONFIG.SHEETS.CLIENT_ORDERS, CLIENT_ORDERS_COL.CLIENT_NAME);
+    addNamesFromSheet(APP_CONFIG.SHEETS.DISPATCH, DISPATCH_COL.CLIENT_NAME);
+
+    const skipped = requestedNames.filter(n => inUseNames.has(n.toLowerCase()));
+    const deletableNames = requestedNames.filter(n => !inUseNames.has(n.toLowerCase()));
     const targetSet = new Set(deletableNames.map(n => n.toLowerCase()));
 
     const lastRow = sheet.getLastRow();
