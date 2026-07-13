@@ -413,14 +413,24 @@ function _buildPoLineKey(poNumber, name, size, narration) {
  * still "open" when suggesting PO matches for a new, unlinked bill line
  * (see suggestPoAllocations() in module_po.js).
  *
+ * @param {Array} [preloadedBillRecords] - getBillData().data, when the caller
+ *   already has it (e.g. getDashboardData loads the Bill Ledger once for its
+ *   own KPIs) — skips a second full Bill-sheet read. Falls back to reading
+ *   it here when omitted, unchanged for existing callers.
  * @returns {Object} map keyed by _buildPoLineKey(poNumber, name, size, narration) -> baseQty
  */
-function _aggregateBilledBaseQtyByPo() {
+function _aggregateBilledBaseQtyByPo(preloadedBillRecords) {
   const map = {};
-  const billResponse = getBillData();
-  if (!billResponse.success) return map;
+  let billRecords;
+  if (preloadedBillRecords) {
+    billRecords = preloadedBillRecords;
+  } else {
+    const billResponse = getBillData();
+    if (!billResponse.success) return map;
+    billRecords = billResponse.data || [];
+  }
 
-  (billResponse.data || []).forEach(function(bill) {
+  (billRecords || []).forEach(function(bill) {
     (bill.items || []).forEach(function(item) {
       const poNum = String(item.poNumber || '').trim();
       if (!poNum || poNum.toUpperCase() === 'DIRECT') return;

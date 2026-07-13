@@ -827,9 +827,15 @@
       computeLeafRowsForProcess(process, term) {
         const buckets = (App.State.globalWarehousePool || []).filter(r => r.processId === process.processId);
         const knownColors = (App.State.warehousePoolColorsByProcess || {})[process.processId] || [];
-        const existingColors = new Set(buckets.map(r => r.color));
+        // Case-insensitive: knownColors is derived server-side from recipe/
+        // pool color strings that may have been typed with different casing
+        // than an existing bucket's own `color` (e.g. "Red" bucket vs a
+        // "red" entry in knownColors) — a raw Set.has() would then show
+        // BOTH the real bucket and a spurious zero-qty placeholder for what
+        // is really the same color.
+        const existingColors = new Set(buckets.map(r => String(r.color || '').trim().toLowerCase()));
         const missingColorRows = knownColors
-          .filter(c => !existingColors.has(c))
+          .filter(c => !existingColors.has(String(c || '').trim().toLowerCase()))
           .map(c => this._placeholderBucket(process, c));
         const rows = buckets.concat(missingColorRows)
           .sort((a, b) => a.color.localeCompare(b.color) || a.productTag.localeCompare(b.productTag));
@@ -881,23 +887,35 @@
             entries.every(e => App.Selection.isSelected(App.State.selectedWarehousePool, e.process.processId));
         }
 
-        const sorted = [...entries].sort((a, b) => {
-          for (const dim of tiers) {
-            const def = App.Process.GROUP_DIMENSIONS[dim];
-            const valA = def.getValue(a.process);
-            const valB = def.getValue(b.process);
-            if (valA !== valB) {
+        // See App.Process.renderTable — rank lookups are precomputed once per
+        // tier (Map) and once per row (Schwartzian transform) instead of the
+        // rank() closure rebuilding its names array + indexOf() on every
+        // pairwise comparison.
+        const rankMaps = App.Process.buildRankMaps(tiers);
+        const keyedEntries = entries.map(e => ({
+          row: e,
+          keys: tiers.map((dim, idx) => {
+            const value = App.Process.GROUP_DIMENSIONS[dim].getValue(e.process);
+            const rm = rankMaps[idx];
+            return { value, rank: rm.map.has(value) ? rm.map.get(value) : rm.fallback };
+          })
+        }));
+        keyedEntries.sort((a, b) => {
+          for (let i = 0; i < tiers.length; i++) {
+            const ka = a.keys[i], kb = b.keys[i];
+            if (ka.value !== kb.value) {
               // See the matching comment in App.Process.renderTable — two
               // different values can tie on rank, and returning "equal" here
               // would make the comparator non-transitive and scatter same-
               // value rows apart. Tie-break on the raw value.
-              const rankDiff = def.rank(valA) - def.rank(valB);
+              const rankDiff = ka.rank - kb.rank;
               if (rankDiff !== 0) return rankDiff;
-              return valA < valB ? -1 : 1;
+              return ka.value < kb.value ? -1 : 1;
             }
           }
-          return a.process.sequence - b.process.sequence;
+          return a.row.process.sequence - b.row.process.sequence;
         });
+        const sorted = keyedEntries.map(k => k.row);
 
         // One row per Process: tier dimensions (Size/Process Type/Model, per
         // the Group-by pickers) plus the Process itself, with its Total
@@ -1576,7 +1594,10 @@
         <td><strong class="text-dark">${escapeHtml(item.name)}</strong></td>
         <td><span class="badge bg-secondary">${escapeHtml(item.size || 'GENERAL')}</span></td>
         <td class="text-center fw-bold">${item.initialStock}</td>
-        <td class="text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}">${item.currentStock}</td>
+        <td class="text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}">
+          <span class="stock-current-display" data-qty="${item.currentStock}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
+                onclick="App.Stock.editStockCell(this, '${encName}', '${encSize}')">${item.currentStock}</span>
+        </td>
         <td class="text-center">
           <input type="number"
                  class="form-control form-control-sm mx-auto text-center threshold-input"
@@ -1607,6 +1628,104 @@
 
         App.Utils.renderPagination('stockPagination', filteredStock.length, cur, rpp, 'stock-page', 'Items');
         this.updateBulkButtons();
+      },
+
+      // Click-to-edit Current Stock cell — same interaction as the Warehouse
+      // Pool table's editPoolStockCell. Saves by SETTING Current Stock to the
+      // typed value (adjustStockManually — same overwrite semantics as the
+      // "Correct stock manually" modal, still available via the pencil
+      // button for edits that need a specific documented reason), using a
+      // fixed reason since there's no separate field for one in this inline
+      // flow.
+      editStockCell(spanEl, encName, encSize) {
+        const td = spanEl.closest('td');
+        if (!td) return;
+        const oldQty = parseFloat(spanEl.dataset.qty) || 0;
+        const originalHtml = td.innerHTML;
+        const revert = () => { td.innerHTML = originalHtml; };
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'form-control form-control-sm text-center d-inline-block';
+        input.style.width = '100px';
+        input.step = 'any';
+        input.value = oldQty;
+        td.innerHTML = '';
+        td.appendChild(input);
+        input.focus();
+        input.select();
+
+        const name = decodeURIComponent(encName || '');
+        const size = decodeURIComponent(encSize || '');
+
+        // Patches both state arrays (same pattern as toggleDeadStock) and
+        // re-renders — Current Stock drives isLowStock, which in turn drives
+        // this row's color/badge and the whole Alerts panel, so a full
+        // renderTable()/renderAlerts() is simpler and safer than hand-
+        // patching every derived bit of UI.
+        const applyLocally = (qty) => {
+          const item = App.State.globalStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+          if (item) { item.currentStock = qty; item.isLowStock = qty < item.threshold; }
+          const filteredItem = App.State.filteredStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+          if (filteredItem) { filteredItem.currentStock = qty; filteredItem.isLowStock = qty < filteredItem.threshold; }
+          this.renderAlerts();
+          this.renderTable();
+        };
+
+        let settled = false;
+        const finish = async () => {
+          if (settled) return;
+          settled = true;
+
+          const newQty = parseFloat(input.value);
+          if (isNaN(newQty)) {
+            App.Utils.showToast('Current Stock must be a valid number.', true);
+            revert();
+            return;
+          }
+          if (newQty === oldQty) {
+            revert();
+            return;
+          }
+
+          try {
+            const res = await Api.call('adjustStockManually', name, size, newQty, 'Inline edit via Stock table');
+            if (!res?.success) {
+              App.Utils.showToast(res?.message || 'Failed to update stock.', true);
+              // The server's "nothing to adjust" rejection means its fresh
+              // read of Current Stock already equals newQty — i.e. our
+              // on-screen oldQty was stale (e.g. another user's change
+              // landed after this table last loaded). Reconcile the display
+              // to that authoritative value instead of reverting to the
+              // stale one, or the cell would keep showing a wrong number
+              // and every retry of the same edit would fail the same way.
+              const serverQty = res?.data?.oldCurrentStock;
+              if (typeof serverQty === 'number' && !isNaN(serverQty) && serverQty !== oldQty) {
+                applyLocally(serverQty);
+              } else {
+                revert();
+              }
+              return;
+            }
+
+            applyLocally(newQty);
+            App.Utils.showToast('Stock updated.');
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to update stock.', true);
+            revert();
+          }
+        };
+
+        input.addEventListener('blur', finish);
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+          } else if (e.key === 'Escape') {
+            settled = true;
+            revert();
+          }
+        });
       },
 
       // Builds a stable string key for a stock row (Item Name + Size).

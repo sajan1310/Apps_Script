@@ -696,8 +696,8 @@
 
       // ── Client Ledger (PI / Estimates + Dispatch History) ─────
       calculateClientLedger(clientName) {
-        const orders = (App.State.globalOrders || []).filter(o => o.clientName === clientName);
-        const dispatches = (App.State.globalDispatch || []).filter(d => d.clientName === clientName);
+        const orders = (App.State.globalOrders || []).filter(o => App.Utils.sameText(o.clientName, clientName));
+        const dispatches = (App.State.globalDispatch || []).filter(d => App.Utils.sameText(d.clientName, clientName));
         return { orders, dispatches };
       },
 
@@ -709,7 +709,7 @@
 
         (App.State.globalOrders || []).forEach(o => {
           if (o.status !== 'Order Confirmed') return;
-          if (clientName && o.clientName !== clientName) return;
+          if (clientName && !App.Utils.sameText(o.clientName, clientName)) return;
 
           const { label, badgeClass } = this.calculatePIDisplayStatus(o);
 

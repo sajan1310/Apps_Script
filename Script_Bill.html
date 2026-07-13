@@ -729,22 +729,57 @@
           return findInLedger(App.State.globalPOs, false) ?? findInLedger(App.State.globalBills, false);
         },
 
-        _getBilledQty(poNumber, itemName, itemSize, itemNarration, excludeBillNumber) {
-          const nameLower = String(itemName || '').trim().toLowerCase();
-          const sizeLower = String(itemSize || '').trim().toLowerCase();
-          const narrationLower = String(itemNarration || '').trim().toLowerCase();
-          let total = 0;
-          for (const bill of (App.State.globalBills || [])) {
-            if (excludeBillNumber && String(bill.billNumber).trim() === excludeBillNumber) continue;
-            for (const bItem of (bill.items || [])) {
-              if (String(bItem.poNumber || '').trim() !== poNumber) continue;
-              if (String(bItem.name || '').trim().toLowerCase() !== nameLower) continue;
-              if (String(bItem.size || '').trim().toLowerCase() !== sizeLower) continue;
-              if (String(bItem.narration || '').trim().toLowerCase() !== narrationLower) continue;
-              total += Number(bItem.baseQty) || 0;
-            }
+        // Index of every Bill line's billed base qty, keyed by
+        // (poNumber, name, size, narration) with a per-bill breakdown (so a
+        // specific bill can still be excluded, e.g. when editing it). Built
+        // once and reused until App.State.globalBills is reassigned (every
+        // load/save/delete replaces the array — see loadData above and
+        // billKey-filter deletes — so an identity check is a safe cache key).
+        // Without this, _getBilledQty rescanned every Bill × every Bill line
+        // on EVERY call, and App.Core.getPendingByItem calls it once per PO
+        // line across every open PO — O(POs·lines·Bills·billItems) instead
+        // of O(Bills·billItems) once plus O(1) per lookup.
+        _billedQtyIndex: null,
+        _billedQtyIndexSrc: null,
+        _getBilledQtyIndex() {
+          if (this._billedQtyIndexSrc === App.State.globalBills && this._billedQtyIndex) {
+            return this._billedQtyIndex;
           }
-          return total;
+          const index = new Map();
+          (App.State.globalBills || []).forEach(bill => {
+            const billNumber = String(bill.billNumber || '').trim();
+            (bill.items || []).forEach(bItem => {
+              const key = [
+                String(bItem.poNumber || '').trim(),
+                String(bItem.name || '').trim().toLowerCase(),
+                String(bItem.size || '').trim().toLowerCase(),
+                String(bItem.narration || '').trim().toLowerCase()
+              ].join('|');
+              let entry = index.get(key);
+              if (!entry) { entry = { total: 0, byBill: new Map() }; index.set(key, entry); }
+              const qty = Number(bItem.baseQty) || 0;
+              entry.total += qty;
+              entry.byBill.set(billNumber, (entry.byBill.get(billNumber) || 0) + qty);
+            });
+          });
+          this._billedQtyIndex = index;
+          this._billedQtyIndexSrc = App.State.globalBills;
+          return index;
+        },
+
+        _getBilledQty(poNumber, itemName, itemSize, itemNarration, excludeBillNumber) {
+          const key = [
+            String(poNumber || '').trim(),
+            String(itemName || '').trim().toLowerCase(),
+            String(itemSize || '').trim().toLowerCase(),
+            String(itemNarration || '').trim().toLowerCase()
+          ].join('|');
+          const entry = this._getBilledQtyIndex().get(key);
+          if (!entry) return 0;
+          if (excludeBillNumber) {
+            return entry.total - (entry.byBill.get(String(excludeBillNumber).trim()) || 0);
+          }
+          return entry.total;
         },
 
         autoFillRate(row) {

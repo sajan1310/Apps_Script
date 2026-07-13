@@ -12967,22 +12967,57 @@
           return findInLedger(App.State.globalPOs, false) ?? findInLedger(App.State.globalBills, false);
         },
 
-        _getBilledQty(poNumber, itemName, itemSize, itemNarration, excludeBillNumber) {
-          const nameLower = String(itemName || '').trim().toLowerCase();
-          const sizeLower = String(itemSize || '').trim().toLowerCase();
-          const narrationLower = String(itemNarration || '').trim().toLowerCase();
-          let total = 0;
-          for (const bill of (App.State.globalBills || [])) {
-            if (excludeBillNumber && String(bill.billNumber).trim() === excludeBillNumber) continue;
-            for (const bItem of (bill.items || [])) {
-              if (String(bItem.poNumber || '').trim() !== poNumber) continue;
-              if (String(bItem.name || '').trim().toLowerCase() !== nameLower) continue;
-              if (String(bItem.size || '').trim().toLowerCase() !== sizeLower) continue;
-              if (String(bItem.narration || '').trim().toLowerCase() !== narrationLower) continue;
-              total += Number(bItem.baseQty) || 0;
-            }
+        // Index of every Bill line's billed base qty, keyed by
+        // (poNumber, name, size, narration) with a per-bill breakdown (so a
+        // specific bill can still be excluded, e.g. when editing it). Built
+        // once and reused until App.State.globalBills is reassigned (every
+        // load/save/delete replaces the array — see loadData above and
+        // billKey-filter deletes — so an identity check is a safe cache key).
+        // Without this, _getBilledQty rescanned every Bill × every Bill line
+        // on EVERY call, and App.Core.getPendingByItem calls it once per PO
+        // line across every open PO — O(POs·lines·Bills·billItems) instead
+        // of O(Bills·billItems) once plus O(1) per lookup.
+        _billedQtyIndex: null,
+        _billedQtyIndexSrc: null,
+        _getBilledQtyIndex() {
+          if (this._billedQtyIndexSrc === App.State.globalBills && this._billedQtyIndex) {
+            return this._billedQtyIndex;
           }
-          return total;
+          const index = new Map();
+          (App.State.globalBills || []).forEach(bill => {
+            const billNumber = String(bill.billNumber || '').trim();
+            (bill.items || []).forEach(bItem => {
+              const key = [
+                String(bItem.poNumber || '').trim(),
+                String(bItem.name || '').trim().toLowerCase(),
+                String(bItem.size || '').trim().toLowerCase(),
+                String(bItem.narration || '').trim().toLowerCase()
+              ].join('|');
+              let entry = index.get(key);
+              if (!entry) { entry = { total: 0, byBill: new Map() }; index.set(key, entry); }
+              const qty = Number(bItem.baseQty) || 0;
+              entry.total += qty;
+              entry.byBill.set(billNumber, (entry.byBill.get(billNumber) || 0) + qty);
+            });
+          });
+          this._billedQtyIndex = index;
+          this._billedQtyIndexSrc = App.State.globalBills;
+          return index;
+        },
+
+        _getBilledQty(poNumber, itemName, itemSize, itemNarration, excludeBillNumber) {
+          const key = [
+            String(poNumber || '').trim(),
+            String(itemName || '').trim().toLowerCase(),
+            String(itemSize || '').trim().toLowerCase(),
+            String(itemNarration || '').trim().toLowerCase()
+          ].join('|');
+          const entry = this._getBilledQtyIndex().get(key);
+          if (!entry) return 0;
+          if (excludeBillNumber) {
+            return entry.total - (entry.byBill.get(String(excludeBillNumber).trim()) || 0);
+          }
+          return entry.total;
         },
 
         autoFillRate(row) {
@@ -17204,23 +17239,35 @@
             entries.every(e => App.Selection.isSelected(App.State.selectedWarehousePool, e.process.processId));
         }
 
-        const sorted = [...entries].sort((a, b) => {
-          for (const dim of tiers) {
-            const def = App.Process.GROUP_DIMENSIONS[dim];
-            const valA = def.getValue(a.process);
-            const valB = def.getValue(b.process);
-            if (valA !== valB) {
+        // See App.Process.renderTable — rank lookups are precomputed once per
+        // tier (Map) and once per row (Schwartzian transform) instead of the
+        // rank() closure rebuilding its names array + indexOf() on every
+        // pairwise comparison.
+        const rankMaps = App.Process.buildRankMaps(tiers);
+        const keyedEntries = entries.map(e => ({
+          row: e,
+          keys: tiers.map((dim, idx) => {
+            const value = App.Process.GROUP_DIMENSIONS[dim].getValue(e.process);
+            const rm = rankMaps[idx];
+            return { value, rank: rm.map.has(value) ? rm.map.get(value) : rm.fallback };
+          })
+        }));
+        keyedEntries.sort((a, b) => {
+          for (let i = 0; i < tiers.length; i++) {
+            const ka = a.keys[i], kb = b.keys[i];
+            if (ka.value !== kb.value) {
               // See the matching comment in App.Process.renderTable — two
               // different values can tie on rank, and returning "equal" here
               // would make the comparator non-transitive and scatter same-
               // value rows apart. Tie-break on the raw value.
-              const rankDiff = def.rank(valA) - def.rank(valB);
+              const rankDiff = ka.rank - kb.rank;
               if (rankDiff !== 0) return rankDiff;
-              return valA < valB ? -1 : 1;
+              return ka.value < kb.value ? -1 : 1;
             }
           }
-          return a.process.sequence - b.process.sequence;
+          return a.row.process.sequence - b.row.process.sequence;
         });
+        const sorted = keyedEntries.map(k => k.row);
 
         // One row per Process: tier dimensions (Size/Process Type/Model, per
         // the Group-by pickers) plus the Process itself, with its Total
@@ -17899,7 +17946,10 @@
         <td><strong class="text-dark">${escapeHtml(item.name)}</strong></td>
         <td><span class="badge bg-secondary">${escapeHtml(item.size || 'GENERAL')}</span></td>
         <td class="text-center fw-bold">${item.initialStock}</td>
-        <td class="text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}">${item.currentStock}</td>
+        <td class="text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}">
+          <span class="stock-current-display" data-qty="${item.currentStock}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
+                onclick="App.Stock.editStockCell(this, '${encName}', '${encSize}')">${item.currentStock}</span>
+        </td>
         <td class="text-center">
           <input type="number"
                  class="form-control form-control-sm mx-auto text-center threshold-input"
@@ -17930,6 +17980,104 @@
 
         App.Utils.renderPagination('stockPagination', filteredStock.length, cur, rpp, 'stock-page', 'Items');
         this.updateBulkButtons();
+      },
+
+      // Click-to-edit Current Stock cell — same interaction as the Warehouse
+      // Pool table's editPoolStockCell. Saves by SETTING Current Stock to the
+      // typed value (adjustStockManually — same overwrite semantics as the
+      // "Correct stock manually" modal, still available via the pencil
+      // button for edits that need a specific documented reason), using a
+      // fixed reason since there's no separate field for one in this inline
+      // flow.
+      editStockCell(spanEl, encName, encSize) {
+        const td = spanEl.closest('td');
+        if (!td) return;
+        const oldQty = parseFloat(spanEl.dataset.qty) || 0;
+        const originalHtml = td.innerHTML;
+        const revert = () => { td.innerHTML = originalHtml; };
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'form-control form-control-sm text-center d-inline-block';
+        input.style.width = '100px';
+        input.step = 'any';
+        input.value = oldQty;
+        td.innerHTML = '';
+        td.appendChild(input);
+        input.focus();
+        input.select();
+
+        const name = decodeURIComponent(encName || '');
+        const size = decodeURIComponent(encSize || '');
+
+        // Patches both state arrays (same pattern as toggleDeadStock) and
+        // re-renders — Current Stock drives isLowStock, which in turn drives
+        // this row's color/badge and the whole Alerts panel, so a full
+        // renderTable()/renderAlerts() is simpler and safer than hand-
+        // patching every derived bit of UI.
+        const applyLocally = (qty) => {
+          const item = App.State.globalStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+          if (item) { item.currentStock = qty; item.isLowStock = qty < item.threshold; }
+          const filteredItem = App.State.filteredStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+          if (filteredItem) { filteredItem.currentStock = qty; filteredItem.isLowStock = qty < filteredItem.threshold; }
+          this.renderAlerts();
+          this.renderTable();
+        };
+
+        let settled = false;
+        const finish = async () => {
+          if (settled) return;
+          settled = true;
+
+          const newQty = parseFloat(input.value);
+          if (isNaN(newQty)) {
+            App.Utils.showToast('Current Stock must be a valid number.', true);
+            revert();
+            return;
+          }
+          if (newQty === oldQty) {
+            revert();
+            return;
+          }
+
+          try {
+            const res = await Api.call('adjustStockManually', name, size, newQty, 'Inline edit via Stock table');
+            if (!res?.success) {
+              App.Utils.showToast(res?.message || 'Failed to update stock.', true);
+              // The server's "nothing to adjust" rejection means its fresh
+              // read of Current Stock already equals newQty — i.e. our
+              // on-screen oldQty was stale (e.g. another user's change
+              // landed after this table last loaded). Reconcile the display
+              // to that authoritative value instead of reverting to the
+              // stale one, or the cell would keep showing a wrong number
+              // and every retry of the same edit would fail the same way.
+              const serverQty = res?.data?.oldCurrentStock;
+              if (typeof serverQty === 'number' && !isNaN(serverQty) && serverQty !== oldQty) {
+                applyLocally(serverQty);
+              } else {
+                revert();
+              }
+              return;
+            }
+
+            applyLocally(newQty);
+            App.Utils.showToast('Stock updated.');
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to update stock.', true);
+            revert();
+          }
+        };
+
+        input.addEventListener('blur', finish);
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+          } else if (e.key === 'Escape') {
+            settled = true;
+            revert();
+          }
+        });
       },
 
       // Builds a stable string key for a stock row (Item Name + Size).
@@ -20853,7 +21001,7 @@
           const res = await this._fetchProcessComponents(processId);
           if (seq !== undefined && seq !== this._compLoadSeq) return;
           const all = res.success ? (res.data || []) : [];
-          const components = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON' || c.colorGroup === colorGroup);
+          const components = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON' || App.Utils.sameText(c.colorGroup, colorGroup));
           const lotQty = toNumber(document.getElementById('productionQty')?.value) || 0;
           components.forEach(c => this.addComponentRow({
             itemName: c.itemName,
@@ -21372,7 +21520,7 @@
               // different literal items per color (e.g. "Frame---Red" /
               // "Frame---Blue") — keep those on merged rows, one real item
               // picker per color cell.
-              const colorComps = all.filter(c => c.colorGroup === color)
+              const colorComps = all.filter(c => App.Utils.sameText(c.colorGroup, color))
                 .map(c => ({ ...c, displayName: this._stripColorSubstring(c.itemName || '', color) }));
 
               colorComps.forEach(c => {
@@ -21992,8 +22140,17 @@
         // re-initializations, and clearing it on the next microtask (rather
         // than leaving it set) still lets a genuinely separate, later change
         // refresh normally.
+        // Namespaced ('change.prodAssignedTo') so `.off()` only ever removes
+        // OUR OWN prior binding on re-init — plain `.off('change')` removes
+        // EVERY 'change' handler regardless of namespace, including Select2's
+        // own internal 'change.select2' listener that repaints the visible
+        // selection box. That silently broke the box's on-screen text: the
+        // underlying <select>.value updated correctly on every click/keyboard
+        // selection, but the rendered label never refreshed to show it,
+        // making the dropdown look completely unresponsive despite the
+        // selection actually having taken effect.
         let handlingChange = false;
-        $select.off('change').on('change', () => {
+        $select.off('change.prodAssignedTo').on('change.prodAssignedTo', () => {
           if (handlingChange) return;
           handlingChange = true;
           Promise.resolve().then(() => { handlingChange = false; });
@@ -23114,6 +23271,24 @@
         }
       },
 
+      // One Map<value, rankIndex> per active tier, built ONCE per render.
+      // Previously each tier's rank() closure rebuilt its whole names array
+      // (Process Type Master / Model Master / PROCESS_SIZE_LIST) and re-ran
+      // .indexOf() on every pairwise comparison inside the group-sort below
+      // — O(n log n) rebuilds of an O(m) array instead of one. Used together
+      // with a per-row precomputed sort key (Schwartzian transform) so the
+      // comparator itself does no lookups at all.
+      buildRankMaps(tiers) {
+        return tiers.map(dim => {
+          const names = dim === 'size' ? App.Utils.PROCESS_SIZE_LIST
+            : dim === 'type' ? (App.State.globalProcessTypes || []).map(t => t.name)
+            : (App.State.globalModels || []).map(m => m.name);
+          const map = new Map();
+          names.forEach((n, i) => { if (!map.has(n)) map.set(n, i); });
+          return { map, fallback: names.length };
+        });
+      },
+
       // Restores the saved tier order (if any) and (re)populates the 3
       // "Group by" dropdowns. Each dropdown's options exclude whichever
       // dimensions are already chosen in the other two dropdowns, so the
@@ -23242,12 +23417,21 @@
         const isSearchFiltered = !!(searchEl && searchEl.value.trim());
         const dragEnabled = tiers.length === 0 && !isSearchFiltered;
 
-        const sorted = [...App.State.filteredProcesses].sort((a, b) => {
-          for (const dim of tiers) {
-            const def = App.Process.GROUP_DIMENSIONS[dim];
-            const valA = def.getValue(a);
-            const valB = def.getValue(b);
-            if (valA !== valB) {
+        const rankMaps = this.buildRankMaps(tiers);
+        // Each row's per-tier {value, rank} is computed once here rather
+        // than re-derived on every pairwise comparison inside sort().
+        const keyedProcesses = App.State.filteredProcesses.map(p => ({
+          row: p,
+          keys: tiers.map((dim, idx) => {
+            const value = App.Process.GROUP_DIMENSIONS[dim].getValue(p);
+            const rm = rankMaps[idx];
+            return { value, rank: rm.map.has(value) ? rm.map.get(value) : rm.fallback };
+          })
+        }));
+        keyedProcesses.sort((a, b) => {
+          for (let i = 0; i < tiers.length; i++) {
+            const ka = a.keys[i], kb = b.keys[i];
+            if (ka.value !== kb.value) {
               // Two DIFFERENT values can still tie on rank (e.g. two stale
               // Process Type strings no longer in Process Type Master both
               // fall back to names.length) — falling through to "equal" here
@@ -23257,13 +23441,14 @@
               // on the raw value itself so the order (and therefore grouping)
               // stays consistent regardless of how many distinct values
               // share a rank.
-              const rankDiff = def.rank(valA) - def.rank(valB);
+              const rankDiff = ka.rank - kb.rank;
               if (rankDiff !== 0) return rankDiff;
-              return valA < valB ? -1 : 1;
+              return ka.value < kb.value ? -1 : 1;
             }
           }
-          return a.sequence - b.sequence;
+          return a.row.sequence - b.row.sequence;
         });
+        const sorted = keyedProcesses.map(k => k.row);
 
         const collapsed = App.State.collapsedProcessGroups;
         let html = '';
@@ -24645,10 +24830,21 @@
         const currentName = itemSelect?.options[itemSelect.selectedIndex]?.dataset.name;
         if (!currentName) return;
 
-        const foundColor = colorNames.find(c =>
-          c.toLowerCase() !== newColor.toLowerCase() &&
-          new RegExp(`\\b${this._escapeRegExp(c)}\\b`, 'i').test(currentName)
-        );
+        // Prefer the LONGEST matching Color Master name, not just the first
+        // one found in App.State.globalColors' (arbitrary, creation) order.
+        // A compound item name like "...-BLUE-WHITE" also whole-word-matches
+        // the shorter "Blue" and "White" entries whenever those are ALSO
+        // registered on their own (a very normal setup once both a plain
+        // base color and the hyphenated axis-pair convention exist side by
+        // side) — picking one of those instead of the correct "Blue-White"
+        // only replaces part of the compound, leaving a mangled candidate
+        // name (e.g. "...-Purple-White-WHITE") that never matches anything
+        // in Item Master, so the swap silently no-ops. The longest match is
+        // always the most specific one and never worse than a shorter match
+        // would have been.
+        const foundColor = colorNames
+          .filter(c => c.toLowerCase() !== newColor.toLowerCase() && new RegExp(`\\b${this._escapeRegExp(c)}\\b`, 'i').test(currentName))
+          .sort((a, b) => b.length - a.length)[0];
         if (!foundColor) return;
 
         const candidateName = currentName.replace(new RegExp(`\\b${this._escapeRegExp(foundColor)}\\b`, 'i'), newColor);
@@ -25648,8 +25844,12 @@
 
         // Same Select2 v4 synchronous re-entrant double-'change' quirk as
         // Production's initContractorSelect2 — see its comment for details.
+        // Namespaced for the same reason too: plain `.off('change')` strips
+        // Select2's own internal 'change.select2' listener that repaints the
+        // visible selection box, leaving the underlying value updated but
+        // the on-screen label frozen on the old selection.
         let handlingChange = false;
-        $select.off('change').on('change', () => {
+        $select.off('change.dispatchLogisticsContractor').on('change.dispatchLogisticsContractor', () => {
           if (handlingChange) return;
           handlingChange = true;
           Promise.resolve().then(() => { handlingChange = false; });

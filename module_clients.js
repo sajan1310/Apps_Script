@@ -103,9 +103,15 @@ function getClientsData() {
  * @private
  */
 function _renameClientEverywhere(oldName, newName) {
-  const tOld = String(oldName || '').trim().toLowerCase();
+  const tOldRaw = String(oldName || '').trim();
+  const tOld = tOldRaw.toLowerCase();
   const tNew = String(newName || '').trim();
-  if (!tOld || !tNew || tOld === tNew.toLowerCase()) return;
+  // Plain string compare (not case-insensitive) so a casing-only edit
+  // ("abc corp" -> "ABC Corp") still cascades — mirrors
+  // module_vendors.js#saveClient's own guard fix; matching module_vendors.js/
+  // module_contractors.js/module_units.js/module_tags.js, all of which
+  // deliberately use case-SENSITIVE guards here for the same reason.
+  if (!tOld || !tNew || tOldRaw === tNew) return;
 
   const renameInColumn = (sheetName, col) => {
     let sheet;
@@ -227,7 +233,9 @@ function saveClient(formData) {
       sheet.getRange(targetRow, 1, 1, 5).setValues([rowData]);
       // Propagate the rename to every sheet holding a de-normalized copy of
       // the client name before it's out of scope (see _renameClientEverywhere).
-      if (newName.toLowerCase() !== originalName.toLowerCase()) {
+      // Plain string compare (not case-insensitive) so a casing-only edit
+      // still cascades — see _renameClientEverywhere's own comment.
+      if (newName !== originalName) {
         _renameClientEverywhere(originalName, newName);
       }
     } else {

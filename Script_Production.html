@@ -2389,7 +2389,7 @@
           const res = await this._fetchProcessComponents(processId);
           if (seq !== undefined && seq !== this._compLoadSeq) return;
           const all = res.success ? (res.data || []) : [];
-          const components = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON' || c.colorGroup === colorGroup);
+          const components = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON' || App.Utils.sameText(c.colorGroup, colorGroup));
           const lotQty = toNumber(document.getElementById('productionQty')?.value) || 0;
           components.forEach(c => this.addComponentRow({
             itemName: c.itemName,
@@ -2908,7 +2908,7 @@
               // different literal items per color (e.g. "Frame---Red" /
               // "Frame---Blue") — keep those on merged rows, one real item
               // picker per color cell.
-              const colorComps = all.filter(c => c.colorGroup === color)
+              const colorComps = all.filter(c => App.Utils.sameText(c.colorGroup, color))
                 .map(c => ({ ...c, displayName: this._stripColorSubstring(c.itemName || '', color) }));
 
               colorComps.forEach(c => {
@@ -3528,8 +3528,17 @@
         // re-initializations, and clearing it on the next microtask (rather
         // than leaving it set) still lets a genuinely separate, later change
         // refresh normally.
+        // Namespaced ('change.prodAssignedTo') so `.off()` only ever removes
+        // OUR OWN prior binding on re-init — plain `.off('change')` removes
+        // EVERY 'change' handler regardless of namespace, including Select2's
+        // own internal 'change.select2' listener that repaints the visible
+        // selection box. That silently broke the box's on-screen text: the
+        // underlying <select>.value updated correctly on every click/keyboard
+        // selection, but the rendered label never refreshed to show it,
+        // making the dropdown look completely unresponsive despite the
+        // selection actually having taken effect.
         let handlingChange = false;
-        $select.off('change').on('change', () => {
+        $select.off('change.prodAssignedTo').on('change.prodAssignedTo', () => {
           if (handlingChange) return;
           handlingChange = true;
           Promise.resolve().then(() => { handlingChange = false; });

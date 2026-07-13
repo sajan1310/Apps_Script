@@ -17,14 +17,17 @@
  * Open POs: PO lines whose Base Qty hasn't been fully billed yet.
  * Reuses module_po.js/module_bill.js's own billed-qty aggregation so this
  * stays in sync with however "billed" is defined there.
+ * @param {Array} [preloadedBillRecords] - getBillData().data, when the caller
+ *   already has it (see getDashboardData) — avoids a second full Bill-sheet
+ *   read on top of the one _aggregateBilledBaseQtyByPo would otherwise do.
  * @returns {{count: number, value: number}}
  * @private
  */
-function _getOpenPoSummary() {
+function _getOpenPoSummary(preloadedBillRecords) {
   // Computed once and shared with getPOData below (which would otherwise
   // aggregate the entire Bill Ledger a second time just to derive status)
   // instead of each doing its own full Bill-sheet read.
-  const billedMap = _aggregateBilledBaseQtyByPo();
+  const billedMap = _aggregateBilledBaseQtyByPo(preloadedBillRecords);
   const poResp = getPOData(billedMap);
   if (!poResp.success) return { count: 0, value: 0 };
 
@@ -49,33 +52,43 @@ function _getOpenPoSummary() {
 }
 
 /**
- * Sums a ledger's count + value (or qty) for a given calendar month, where
- * monthsAgo=0 is the current month and monthsAgo=1 is the prior month — lets
- * every "this month" KPI also report its "vs last month" comparison from the
- * same records without a second sheet read.
+ * Sums a ledger's count + value (or qty) for this calendar month AND the
+ * prior one in a single pass over records — every dashboard KPI needs both
+ * ("this month" plus its "vs last month" comparison), and looping the same
+ * ledger array twice (once per month) to get them doubled the scan for no
+ * reason.
  * @param {Array} records
  * @param {string} dateField - name of the record's YYYY-MM-DD date field
  * @param {string} [amountField] - name of the record's numeric field to sum;
  *   omitted when only a count is needed
- * @param {number} monthsAgo
- * @returns {{count: number, value: number}}
+ * @returns {{thisMonth: {count: number, value: number}, lastMonth: {count: number, value: number}}}
  * @private
  */
-function _summarizeByMonth(records, dateField, amountField, monthsAgo) {
-  const ref = new Date();
-  ref.setMonth(ref.getMonth() - monthsAgo);
-  const monthKey = ref.getFullYear() + '-' + String(ref.getMonth() + 1).padStart(2, '0');
+function _summarizeByTwoMonths(records, dateField, amountField) {
+  const now = new Date();
+  const thisMonthKey = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const last = new Date(now);
+  last.setMonth(last.getMonth() - 1);
+  const lastMonthKey = last.getFullYear() + '-' + String(last.getMonth() + 1).padStart(2, '0');
 
-  let count = 0;
-  let value = 0;
+  let thisCount = 0, thisValue = 0, lastCount = 0, lastValue = 0;
   (records || []).forEach(rec => {
     const raw = rec[dateField];
-    if (!raw || !String(raw).startsWith(monthKey)) return;
-    count++;
-    if (amountField) value += rec[amountField] || 0;
+    if (!raw) return;
+    const rawStr = String(raw);
+    if (rawStr.startsWith(thisMonthKey)) {
+      thisCount++;
+      if (amountField) thisValue += rec[amountField] || 0;
+    } else if (rawStr.startsWith(lastMonthKey)) {
+      lastCount++;
+      if (amountField) lastValue += rec[amountField] || 0;
+    }
   });
 
-  return { count: count, value: Math.round(value * 100) / 100 };
+  return {
+    thisMonth: { count: thisCount, value: Math.round(thisValue * 100) / 100 },
+    lastMonth: { count: lastCount, value: Math.round(lastValue * 100) / 100 }
+  };
 }
 
 /**
@@ -264,13 +277,13 @@ function getDashboardData() {
     const billResp = getBillData();
     const billRecords = (billResp && billResp.data) || [];
 
-    const openPoSummary = _getOpenPoSummary();
-    const billsThisMonth = _summarizeByMonth(billRecords, 'billDateRaw', 'totalAmount', 0);
-    const billsLastMonth = _summarizeByMonth(billRecords, 'billDateRaw', 'totalAmount', 1);
-    const returnsThisMonth = _summarizeByMonth(returnRecords, 'returnDateRaw', 'totalAmount', 0);
-    const returnsLastMonth = _summarizeByMonth(returnRecords, 'returnDateRaw', 'totalAmount', 1);
-    const wastageThisMonth = _summarizeByMonth(wastageRecords, 'dateRaw', 'totalQty', 0);
-    const wastageLastMonth = _summarizeByMonth(wastageRecords, 'dateRaw', 'totalQty', 1);
+    const openPoSummary = _getOpenPoSummary(billRecords);
+    const billsMonths = _summarizeByTwoMonths(billRecords, 'billDateRaw', 'totalAmount');
+    const billsThisMonth = billsMonths.thisMonth, billsLastMonth = billsMonths.lastMonth;
+    const returnsMonths = _summarizeByTwoMonths(returnRecords, 'returnDateRaw', 'totalAmount');
+    const returnsThisMonth = returnsMonths.thisMonth, returnsLastMonth = returnsMonths.lastMonth;
+    const wastageMonths = _summarizeByTwoMonths(wastageRecords, 'dateRaw', 'totalQty');
+    const wastageThisMonth = wastageMonths.thisMonth, wastageLastMonth = wastageMonths.lastMonth;
     const totalContractorPayableDue = contractorLedger.reduce((sum, c) => sum + Math.max(c.balanceDue, 0), 0);
 
     return buildResponse(true, {

@@ -1011,12 +1011,13 @@ function getPOData(preloadedBilledMap) {
       _attachPoStatus(po, billedMap);
     });
 
-    // Convert to array and sort by PO number (descending)
-    const sorted = Object.values(poMap).sort(function(a, b) {
-      const numA = parseInt(String(a.poNumber).replace(/\D/g, ''), 10) || 0;
-      const numB = parseInt(String(b.poNumber).replace(/\D/g, ''), 10) || 0;
-      return numB - numA;
-    });
+    // Convert to array and sort by PO number (descending). Numeric key is
+    // precomputed once per PO rather than re-parsed (regex + parseInt) on
+    // every pairwise comparison during the sort.
+    const pos = Object.values(poMap);
+    pos.forEach(function(po) { po._sortNum = parseInt(String(po.poNumber).replace(/\D/g, ''), 10) || 0; });
+    const sorted = pos.sort(function(a, b) { return b._sortNum - a._sortNum; });
+    sorted.forEach(function(po) { delete po._sortNum; });
 
     return buildResponse(true, sorted);
   } catch (error) {

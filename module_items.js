@@ -761,13 +761,32 @@ function saveItem(formData) {
       : newSize;
 
     // ─────────────────────────────────────────────────────────────────
-    // Find existing item and check for duplicates
+    // Find existing item and check for duplicates. Original + new
+    // (name,size) are looked up from ONE read of the sheet's Name+Size
+    // columns — they're two different lookups against the exact same
+    // snapshot, so calling _findItemRow() a second time for the new combo
+    // would just re-read the identical range the first call already fetched.
     // ─────────────────────────────────────────────────────────────────
-    const { matchRow: existingRow } = _findItemRow(sheet, originalName, originalSize);
+    const _itemsLastRow = sheet.getLastRow();
+    const _nameSizeData = _itemsLastRow >= 2
+      ? sheet.getRange(2, ITEMS_COL.ITEM_NAME, _itemsLastRow - 1, ITEMS_COL.SIZE - ITEMS_COL.ITEM_NAME + 1).getValues()
+      : [];
+    const _findRowInSnapshot = (name, size) => {
+      const targetName = String(name || '').trim().toLowerCase();
+      const targetSize = String(size || '').trim().toLowerCase();
+      for (let i = 0; i < _nameSizeData.length; i++) {
+        const rowName = String(_nameSizeData[i][ITEMS_COL.ITEM_NAME - 1] || '').trim().toLowerCase();
+        const rowSize = String(_nameSizeData[i][ITEMS_COL.SIZE - 1] || '').trim().toLowerCase();
+        if (rowName === targetName && rowSize === targetSize) return i + 2;
+      }
+      return -1;
+    };
+
+    const existingRow = _findRowInSnapshot(originalName, originalSize);
 
     // For rename/resize edits, check new combo doesn't collide
     if (newName !== originalName || newSize !== originalSize) {
-      const { matchRow: dupeRow } = _findItemRow(sheet, newName, newSize);
+      const dupeRow = _findRowInSnapshot(newName, newSize);
       if (dupeRow !== -1 && dupeRow !== existingRow) {
         const dupeMsg = `Duplicate: "${newName}" with size "${newSize}" already exists.`;
 
@@ -1644,14 +1663,25 @@ function autoFixTruncatedDuplicateItems() {
 
     bySize.forEach(({ size, names }) => {
       const list = Array.from(names);
-      list.forEach(candidate => {
-        if (candidate.length < MIN_TRUNCATED_NAME_LENGTH) return;
-        const candidateLower = candidate.toLowerCase();
+      // Lowercased ONCE per name here, reused for every comparison below —
+      // this runs on an hourly trigger over the whole Item Master, and the
+      // candidate x other comparison is inherently O(k^2) per Size group,
+      // but re-deriving other.toLowerCase() from scratch inside the inner
+      // loop meant doing that same string transform up to k times per name
+      // (O(k^2) toLowerCase calls) instead of once each (O(k)).
+      const lowerList = list.map(n => n.toLowerCase());
 
-        const matches = list.filter(other => {
-          if (other === candidate) return false;
-          const otherLower = other.toLowerCase();
-          return otherLower.length > candidateLower.length && otherLower.startsWith(candidateLower);
+      list.forEach((candidate, i) => {
+        if (candidate.length < MIN_TRUNCATED_NAME_LENGTH) return;
+        const candidateLower = lowerList[i];
+
+        const matches = [];
+        list.forEach((other, j) => {
+          if (j === i) return;
+          const otherLower = lowerList[j];
+          if (otherLower.length > candidateLower.length && otherLower.startsWith(candidateLower)) {
+            matches.push(other);
+          }
         });
 
         if (matches.length === 1) {
@@ -2085,14 +2115,17 @@ function keepOrphanItemsBulk(items) {
   }
 
   try {
-    let created = 0;
-    (items || []).forEach(item => {
-      const validName = _validateItemName(item.name);
-      const validSize = sanitizeString(item.size || '', 'size');
-      const qty = Number(item.initialStock) || 0;
-      syncStockForItem('ensure', { name: validName, size: validSize, initialStock: qty });
-      created++;
-    });
+    const toEnsure = (items || []).map(item => ({
+      name: _validateItemName(item.name),
+      size: sanitizeString(item.size || '', 'size'),
+      initialStock: Number(item.initialStock) || 0
+    }));
+    // Same "processed" count as before (not "actually inserted") — this bulk
+    // action is only ever invoked on items already known to be missing a
+    // Stock row (the Sync Review modal's orphan list), so every item here is
+    // expected to insert; see _ensureStockRowsBulk for the batched write.
+    _ensureStockRowsBulk(toEnsure);
+    const created = toEnsure.length;
 
     const msg = `Stock row created for ${created} item(s).`;
     logAction('CREATE', APP_CONFIG.SHEETS.STOCK, 'BULK', msg, 'SUCCESS');
@@ -2134,6 +2167,7 @@ function syncAllItemsToStock() {
 
     const data = itemsSheet.getRange(2, ITEMS_COL.ITEM_NAME, lastRow - 1, 2).getValues();
     const seen = new Set();
+    const toEnsure = [];
     let checked = 0;
 
     for (let i = 0; i < data.length; i++) {
@@ -2145,10 +2179,15 @@ function syncAllItemsToStock() {
       if (seen.has(key)) continue;
       seen.add(key);
 
-      syncStockForItem('ensure', { name, size });
+      toEnsure.push({ name, size });
       checked++;
     }
 
+    // One Stock-sheet read + one batched write for every missing row, instead
+    // of syncStockForItem('ensure', ...) re-reading the whole Stock sheet
+    // once per Item Master row (O(items × stockRows) — this runs over the
+    // ENTIRE Item Master every time).
+    _ensureStockRowsBulk(toEnsure);
     SpreadsheetApp.flush();
     return buildResponse(true, { checked }, 'Stock sheet synced with Item Master.');
   } catch (error) {
@@ -2205,14 +2244,25 @@ function deleteItemsBulk(items) {
 
     // Remove Stock entries for items no longer present in the master
     // (skipped/in-use items were never deleted from Items Master, so their
-    // Stock entry must be left alone).
+    // Stock entry must be left alone). One post-delete read of Items Master
+    // builds a Set of remaining (name,size) keys, checked once per deletable
+    // item in O(1) — instead of _nameSizeStillExists() re-reading and
+    // linearly scanning the whole Items Master once per deletable item.
+    const remainingLastRow = sheet.getLastRow();
+    const remainingKeys = new Set();
+    if (remainingLastRow >= 2) {
+      sheet.getRange(2, ITEMS_COL.ITEM_NAME, remainingLastRow - 1, 2).getValues().forEach(row => {
+        remainingKeys.add(String(row[0] || '').trim().toLowerCase() + '|' + String(row[1] || '').trim().toLowerCase());
+      });
+    }
+
     const stockKeysToCheck = new Map();
     deletable.forEach(({ name, size }) => {
       stockKeysToCheck.set(name.toLowerCase() + '|' + size.toLowerCase(), { name, size });
     });
 
-    stockKeysToCheck.forEach(({ name, size }) => {
-      if (!_nameSizeStillExists(sheet, name, size)) {
+    stockKeysToCheck.forEach(({ name, size }, key) => {
+      if (!remainingKeys.has(key)) {
         syncStockForItem('remove', { name, size });
       }
     });

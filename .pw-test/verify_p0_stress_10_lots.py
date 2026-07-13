@@ -209,10 +209,13 @@ def run():
             (() => {
                 const el = document.getElementById('productionAssignedTo');
                 const events = window.jQuery._data(el, 'events');
-                return (events && events.change) ? events.change.length : 0;
+                // Filter to our own namespaced handler — Select2's own
+                // internal 'change.select2' listener (which repaints the
+                // visible selection box) legitimately coexists alongside it.
+                return (events && events.change) ? events.change.filter(h => h.namespace === 'prodAssignedTo').length : 0;
             })()
         """)
-        check(handler_count == 1, f"exactly 1 'change' handler bound after 10 form re-arms — P0.1's leak fix holds (got {handler_count})")
+        check(handler_count == 1, f"exactly 1 'change.prodAssignedTo' handler bound after 10 form re-arms — P0.1's leak fix holds (got {handler_count})")
 
         # handleProcessChange calls this.refreshPayableHint() unawaited at
         # its own tail (by design — resetCreateForm() awaits the cascade up

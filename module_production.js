@@ -415,13 +415,16 @@ function getProductionData() {
       });
     }
     
-    // Sort production lots by date descending, then rowIdx descending (newest first)
+    // Sort production lots by date descending, then rowIdx descending (newest
+    // first). Timestamp is computed once per record (not per comparison) —
+    // records.length comparisons in a sort would otherwise re-parse the same
+    // Date string O(n log n) times instead of O(n).
+    records.forEach(r => { r._sortTs = r.dateRaw ? new Date(r.dateRaw).getTime() : 0; });
     records.sort((a, b) => {
-      const dateA = a.dateRaw ? new Date(a.dateRaw) : new Date(0);
-      const dateB = b.dateRaw ? new Date(b.dateRaw) : new Date(0);
-      if (dateB - dateA !== 0) return dateB - dateA;
+      if (b._sortTs !== a._sortTs) return b._sortTs - a._sortTs;
       return b.rowIdx - a.rowIdx;
     });
+    records.forEach(r => { delete r._sortTs; });
     
     return buildResponse(true, records);
   } catch (error) {
@@ -541,8 +544,16 @@ function saveProduction(formData) {
     // single-row batch covering every color produced in this run — qty is
     // derived as the sum of the breakdown instead of being sent separately,
     // so a multi-color run never has to be split into multiple lots/rows.
-    const colorGroupsResp = getProcessColorGroups(processId);
-    const availableColorGroups = (colorGroupsResp && colorGroupsResp.data) || [];
+    // Process Components/Warehouse Pool/Process Color Links are read once
+    // here and reused below for the Primary Axis resolution (~line 640) —
+    // getProcessColorGroups() and computeColorAxesForProcess() both derive
+    // from the exact same three inputs, so fetching them twice per lot save
+    // (this is the busiest write path in the app) doubled the sheet reads
+    // for no benefit.
+    const _colorComponents = (getProcessComponentsData(processId).data || []);
+    const _colorPoolRows = typeof getWarehousePoolData === 'function' ? (getWarehousePoolData().data || []) : [];
+    const _colorLinks = _getAllProcessColorLinks();
+    const availableColorGroups = computeColorGroupsForProcess(_colorComponents, _colorPoolRows, _colorLinks);
 
     let qty;
     let color = '';
@@ -639,11 +650,7 @@ function saveProduction(formData) {
       let primaryAxisColorsLower = null;
       let primaryAxisKeyLower = null;
       if (primaryColorAxis) {
-        const axes = computeColorAxesForProcess(
-          (getProcessComponentsData(processId).data || []),
-          (typeof getWarehousePoolData === 'function' ? (getWarehousePoolData().data || []) : []),
-          _getAllProcessColorLinks()
-        );
+        const axes = computeColorAxesForProcess(_colorComponents, _colorPoolRows, _colorLinks);
         const primaryAxis = axes.find(a => a.label.toLowerCase() === primaryColorAxis.toLowerCase());
         if (primaryAxis) {
           primaryAxisColorsLower = new Set(primaryAxis.colors.map(c => c.toLowerCase()));

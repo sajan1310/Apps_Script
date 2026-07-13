@@ -298,13 +298,15 @@ function getDispatchData() {
       });
     }
 
-    // Sort by date descending, then rowIdx descending (newest first)
+    // Sort by date descending, then rowIdx descending (newest first).
+    // Timestamp is precomputed once per record instead of re-parsed on every
+    // comparison during the sort.
+    records.forEach(r => { r._sortTs = r.dateRaw ? new Date(r.dateRaw).getTime() : 0; });
     records.sort((a, b) => {
-      const dateA = a.dateRaw ? new Date(a.dateRaw) : new Date(0);
-      const dateB = b.dateRaw ? new Date(b.dateRaw) : new Date(0);
-      if (dateB - dateA !== 0) return dateB - dateA;
+      if (b._sortTs !== a._sortTs) return b._sortTs - a._sortTs;
       return b.rowIdx - a.rowIdx;
     });
+    records.forEach(r => { delete r._sortTs; });
 
     return buildResponse(true, records);
   } catch (error) {

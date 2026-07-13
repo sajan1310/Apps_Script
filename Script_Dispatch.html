@@ -676,8 +676,12 @@
 
         // Same Select2 v4 synchronous re-entrant double-'change' quirk as
         // Production's initContractorSelect2 — see its comment for details.
+        // Namespaced for the same reason too: plain `.off('change')` strips
+        // Select2's own internal 'change.select2' listener that repaints the
+        // visible selection box, leaving the underlying value updated but
+        // the on-screen label frozen on the old selection.
         let handlingChange = false;
-        $select.off('change').on('change', () => {
+        $select.off('change.dispatchLogisticsContractor').on('change.dispatchLogisticsContractor', () => {
           if (handlingChange) return;
           handlingChange = true;
           Promise.resolve().then(() => { handlingChange = false; });

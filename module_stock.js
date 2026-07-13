@@ -540,7 +540,15 @@ function adjustStockManually(itemName, size, newCurrentStock, reason) {
     }
 
     if (newStockVal === oldCurrentStock) {
-      return buildResponse(false, null, 'New stock value is the same as the current value — nothing to adjust.');
+      // oldCurrentStock here is read fresh from the sheet, so it's the
+      // authoritative current value even if the caller's own on-screen
+      // number (e.g. a stale client-side cache after another user's change)
+      // was different. Surfacing it lets the UI reconcile its display
+      // instead of being stuck showing a stale value that will keep
+      // rejecting this same edit. buildResponse() forces data to null on
+      // failure, so this bypasses it and returns the {success,data,message}
+      // shape directly, mirroring adjustWarehousePoolManually().
+      return { success: false, data: { oldCurrentStock, newCurrentStock: oldCurrentStock }, message: 'New stock value is the same as the current value — nothing to adjust.' };
     }
 
     // Back-solve Initial Stock so recalculateStock() derives Current Stock === newStockVal
@@ -845,6 +853,53 @@ function syncStockForItem(action, payload) {
     Log.error('[syncStockForItem] Error:', error.message);
     logAction('ERROR', 'syncStockForItem', JSON.stringify(payload), error.message, 'ERROR');
   }
+}
+
+/**
+ * Bulk variant of syncStockForItem('ensure', ...) for callers ensuring many
+ * items at once (syncAllItemsToStock, keepOrphanItemsBulk). Reads the Stock
+ * sheet's existing (name, size) keys ONCE and appends every missing row in a
+ * single batched write, instead of looping syncStockForItem — which re-reads
+ * the whole Stock sheet via _findStockRow, and issues one appendRow, PER
+ * ITEM (O(items × stockRows) sheet reads plus one Sheets API round trip per
+ * item, instead of one read + one write total).
+ * @param {Array<{name: string, size: string, initialStock?: number}>} items
+ * @returns {number} count of rows actually appended (existing/duplicate keys skipped)
+ */
+function _ensureStockRowsBulk(items) {
+  let sheet;
+  try {
+    sheet = getSheet(APP_CONFIG.SHEETS.STOCK);
+  } catch (e) {
+    initStockSheet();
+    sheet = getSheet(APP_CONFIG.SHEETS.STOCK);
+  }
+
+  const lastRow = sheet.getLastRow();
+  const existingKeys = new Set();
+  if (lastRow >= 2) {
+    sheet.getRange(2, STOCK_COL.ITEM_NAME, lastRow - 1, 2).getValues().forEach(row => {
+      existingKeys.add(String(row[0] || '').trim().toLowerCase() + '|' + String(row[1] || '').trim().toLowerCase());
+    });
+  }
+
+  const newRows = [];
+  (items || []).forEach(item => {
+    const name = String(item.name || '').trim();
+    if (!name) return;
+    const size = String(item.size || '').trim();
+    const key = name.toLowerCase() + '|' + size.toLowerCase();
+    if (existingKeys.has(key)) return;
+    existingKeys.add(key); // guards against duplicate (name,size) pairs within this same batch too
+    const qty = Number(item.initialStock) || 0;
+    newRows.push([name, size, qty, qty, 0, false]);
+  });
+
+  if (newRows.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 6).setValues(newRows);
+    SpreadsheetApp.flush();
+  }
+  return newRows.length;
 }
 
 /**

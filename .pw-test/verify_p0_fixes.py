@@ -102,10 +102,15 @@ def run():
             (() => {
                 const el = document.getElementById('productionAssignedTo');
                 const events = window.jQuery._data(el, 'events');
-                return (events && events.change) ? events.change.length : 0;
+                // Filter to OUR OWN namespaced handler only — Select2 also
+                // legitimately keeps its own internal 'change.select2'
+                // listener (the one that repaints the visible selection
+                // box) alongside ours, so a raw events.change.length would
+                // wrongly count that as a "leak" too.
+                return (events && events.change) ? events.change.filter(h => h.namespace === 'prodAssignedTo').length : 0;
             })()
         """)
-        check(handlerCount == 1, f"exactly 1 'change' handler on productionAssignedTo after 5 init calls (got {handlerCount})")
+        check(handlerCount == 1, f"exactly 1 'change.prodAssignedTo' handler on productionAssignedTo after 5 init calls (got {handlerCount})")
 
         print("\n[P0.1] initLogisticsContractorSelect2 change-handler leak (Dispatch)")
         page.evaluate("""
@@ -117,10 +122,10 @@ def run():
                 const el = document.getElementById('dispatchLogisticsContractor');
                 if (!el) return -1;
                 const events = window.jQuery._data(el, 'events');
-                return (events && events.change) ? events.change.length : 0;
+                return (events && events.change) ? events.change.filter(h => h.namespace === 'dispatchLogisticsContractor').length : 0;
             })()
         """)
-        check(dispatchHandlerCount == 1, f"exactly 1 'change' handler on dispatchLogisticsContractor after 5 init calls (got {dispatchHandlerCount})")
+        check(dispatchHandlerCount == 1, f"exactly 1 'change.dispatchLogisticsContractor' handler on dispatchLogisticsContractor after 5 init calls (got {dispatchHandlerCount})")
 
         print("\n[P0.2] productionFormFieldset exists (submit handler can lock the form)")
         fieldsetExists = page.evaluate("!!document.getElementById('productionFormFieldset')")

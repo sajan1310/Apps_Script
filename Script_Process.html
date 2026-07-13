@@ -49,7 +49,18 @@
         },
         type: {
           label: 'Process Type',
-          getValue: p => p.processType || 'General',
+          // Canonicalizes to Process Type Master's own casing (case-
+          // insensitive lookup) same as size/model already do via
+          // getSizeFromOutputItemName/getModelFromOutputItemName — a stray
+          // casing mismatch between a process's stored processType and its
+          // Master row (e.g. imported/legacy data) would otherwise split one
+          // real group into two ("General" and "general" rendered as
+          // separate group headers) instead of merging.
+          getValue: p => {
+            const raw = p.processType || 'General';
+            const match = (App.State.globalProcessTypes || []).find(t => App.Utils.sameText(t.name, raw));
+            return match ? match.name : raw;
+          },
           rank: value => {
             const names = (App.State.globalProcessTypes || []).map(t => t.name);
             const i = names.indexOf(value);
@@ -65,6 +76,24 @@
             return i === -1 ? names.length : i;
           }
         }
+      },
+
+      // One Map<value, rankIndex> per active tier, built ONCE per render.
+      // Previously each tier's rank() closure rebuilt its whole names array
+      // (Process Type Master / Model Master / PROCESS_SIZE_LIST) and re-ran
+      // .indexOf() on every pairwise comparison inside the group-sort below
+      // — O(n log n) rebuilds of an O(m) array instead of one. Used together
+      // with a per-row precomputed sort key (Schwartzian transform) so the
+      // comparator itself does no lookups at all.
+      buildRankMaps(tiers) {
+        return tiers.map(dim => {
+          const names = dim === 'size' ? App.Utils.PROCESS_SIZE_LIST
+            : dim === 'type' ? (App.State.globalProcessTypes || []).map(t => t.name)
+            : (App.State.globalModels || []).map(m => m.name);
+          const map = new Map();
+          names.forEach((n, i) => { if (!map.has(n)) map.set(n, i); });
+          return { map, fallback: names.length };
+        });
       },
 
       // Restores the saved tier order (if any) and (re)populates the 3
@@ -195,12 +224,21 @@
         const isSearchFiltered = !!(searchEl && searchEl.value.trim());
         const dragEnabled = tiers.length === 0 && !isSearchFiltered;
 
-        const sorted = [...App.State.filteredProcesses].sort((a, b) => {
-          for (const dim of tiers) {
-            const def = App.Process.GROUP_DIMENSIONS[dim];
-            const valA = def.getValue(a);
-            const valB = def.getValue(b);
-            if (valA !== valB) {
+        const rankMaps = this.buildRankMaps(tiers);
+        // Each row's per-tier {value, rank} is computed once here rather
+        // than re-derived on every pairwise comparison inside sort().
+        const keyedProcesses = App.State.filteredProcesses.map(p => ({
+          row: p,
+          keys: tiers.map((dim, idx) => {
+            const value = App.Process.GROUP_DIMENSIONS[dim].getValue(p);
+            const rm = rankMaps[idx];
+            return { value, rank: rm.map.has(value) ? rm.map.get(value) : rm.fallback };
+          })
+        }));
+        keyedProcesses.sort((a, b) => {
+          for (let i = 0; i < tiers.length; i++) {
+            const ka = a.keys[i], kb = b.keys[i];
+            if (ka.value !== kb.value) {
               // Two DIFFERENT values can still tie on rank (e.g. two stale
               // Process Type strings no longer in Process Type Master both
               // fall back to names.length) — falling through to "equal" here
@@ -210,13 +248,14 @@
               // on the raw value itself so the order (and therefore grouping)
               // stays consistent regardless of how many distinct values
               // share a rank.
-              const rankDiff = def.rank(valA) - def.rank(valB);
+              const rankDiff = ka.rank - kb.rank;
               if (rankDiff !== 0) return rankDiff;
-              return valA < valB ? -1 : 1;
+              return ka.value < kb.value ? -1 : 1;
             }
           }
-          return a.sequence - b.sequence;
+          return a.row.sequence - b.row.sequence;
         });
+        const sorted = keyedProcesses.map(k => k.row);
 
         const collapsed = App.State.collapsedProcessGroups;
         let html = '';
@@ -1598,10 +1637,21 @@
         const currentName = itemSelect?.options[itemSelect.selectedIndex]?.dataset.name;
         if (!currentName) return;
 
-        const foundColor = colorNames.find(c =>
-          c.toLowerCase() !== newColor.toLowerCase() &&
-          new RegExp(`\\b${this._escapeRegExp(c)}\\b`, 'i').test(currentName)
-        );
+        // Prefer the LONGEST matching Color Master name, not just the first
+        // one found in App.State.globalColors' (arbitrary, creation) order.
+        // A compound item name like "...-BLUE-WHITE" also whole-word-matches
+        // the shorter "Blue" and "White" entries whenever those are ALSO
+        // registered on their own (a very normal setup once both a plain
+        // base color and the hyphenated axis-pair convention exist side by
+        // side) — picking one of those instead of the correct "Blue-White"
+        // only replaces part of the compound, leaving a mangled candidate
+        // name (e.g. "...-Purple-White-WHITE") that never matches anything
+        // in Item Master, so the swap silently no-ops. The longest match is
+        // always the most specific one and never worse than a shorter match
+        // would have been.
+        const foundColor = colorNames
+          .filter(c => c.toLowerCase() !== newColor.toLowerCase() && new RegExp(`\\b${this._escapeRegExp(c)}\\b`, 'i').test(currentName))
+          .sort((a, b) => b.length - a.length)[0];
         if (!foundColor) return;
 
         const candidateName = currentName.replace(new RegExp(`\\b${this._escapeRegExp(foundColor)}\\b`, 'i'), newColor);

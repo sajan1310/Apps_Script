@@ -1178,14 +1178,31 @@ function computeColorGroupsForProcess(components, poolRows, colorLinks) {
 }
 
 /**
+ * @private Adds `value` into `map` (used as a case-insensitive Set) keyed by
+ * its trimmed lowercase form, keeping the FIRST-seen casing as the value.
+ * Two user-typed color/axis names that are the same real thing except for
+ * casing (e.g. "Red" then "red", typed on different recipe rows or in
+ * different production lots) must collapse to ONE entry — a plain Set built
+ * from raw strings treats them as two, producing duplicate/phantom color
+ * checkboxes and spuriously-multi-color axes. Read back with
+ * `Array.from(map.values())`.
+ */
+function _addUniqueCaseInsensitive(map, value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return;
+  const key = raw.toLowerCase();
+  if (!map.has(key)) map.set(key, raw);
+}
+
+/**
  * @private The original, unmodified computeColorGroupsForProcess algorithm
  * — see computeColorGroupsForProcess for why this stays byte-for-byte the
  * pre-Color-Axes behavior.
  */
 function _legacyColorGroupList(components, poolRows, colorLinks) {
-  const colors = new Set();
+  const colors = new Map();
   components.forEach(c => {
-    if (c.colorGroup && c.colorGroup !== COMPONENT_COLOR_GROUP_COMMON) colors.add(c.colorGroup);
+    if (c.colorGroup && c.colorGroup !== COMPONENT_COLOR_GROUP_COMMON) _addUniqueCaseInsensitive(colors, c.colorGroup);
   });
 
   const poolItemNames = new Set(
@@ -1203,8 +1220,8 @@ function _legacyColorGroupList(components, poolRows, colorLinks) {
     poolRows.forEach(r => {
       const key = r.outputItemName.toLowerCase();
       if (!r.color || !poolItemNames.has(key)) return;
-      if (!colorsByItem.has(key)) colorsByItem.set(key, new Set());
-      colorsByItem.get(key).add(r.color);
+      if (!colorsByItem.has(key)) colorsByItem.set(key, new Map());
+      _addUniqueCaseInsensitive(colorsByItem.get(key), r.color);
       if (!processIdByItem.has(key) && r.processId) processIdByItem.set(key, r.processId);
     });
 
@@ -1221,7 +1238,7 @@ function _legacyColorGroupList(components, poolRows, colorLinks) {
     const axesBySignature = new Map();
     colorsByItem.forEach((itemColors, itemKey) => {
       if (itemColors.size <= 1) return;
-      const sorted = Array.from(itemColors).sort((a, b) => a.localeCompare(b));
+      const sorted = Array.from(itemColors.values()).sort((a, b) => a.localeCompare(b));
       const signature = sorted.map(c => c.toLowerCase()).join('|');
       if (!axesBySignature.has(signature)) {
         axesBySignature.set(signature, { colors: sorted, processIds: new Set() });
@@ -1236,7 +1253,7 @@ function _legacyColorGroupList(components, poolRows, colorLinks) {
     }
 
     if (axes.length === 1) {
-      axes[0].colors.forEach(color => colors.add(color));
+      axes[0].colors.forEach(color => _addUniqueCaseInsensitive(colors, color));
     } else if (axes.length > 1) {
       let combos = [''];
       axes.forEach(axis => {
@@ -1246,11 +1263,11 @@ function _legacyColorGroupList(components, poolRows, colorLinks) {
         });
         combos = next;
       });
-      combos.forEach(combo => colors.add(combo));
+      combos.forEach(combo => _addUniqueCaseInsensitive(colors, combo));
     }
   }
 
-  return Array.from(colors).sort((a, b) => a.localeCompare(b));
+  return Array.from(colors.values()).sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -1293,15 +1310,15 @@ function computeColorAxesForProcess(components, poolRows, colorLinks) {
     poolRows.forEach(r => {
       const key = r.outputItemName.toLowerCase();
       if (!r.color || !poolItemNames.has(key)) return;
-      if (!colorsByItem.has(key)) colorsByItem.set(key, new Set());
-      colorsByItem.get(key).add(r.color);
+      if (!colorsByItem.has(key)) colorsByItem.set(key, new Map());
+      _addUniqueCaseInsensitive(colorsByItem.get(key), r.color);
       if (!processIdByItem.has(key) && r.processId) processIdByItem.set(key, r.processId);
     });
 
     const axesBySignature = new Map();
     colorsByItem.forEach((itemColors, itemKey) => {
       if (itemColors.size <= 1) return;
-      const sorted = Array.from(itemColors).sort((a, b) => a.localeCompare(b));
+      const sorted = Array.from(itemColors.values()).sort((a, b) => a.localeCompare(b));
       const signature = sorted.map(c => c.toLowerCase()).join('|');
       if (!axesBySignature.has(signature)) {
         axesBySignature.set(signature, { colors: sorted, processIds: new Set(), itemNames: new Set() });
@@ -1325,19 +1342,24 @@ function computeColorAxesForProcess(components, poolRows, colorLinks) {
     });
   }
 
+  // Keyed by the axis label's lowercase form so "Mudguard Color" and
+  // "mudguard color" (typed on different recipe rows) collapse into one
+  // real axis instead of two — same casing-drift hazard as the colors
+  // themselves, just one level up (see _addUniqueCaseInsensitive).
   const rawTagGroups = new Map();
   components.forEach(c => {
     if (!c.colorGroup || c.colorGroup === COMPONENT_COLOR_GROUP_COMMON) return;
     const axisLabel = String(c.colorAxis || '').trim();
     if (!axisLabel) return;
-    if (!rawTagGroups.has(axisLabel)) rawTagGroups.set(axisLabel, new Set());
-    rawTagGroups.get(axisLabel).add(c.colorGroup);
+    const axisKey = axisLabel.toLowerCase();
+    if (!rawTagGroups.has(axisKey)) rawTagGroups.set(axisKey, { label: axisLabel, colors: new Map() });
+    _addUniqueCaseInsensitive(rawTagGroups.get(axisKey).colors, c.colorGroup);
   });
-  rawTagGroups.forEach((colorSet, label) => {
+  rawTagGroups.forEach(({ label, colors: colorMap }) => {
     axes.push({
       key: 'tag:' + label.toLowerCase(),
       label,
-      colors: Array.from(colorSet).sort((a, b) => a.localeCompare(b)),
+      colors: Array.from(colorMap.values()).sort((a, b) => a.localeCompare(b)),
       source: 'tag'
     });
   });
