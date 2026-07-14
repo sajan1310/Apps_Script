@@ -190,17 +190,44 @@ function getIssueData() {
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
+ * Builds a { lowercased-name: canonical-name } map from the Vendor Master,
+ * read once per call — mirrors _getItemUnitInfoMap/_getUnitsMap's shape.
+ * Used by saveIssueStock to detect when "Issued To" matches a known vendor.
+ * @private
+ */
+function _getVendorNameMap() {
+  const map = {};
+  try {
+    const sheet = getSheet(APP_CONFIG.SHEETS.VENDORS);
+    const lastRow = sheet ? sheet.getLastRow() : 0;
+    if (!sheet || lastRow < 2) return map;
+
+    const data = sheet.getRange(2, VENDORS_COL.VENDOR_NAME, lastRow - 1, 1).getValues();
+    data.forEach(function(row) {
+      const name = String(row[0] || '').trim();
+      if (!name) return;
+      map[name.toLowerCase()] = name;
+    });
+  } catch (e) {
+    // Vendors sheet not found/accessible — treat as "no known vendors".
+  }
+  return map;
+}
+
+/**
  * saveIssueStock(formData)
  *
  * Records ad-hoc item issuance. Issued To is required; Reference is optional.
  * Each item row requires: name, qty, unit.
  * BASE_QTY is computed via unit conversion and debits stock.
+ * If "Issued To" matches a Vendor Master entry (case-insensitive), the issue
+ * is also linked to that vendor for Vendor Ledger purposes — there is no
+ * separate Vendor field; typing/selecting a known vendor name is enough.
  *
  * @param {Object} formData
  *   @param {string} formData.date - DD/MM/YYYY or YYYY-MM-DD
- *   @param {string} formData.issuedTo - Who/what this issuance is for
+ *   @param {string} formData.issuedTo - Who/what this issuance is for (matched against Vendor Master)
  *   @param {string} [formData.reference] - Optional free-text reference (e.g. Lot #)
- *   @param {string} [formData.vendor] - Optional Vendor Master name — feeds the Vendor Ledger
  *   @param {string} [formData.remarks] - Optional header-level remarks
  *   @param {Array|string} formData.items - Each: {name, size, qty, unit, rate}
  * @returns {Object} API response
@@ -241,8 +268,10 @@ function saveIssueStock(formData) {
 
     const issueId = _generateIssueId();
     const reference = sanitizeString(formData.reference || '', 'reference');
-    const vendor = sanitizeString(formData.vendor || '', 'vendor');
     const remarks = sanitizeString(formData.remarks || '', 'remarks');
+
+    const vendorNameMap = _getVendorNameMap();
+    const vendor = vendorNameMap[issuedTo.toLowerCase()] || '';
 
     const itemUnitMap = _getItemUnitInfoMap();
     const unitsMap = _getUnitsMap();

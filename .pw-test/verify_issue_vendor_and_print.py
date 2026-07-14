@@ -2,8 +2,9 @@
 Verifies the two features added this session to Issue Stock:
   1. In-modal Print/Done flow after Save (form locks read-only, Print
      button reuses App.Issue.print, Done closes and resets).
-  2. Optional Vendor field + optional per-item Rate flowing into the
-     Vendor Ledger (App.Vendor.calculateLedgerAndPending), including the
+  2. "Issued To / Purpose" doubling as the Vendor field: typing a name
+     that matches the Vendor Master (case-insensitively) links the issue
+     to that vendor's Ledger — no separate Vendor input. Also covers the
      lazy-load fix so App.State.globalIssues loads even if the user never
      visited Production's Issued Stock sub-tab first.
 
@@ -69,12 +70,15 @@ def run():
             };
         """)
 
-        print("[1] Open Issue Stock modal, fill fields including Vendor + Rate...")
+        print("[1] Open Issue Stock modal, fill Issued To with a known vendor name + Rate...")
         page.evaluate("App.Issue.openIssueModal()")
         page.locator("#issueStockModal").wait_for(state="visible", timeout=8000)
 
+        # "Issued To / Purpose" is the single merged field — typing a name
+        # that matches the Vendor Master (case-insensitively) is how the
+        # backend links the issue to that vendor's ledger; there's no
+        # separate Vendor input anymore.
         page.fill("#issueIssuedTo", "Steel Traders")
-        page.fill("#issueVendor", "Steel Traders")
         page.fill("#issueItemsBody tr:first-child .i-item-name", "Rod")
         page.fill("#issueItemsBody tr:first-child .i-item-qty", "5")
         page.fill("#issueItemsBody tr:first-child .i-item-rate", "50")

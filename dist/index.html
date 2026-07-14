@@ -2958,23 +2958,19 @@
         <form id="issueStockForm" autocomplete="off">
           <input type="hidden" id="issueSavedId">
           <div class="row g-3 mb-4">
-            <div class="col-md-2">
+            <div class="col-md-3">
               <label class="form-label fw-bold">Issue Date *</label>
               <input type="date" name="date" id="issueDateInput" class="form-control" required>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4">
               <label class="form-label fw-bold">Issued To / Purpose *</label>
-              <input type="text" name="issuedTo" id="issueIssuedTo" class="form-control" placeholder="e.g. Contractor name, department…" required maxlength="200">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label">Vendor <span class="text-muted fw-normal">(optional)</span></label>
-              <input type="text" name="vendor" id="issueVendor" class="form-control" list="vendorList" placeholder="Select or type vendor…" autocomplete="off" maxlength="200">
+              <input type="text" name="issuedTo" id="issueIssuedTo" class="form-control" list="vendorList" placeholder="Contractor name, department, or select a vendor…" required maxlength="200">
             </div>
             <div class="col-md-2">
               <label class="form-label">Reference <span class="text-muted fw-normal">(optional)</span></label>
               <input type="text" name="reference" id="issueReferenceInput" class="form-control" placeholder="e.g. Lot #" maxlength="100">
             </div>
-            <div class="col-md-2">
+            <div class="col-md-3">
               <label class="form-label">Remarks <span class="text-muted fw-normal">(optional)</span></label>
               <input type="text" name="remarks" class="form-control" placeholder="Optional notes…" maxlength="500">
             </div>
