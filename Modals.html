@@ -326,20 +326,25 @@
           <i class="bi bi-info-circle-fill me-2"></i>For items not covered by a Process's own recipe (BOM). This debits Stock directly and stays out of any Production lot's Components Consumed list.
         </div>
         <form id="issueStockForm" autocomplete="off">
+          <input type="hidden" id="issueSavedId">
           <div class="row g-3 mb-4">
-            <div class="col-md-3">
+            <div class="col-md-2">
               <label class="form-label fw-bold">Issue Date *</label>
               <input type="date" name="date" id="issueDateInput" class="form-control" required>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
               <label class="form-label fw-bold">Issued To / Purpose *</label>
               <input type="text" name="issuedTo" id="issueIssuedTo" class="form-control" placeholder="e.g. Contractor name, department…" required maxlength="200">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Vendor <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="text" name="vendor" id="issueVendor" class="form-control" list="vendorList" placeholder="Select or type vendor…" autocomplete="off" maxlength="200">
             </div>
             <div class="col-md-2">
               <label class="form-label">Reference <span class="text-muted fw-normal">(optional)</span></label>
               <input type="text" name="reference" id="issueReferenceInput" class="form-control" placeholder="e.g. Lot #" maxlength="100">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
               <label class="form-label">Remarks <span class="text-muted fw-normal">(optional)</span></label>
               <input type="text" name="remarks" class="form-control" placeholder="Optional notes…" maxlength="500">
             </div>
@@ -354,6 +359,7 @@
                   <th style="width:12%;">Size</th>
                   <th style="width:10%;">Qty *</th>
                   <th style="width:10%;">Unit</th>
+                  <th style="width:12%;">Rate <span class="text-muted fw-normal">(optional)</span></th>
                   <th style="width:5%;"></th>
                 </tr>
               </thead>
@@ -365,6 +371,8 @@
 
           <div class="text-end mt-2">
             <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="issueStockPrintBtn" class="btn btn-outline-dark me-2" style="display:none;" onclick="App.Issue.printCurrent()"><i class="bi bi-printer"></i> Print</button>
+            <button type="button" id="issueStockDoneBtn" class="btn btn-success px-4 fw-bold shadow-sm" style="display:none;" onclick="App.Issue.done()"><i class="bi bi-check2"></i> Done</button>
             <button type="submit" id="issueStockSubmitBtn" class="btn btn-dark px-5 fw-bold shadow-sm">
               <i class="bi bi-box-arrow-up me-1"></i>Issue Stock
             </button>

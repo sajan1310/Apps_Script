@@ -491,7 +491,9 @@ const ISSUE_COL = Object.freeze({
   QTY:        7,    // Quantity issued
   UNIT:       8,    // Unit (Pcs, Kg, L, etc.)
   REMARKS:    9,    // Additional notes (optional)
-  BASE_QTY:   10    // QTY converted to item's Base Unit — drives stock math
+  BASE_QTY:   10,   // QTY converted to item's Base Unit — drives stock math
+  RATE:       11,   // Optional per-item rate — blank/0 means "not priced"
+  VENDOR:     12    // Optional — set when stock is issued to a Vendor Master entry (feeds Vendor Ledger)
 });
 
 // ─────────────────────────────────────────────────────────────────────────

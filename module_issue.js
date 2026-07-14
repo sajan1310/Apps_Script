@@ -37,7 +37,7 @@ function initIssueSheet() {
 
     const headers = [
       'Issue ID', 'Date', 'Issued To', 'Reference', 'Item Name', 'Size',
-      'Qty', 'Unit', 'Remarks', 'Base Qty'
+      'Qty', 'Unit', 'Remarks', 'Base Qty', 'Rate', 'Vendor'
     ];
 
     sheet.getRange(1, 1, 1, headers.length)
@@ -62,6 +62,29 @@ function _getIssueSheet() {
   }
 }
 
+/**
+ * Self-healing migration: ensures the Issued Stock Log sheet has the
+ * Rate / Vendor headers, writing them if an existing sheet predates
+ * these optional columns. Mirrors _ensureRateHistoryColumns (module_vendors.js).
+ * @param {Sheet} sheet - The Issued Stock Log sheet
+ * @private
+ */
+function _ensureIssueColumns(sheet) {
+  const cache = CacheService.getScriptCache();
+  if (cache.get('issue_columns_ok') === '1') return;
+
+  const lastCol = sheet.getLastColumn();
+  const headers = lastCol >= 1 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  const hasRate = headers.some(h => String(h).trim().toLowerCase() === 'rate');
+  const hasVendor = headers.some(h => String(h).trim().toLowerCase() === 'vendor');
+
+  if (!hasRate) sheet.getRange(1, ISSUE_COL.RATE).setValue('Rate');
+  if (!hasVendor) sheet.getRange(1, ISSUE_COL.VENDOR).setValue('Vendor');
+  if (!hasRate || !hasVendor) SpreadsheetApp.flush();
+
+  cache.put('issue_columns_ok', '1', 3600);
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // ID GENERATION
 // ─────────────────────────────────────────────────────────────────────────
@@ -84,12 +107,13 @@ function _generateIssueId() {
  * Returns newest first.
  *
  * @returns {Object} API response — data: Array of issue groups:
- *   { issueId, date, dateRaw, issuedTo, reference, remarks,
- *     items: [{name, size, qty, unit, baseQty}], totalQty }
+ *   { issueId, date, dateRaw, issuedTo, reference, vendor, remarks,
+ *     items: [{name, size, qty, unit, baseQty, rate, value}], totalQty, totalValue }
  */
 function getIssueData() {
   try {
     const sheet = _getIssueSheet();
+    _ensureIssueColumns(sheet);
 
     const startRow = APP_CONFIG.ISSUE_SETTINGS.DATA_START_ROW;
     const lastRow = sheet.getLastRow();
@@ -98,7 +122,7 @@ function getIssueData() {
       return buildResponse(true, []);
     }
 
-    const numCols = ISSUE_COL.BASE_QTY;
+    const numCols = ISSUE_COL.VENDOR;
     const data = sheet.getRange(startRow, 1, lastRow - startRow + 1, numCols).getValues();
 
     const issueMap = {};
@@ -122,23 +146,29 @@ function getIssueData() {
           dateRaw: isoDateStr,
           issuedTo: String(r[ISSUE_COL.ISSUED_TO - 1] || ''),
           reference: String(r[ISSUE_COL.REFERENCE - 1] || ''),
+          vendor: String(r[ISSUE_COL.VENDOR - 1] || ''),
           remarks: String(r[ISSUE_COL.REMARKS - 1] || ''),
           items: [],
-          totalQty: 0
+          totalQty: 0,
+          totalValue: 0
         };
       }
 
       const qty = _toValidNumber(r[ISSUE_COL.QTY - 1], 'Qty', false);
+      const rate = _toValidNumber(r[ISSUE_COL.RATE - 1] || 0, 'Rate', true);
 
       issueMap[issueId].items.push({
         name: String(r[ISSUE_COL.ITEM_NAME - 1] || ''),
         size: String(r[ISSUE_COL.SIZE - 1] || ''),
         qty: qty,
         unit: String(r[ISSUE_COL.UNIT - 1] || 'Pcs'),
-        baseQty: _toValidNumber(r[ISSUE_COL.BASE_QTY - 1], 'Base Qty', true) || qty
+        baseQty: _toValidNumber(r[ISSUE_COL.BASE_QTY - 1], 'Base Qty', true) || qty,
+        rate: rate,
+        value: qty * rate
       });
 
       issueMap[issueId].totalQty += qty;
+      issueMap[issueId].totalValue += qty * rate;
     }
 
     const sorted = Object.values(issueMap).sort(function(a, b) {
@@ -170,8 +200,9 @@ function getIssueData() {
  *   @param {string} formData.date - DD/MM/YYYY or YYYY-MM-DD
  *   @param {string} formData.issuedTo - Who/what this issuance is for
  *   @param {string} [formData.reference] - Optional free-text reference (e.g. Lot #)
+ *   @param {string} [formData.vendor] - Optional Vendor Master name — feeds the Vendor Ledger
  *   @param {string} [formData.remarks] - Optional header-level remarks
- *   @param {Array|string} formData.items - Each: {name, size, qty, unit}
+ *   @param {Array|string} formData.items - Each: {name, size, qty, unit, rate}
  * @returns {Object} API response
  */
 function saveIssueStock(formData) {
@@ -183,6 +214,7 @@ function saveIssueStock(formData) {
 
   try {
     const sheet = _getIssueSheet();
+    _ensureIssueColumns(sheet);
 
     let items;
     try {
@@ -209,6 +241,7 @@ function saveIssueStock(formData) {
 
     const issueId = _generateIssueId();
     const reference = sanitizeString(formData.reference || '', 'reference');
+    const vendor = sanitizeString(formData.vendor || '', 'vendor');
     const remarks = sanitizeString(formData.remarks || '', 'remarks');
 
     const itemUnitMap = _getItemUnitInfoMap();
@@ -226,6 +259,8 @@ function saveIssueStock(formData) {
         baseQty = qty;
       }
 
+      const rate = _toValidNumber(item.rate || 0, 'Rate', true);
+
       return [
         issueId,                                                // 1: ISSUE_ID
         issueDateNative,                                         // 2: DATE
@@ -236,7 +271,9 @@ function saveIssueStock(formData) {
         qty,                                                     // 7: QTY
         unit,                                                    // 8: UNIT
         remarks,                                                 // 9: REMARKS
-        baseQty                                                  // 10: BASE_QTY
+        baseQty,                                                 // 10: BASE_QTY
+        rate,                                                    // 11: RATE
+        vendor                                                   // 12: VENDOR
       ];
     });
 

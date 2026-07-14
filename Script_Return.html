@@ -1027,18 +1027,30 @@
         // Builds a fully self-contained "Stock Issue Receipt" page for bulk printing.
         buildIssuePrintPageHtml(iss) {
           const BRAND = '#212529';
+          const hasValue = toNumber(iss.totalValue) > 0;
+          const colCount = hasValue ? 5 : 4;
 
           const rowsHtml = (iss.items || []).map((item, idx) => {
             const rowBg = idx % 2 === 0 ? '#ffffff' : '#f5f5f5';
+            const amountCell = hasValue
+              ? `<td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;font-weight:600;">${toNumber(item.rate) ? '&#8377;' + toNumber(item.value).toFixed(2) : '-'}</td>`
+              : '';
             return `
             <tr style="background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;">
               <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
               <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${escapeHtml(item.name || '')}</td>
               <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;">${escapeHtml(item.size || '-')}</td>
               <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${escapeHtml(String(toNumber(item.qty)))} ${escapeHtml(item.unit || 'Pcs')}</td>
+              ${amountCell}
             </tr>`;
           }).join('');
-          const rows = rowsHtml || '<tr><td colspan="4" style="padding:10px;text-align:center;color:#999;">No items recorded for this issue.</td></tr>';
+          const rows = rowsHtml || `<tr><td colspan="${colCount}" style="padding:10px;text-align:center;color:#999;">No items recorded for this issue.</td></tr>`;
+          const amountHeader = hasValue ? '<th style="padding:6px;border:1px solid #bbb;text-align:right;width:20%;">Amount</th>' : '';
+          const totalValueHtml = hasValue ? `
+            <div style="text-align:right;margin-top:4px;">
+              <span style="font-size:11px;font-weight:600;color:#1a1a1a;">Total Value:&nbsp;&nbsp;</span>
+              <span style="font-size:13px;font-weight:800;color:${BRAND};">&#8377;${toNumber(iss.totalValue).toFixed(2)}</span>
+            </div>` : '';
 
           const remarksHtml = iss.remarks ? `
           <div style="margin-top:10px;padding-top:8px;border-top:1px solid #ccc;">
@@ -1089,9 +1101,10 @@
               <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
                 <tr>
                   <th style="padding:6px;border:1px solid #bbb;text-align:center;width:8%;">#</th>
-                  <th style="padding:6px;border:1px solid #bbb;text-align:left;width:47%;">Item Name</th>
+                  <th style="padding:6px;border:1px solid #bbb;text-align:left;width:${hasValue ? '37' : '47'}%;">Item Name</th>
                   <th style="padding:6px;border:1px solid #bbb;width:20%;">Size</th>
-                  <th style="padding:6px;border:1px solid #bbb;text-align:center;width:25%;">Qty</th>
+                  <th style="padding:6px;border:1px solid #bbb;text-align:center;width:${hasValue ? '15' : '25'}%;">Qty</th>
+                  ${amountHeader}
                 </tr>
               </thead>
               <tbody style="color:#1a1a1a;text-align:center;">${rows}</tbody>
@@ -1100,6 +1113,7 @@
             <div style="text-align:right;margin-bottom:16px;padding:8px 0 0 0;border-top:2px solid ${BRAND};page-break-inside:avoid;break-inside:avoid;">
               <span style="font-size:13px;font-weight:600;color:#1a1a1a;">Total Qty:&nbsp;&nbsp;</span>
               <span style="font-size:15px;font-weight:800;color:${BRAND};">${escapeHtml(String(iss.totalQty ?? 0))}</span>
+              ${totalValueHtml}
             </div>
             ${remarksHtml}
 
@@ -1113,6 +1127,7 @@
 
         openIssueModal(prefillReference) {
           document.getElementById('issueStockForm')?.reset();
+          this.resetToCreateMode();
           const dateInput = document.getElementById('issueDateInput');
           if (dateInput) dateInput.value = todayIso();
           const refInput = document.getElementById('issueReferenceInput');
@@ -1137,6 +1152,7 @@
                 <datalist class="row-size-list" id="sizeList-${rowUid}"></datalist></td>
             <td><input type="number" class="form-control i-item-qty" step="0.01" value="${escapeHtml(String(item.qty ?? ''))}" required min="0.01" placeholder="Qty"></td>
             <td><input type="text" class="form-control item-unit" list="unitList" value="${escapeHtml(item.unit || 'Pcs')}"></td>
+            <td><input type="number" class="form-control i-item-rate" min="0" step="0.01" value="${escapeHtml(String(item.rate ?? ''))}" placeholder="Optional"></td>
             <td><button type="button" class="btn btn-outline-danger btn-sm" data-action="remove-row">✕</button></td>
           </tr>`;
         },
@@ -1148,11 +1164,13 @@
           $$('#issueItemsBody tr').forEach(row => {
             const name = $('.i-item-name', row)?.value?.trim();
             if (!name) return;
+            const rateVal = $('.i-item-rate', row)?.value;
             items.push({
               name,
               size: $('.i-item-size', row)?.value?.trim() || '',
               qty: toNumber($('.i-item-qty', row)?.value),
-              unit: $('.item-unit', row)?.value?.trim() || 'Pcs'
+              unit: $('.item-unit', row)?.value?.trim() || 'Pcs',
+              rate: rateVal ? toNumber(rateVal) : 0
             });
           });
           formData.items = JSON.stringify(items);
@@ -1175,15 +1193,62 @@
             const res = await Api.call('saveIssueStock', formData);
             App.Utils.showToast(res?.message || 'Stock issued.', !res?.success);
             if (res?.success) {
-              bootstrap.Modal.getInstance(document.getElementById('issueStockModal'))?.hide();
               await this.loadData();
               if (typeof App.Production !== 'undefined') App.Production.renderAllActivity();
+              this.enterSavedMode(res.data.issueId);
             }
           } catch (err) {
             App.Utils.showToast(err.message || 'Failed to issue stock.', true);
           } finally {
             if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '<i class="bi bi-box-arrow-up me-1"></i>Issue Stock'; }
           }
+        },
+
+        // Post-save state: form locks read-only, submit button swaps for
+        // Print + Done so the just-created record can be printed without
+        // leaving the modal (mirrors Bill's edit-mode print button).
+        enterSavedMode(issueId) {
+          document.getElementById('issueSavedId').value = issueId;
+          this.setFormReadOnly(true);
+          document.getElementById('issueStockSubmitBtn').style.display = 'none';
+          document.getElementById('issueStockPrintBtn').style.display = '';
+          document.getElementById('issueStockDoneBtn').style.display = '';
+        },
+
+        setFormReadOnly(disabled) {
+          const form = document.getElementById('issueStockForm');
+          if (!form) return;
+          // Only disable the input fields, "+ Add Item", and per-row remove
+          // buttons — NOT the footer Cancel/Print/Done/Submit buttons, which
+          // live inside this same <form> and must stay clickable.
+          form.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = disabled; });
+          const addBtn = form.querySelector('button[onclick="App.Issue.addRow()"]');
+          if (addBtn) addBtn.disabled = disabled;
+          form.querySelectorAll('#issueItemsBody button[data-action="remove-row"]').forEach(el => {
+            el.disabled = disabled;
+          });
+        },
+
+        printCurrent() {
+          const issueId = document.getElementById('issueSavedId')?.value;
+          if (issueId) this.print(issueId);
+        },
+
+        done() {
+          bootstrap.Modal.getInstance(document.getElementById('issueStockModal'))?.hide();
+          this.resetToCreateMode();
+        },
+
+        resetToCreateMode() {
+          const savedId = document.getElementById('issueSavedId');
+          if (savedId) savedId.value = '';
+          this.setFormReadOnly(false);
+          const submitBtn = document.getElementById('issueStockSubmitBtn');
+          if (submitBtn) submitBtn.style.display = '';
+          const printBtn = document.getElementById('issueStockPrintBtn');
+          if (printBtn) printBtn.style.display = 'none';
+          const doneBtn = document.getElementById('issueStockDoneBtn');
+          if (doneBtn) doneBtn.style.display = 'none';
         },
 
         async deleteSingle(issueId) {

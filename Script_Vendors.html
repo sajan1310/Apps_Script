@@ -135,7 +135,7 @@
         );
       },
 
-      bulkPrint() {
+      async bulkPrint() {
         const selected = App.State.selectedVendors;
         if (!selected.length) {
           App.Utils.showToast('No vendors selected.', true);
@@ -144,6 +144,10 @@
 
         const vendors = App.State.globalVendors.filter(v => App.Selection.isSelected(selected, v.name));
         if (!vendors.length) return;
+
+        if (typeof App.Issue !== 'undefined' && !App.State.globalIssues.length) {
+          await App.Issue.loadData();
+        }
 
         App.Print.triggerBulk(
           vendors,
@@ -188,9 +192,13 @@
         if (modalEl && typeof bootstrap !== 'undefined') new bootstrap.Modal(modalEl).show();
       },
 
-      openProfileModal(vendorName) {
+      async openProfileModal(vendorName) {
         const vendor = App.State.globalVendors.find(v => App.Utils.sameText(v.name, vendorName));
         if (!vendor) return;
+
+        if (typeof App.Issue !== 'undefined' && !App.State.globalIssues.length) {
+          await App.Issue.loadData();
+        }
 
         const vForm = document.getElementById('vendorForm');
         if (vForm) vForm.reset();
@@ -226,6 +234,7 @@
         const vendorPOs = App.State.globalPOs.filter(po => App.Utils.sameText(po.vendor, vendorName));
         const vendorBills = App.State.globalBills.filter(b => App.Utils.sameText(b.vendor, vendorName));
         const vendorReturns = (App.State.globalReturns || []).filter(r => App.Utils.sameText(r.vendor, vendorName));
+        const vendorIssues = (App.State.globalIssues || []).filter(iss => App.Utils.sameText(iss.vendor, vendorName));
 
         // 1. CALCULATE CHRONOLOGICAL LEDGER
         let ledger = [];
@@ -282,6 +291,22 @@
             outgoingQty: returnQty,
             value: r.totalAmount,
             badgeClass: 'bg-danger'
+          });
+        });
+
+        vendorIssues.forEach(iss => {
+          const itemsStr = (iss.items || []).map(i => `${escapeHtml(i.name)} (${escapeHtml(String(i.qty))})`).join(', ');
+          ledger.push({
+            dateObj: parseRecordDate(iss.dateRaw, iss.date),
+            dateStr: iss.date,
+            type: 'Stock Issued',
+            ref: iss.issueId,
+            items: itemsStr,
+            orderQty: 0,
+            incomingQty: 0,
+            outgoingQty: toNumber(iss.totalQty),
+            value: toNumber(iss.totalValue) || 0, // 0 when no item rate was entered — qty-only entry
+            badgeClass: 'bg-warning text-dark'
           });
         });
 
