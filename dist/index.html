@@ -2657,6 +2657,33 @@
   </div>
 </div>
 
+<!-- Bill vs. Manual Stock Correction Conflict Modal -->
+<!-- Shown only when a bill's date falls on/before a manual Stock correction
+     already logged for one of its items (see checkStockAdjustmentConflicts,
+     module_stock.js) — the correction's physical recount may already include
+     this bill's goods. Purely advisory; the user decides how the bill should
+     affect Stock. -->
+<div class="modal fade" id="billStockConflictModal" tabindex="-1" aria-hidden="true" style="z-index: 1075;">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-warning">
+        <h5 class="modal-title text-dark"><i class="bi bi-exclamation-triangle"></i> Possible Stock Double-Count</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body fs-6">
+        <p>This bill's date is on or before a manual Stock correction already recorded for the following item(s):</p>
+        <ul id="billStockConflictList" class="mb-2"></ul>
+        <p class="mb-0">If those goods were already on hand when that correction was made, adding this bill to Stock will double-count them. Update Stock only if this is a genuinely separate delivery.</p>
+      </div>
+      <div class="modal-footer flex-column flex-sm-row">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel Save</button>
+        <button type="button" class="btn btn-outline-warning" id="billStockConflictLedgerBtn">No — Ledger Only (don't affect Stock)</button>
+        <button type="button" class="btn btn-primary" id="billStockConflictUpdateBtn">Yes — Update Stock</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- BOM Access Password Modal -->
 <div class="modal fade" id="bomAccessModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true" style="z-index: 1075;">
   <div class="modal-dialog modal-dialog-centered">
@@ -3608,6 +3635,7 @@
     </div>
   </div>
 </div>
+
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        MAIN APPLICATION CONTAINER
@@ -9150,7 +9178,10 @@
       return items
         .map(i =>
           typeof i === 'object' && i !== null
-            ? `${escapeHtml(i.name)}${i.size ? ` [${escapeHtml(i.size)}]` : ''} (${escapeHtml(i.qty)} ${escapeHtml(i.unit || 'Pcs')})`
+            ? `${escapeHtml(i.name)}${i.size ? ` [${escapeHtml(i.size)}]` : ''} (${escapeHtml(i.qty)} ${escapeHtml(i.unit || 'Pcs')})` +
+              // Only Bill items carry this field (see checkStockAdjustmentConflicts) —
+              // undefined for PO/Return items, so this is a no-op for them.
+              (i.affectsStock === false ? ' <span class="badge bg-warning text-dark">Ledger only</span>' : '')
             : escapeHtml(i)
         )
         .join('<br>');
@@ -9472,7 +9503,13 @@
 
         confirmAction(message, callback) {
           const msgText = document.getElementById('confirmMessageText');
-          if (msgText) msgText.innerText = message;
+          if (msgText) {
+            // pre-line lets multi-line warnings (e.g. stock-adjustment
+            // conflicts) render as actual line breaks; plain single-line
+            // messages are unaffected since they contain no \n.
+            msgText.style.whiteSpace = 'pre-line';
+            msgText.innerText = message;
+          }
           App.State.confirmCallback = callback;
 
           const el = document.getElementById('confirmModal');
@@ -10455,6 +10492,28 @@
           const confirmMsg = isEdit
             ? `Are you sure you want to update Bill #${formData.billNumber} and automatically update the Items and Vendors master lists?`
             : `Are you sure you want to record Bill #${formData.billNumber} and automatically update the Items and Vendors master lists?`;
+
+          // Only fires when this bill's date is on/before a manual Stock
+          // correction already logged for one of its items — recalculateStock()
+          // sums Bill Ledger qty with no regard for Bill Date, so such a bill
+          // may double-count goods that correction's physical recount already
+          // included. Let the user decide per-save whether it should still hit
+          // Stock, or be recorded for the ledger only. Every other bill save
+          // is completely unaffected by this check.
+          formData.excludeFromStockKeys = '[]';
+          try {
+            const conflictRes = await Api.call('checkStockAdjustmentConflicts', items, formData.billDate);
+            if (conflictRes?.success && conflictRes.data?.length) {
+              const choice = await App.Bill.showStockConflictChoice(conflictRes.data);
+              if (choice === 'cancel') return;
+              if (choice === 'ledger') {
+                const keys = conflictRes.data.map(c => `${c.itemName}|${c.size || ''}`.trim().toLowerCase());
+                formData.excludeFromStockKeys = JSON.stringify(keys);
+              }
+            }
+          } catch (err) {
+            // Advisory check failing must never block the actual save.
+          }
 
           App.Utils.confirmAction(
             confirmMsg,
@@ -12263,6 +12322,49 @@
 
       // ── Bills ────────────────────────────────────────────────────
       App.Bill = {
+        // Shows the "this bill may double-count Stock" choice modal and
+        // resolves to the user's decision: 'update' (bill affects Stock
+        // normally), 'ledger' (bill is saved but excluded from Stock's
+        // Billed Qty sum), or 'cancel' (dismissed without choosing — abort
+        // the whole save). Only shown when checkStockAdjustmentConflicts
+        // actually finds a conflict; see the billForm submit handler.
+        showStockConflictChoice(conflicts) {
+          return new Promise(resolve => {
+            const listEl = document.getElementById('billStockConflictList');
+            if (listEl) {
+              listEl.innerHTML = conflicts.map(c => {
+                const d = new Date(c.adjustmentDate).toLocaleDateString('en-GB');
+                return `<li>${escapeHtml(c.itemName)}${c.size ? ' (' + escapeHtml(c.size) + ')' : ''} — corrected on ${d} (reason: ${escapeHtml(c.reason || '')})</li>`;
+              }).join('');
+            }
+
+            const el = document.getElementById('billStockConflictModal');
+            if (!el || typeof bootstrap === 'undefined') { resolve('update'); return; }
+
+            const updateBtn = document.getElementById('billStockConflictUpdateBtn');
+            const ledgerBtn = document.getElementById('billStockConflictLedgerBtn');
+
+            let settled = false;
+            const finish = choice => {
+              if (settled) return;
+              settled = true;
+              updateBtn?.removeEventListener('click', onUpdate);
+              ledgerBtn?.removeEventListener('click', onLedger);
+              el.removeEventListener('hidden.bs.modal', onHidden);
+              resolve(choice);
+            };
+            const onUpdate = () => { safeModalHide('billStockConflictModal'); finish('update'); };
+            const onLedger = () => { safeModalHide('billStockConflictModal'); finish('ledger'); };
+            const onHidden = () => finish('cancel');
+
+            updateBtn?.addEventListener('click', onUpdate);
+            ledgerBtn?.addEventListener('click', onLedger);
+            el.addEventListener('hidden.bs.modal', onHidden);
+
+            safeModalShow('billStockConflictModal');
+          });
+        },
+
         async loadData() {
           const tbody = document.getElementById('billTableBody');
           if (tbody)

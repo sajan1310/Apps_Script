@@ -254,10 +254,10 @@ function getBillData() {
       return buildResponse(true, []);
     }
 
-    // Read from PO_NUMBER column through REMARKS column
+    // Read from PO_NUMBER column through AFFECTS_STOCK column
     // Avoids reading unrelated columns to the left
     const firstCol = BILL_COL.PO_NUMBER;
-    const numCols = BILL_COL.BASE_RATE - firstCol + 1;
+    const numCols = BILL_COL.AFFECTS_STOCK - firstCol + 1;
     const data = sheet
       .getRange(startRow, firstCol, lastRow - startRow + 1, numCols)
       .getValues();
@@ -278,7 +278,8 @@ function getBillData() {
       gst:      BILL_COL.GST - firstCol,
       remarks:  BILL_COL.REMARKS - firstCol,
       baseQty:  BILL_COL.BASE_QTY - firstCol,
-      baseRate: BILL_COL.BASE_RATE - firstCol
+      baseRate: BILL_COL.BASE_RATE - firstCol,
+      affectsStock: BILL_COL.AFFECTS_STOCK - firstCol
     };
 
     // Aggregate rows into bill objects
@@ -356,7 +357,9 @@ function getBillData() {
         lineTotal: lineTotal,
         poNumber: rowPoNum,
         baseQty: _toValidNumber(r[OFF.baseQty], 'Base Qty', true) || qty,
-        baseRate: _toValidNumber(r[OFF.baseRate], 'Base Rate', true) || price
+        baseRate: _toValidNumber(r[OFF.baseRate], 'Base Rate', true) || price,
+        // Blank (legacy rows predating this column) defaults to affecting Stock.
+        affectsStock: String(r[OFF.affectsStock] || 'Y').trim().toUpperCase() !== 'N'
       });
 
       // Update totals (always recomputed, never from sheet columns)
@@ -613,6 +616,22 @@ function saveBill(formData) {
     const itemUnitMap = _getItemUnitInfoMap();
     const unitsMap = _getUnitsMap();
 
+    // Items the user chose "Ledger only" for in the checkStockAdjustmentConflicts
+    // warning (see Script_Core.html's billForm submit handler) — these lines are
+    // still saved and shown in the Bill Ledger, but excluded from Stock's Billed
+    // Qty sum (see _getBilledAndConsumedQtyMaps in module_stock.js) because the
+    // goods they represent were already reflected in a later manual stock count.
+    let excludeFromStockKeys = [];
+    try {
+      const rawExclude = formData.excludeFromStockKeys;
+      excludeFromStockKeys = typeof rawExclude === 'string'
+        ? (rawExclude ? JSON.parse(rawExclude) : [])
+        : (Array.isArray(rawExclude) ? rawExclude : []);
+    } catch (e) {
+      excludeFromStockKeys = [];
+    }
+    const excludeFromStockSet = new Set(excludeFromStockKeys.map(k => String(k).trim().toLowerCase()));
+
     const newRows = items.map(function(item) {
       const qty = _toValidNumber(item.qty, 'Qty');
       const price = _toValidNumber(item.price, 'Price');
@@ -646,6 +665,9 @@ function saveBill(formData) {
       item.baseRate = baseRate;
       item.poNumber = itemPoNumber;
 
+      const itemKey = String(item.name || '').trim().toLowerCase() + '|' + String(item.size || '').trim().toLowerCase();
+      const affectsStock = excludeFromStockSet.has(itemKey) ? 'N' : 'Y';
+
       return [
         itemPoNumber,                                      // 1: PO_NUMBER
         billNumber,                                        // 2: BILL_NUMBER
@@ -662,7 +684,8 @@ function saveBill(formData) {
         lineTotal,                                         // 13: TOTAL
         remarks,                                           // 14: REMARKS
         baseQty,                                           // 15: BASE_QTY
-        baseRate                                           // 16: BASE_RATE
+        baseRate,                                          // 16: BASE_RATE
+        affectsStock                                       // 17: AFFECTS_STOCK
       ];
     });
 
@@ -912,6 +935,12 @@ function _ensureBillSheetColumns(sheet) {
 
   if (!hasBaseQty) {
     sheet.getRange(1, BILL_COL.BASE_QTY, 1, 2).setValues([['Base Qty', 'Base Rate']]);
+    SpreadsheetApp.flush();
+  }
+
+  const hasAffectsStock = refreshedHeaders.some(h => String(h).trim().toLowerCase() === 'affects stock');
+  if (!hasAffectsStock) {
+    sheet.getRange(1, BILL_COL.AFFECTS_STOCK).setValue('Affects Stock');
     SpreadsheetApp.flush();
   }
 

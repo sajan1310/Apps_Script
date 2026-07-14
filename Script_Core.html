@@ -908,7 +908,10 @@
       return items
         .map(i =>
           typeof i === 'object' && i !== null
-            ? `${escapeHtml(i.name)}${i.size ? ` [${escapeHtml(i.size)}]` : ''} (${escapeHtml(i.qty)} ${escapeHtml(i.unit || 'Pcs')})`
+            ? `${escapeHtml(i.name)}${i.size ? ` [${escapeHtml(i.size)}]` : ''} (${escapeHtml(i.qty)} ${escapeHtml(i.unit || 'Pcs')})` +
+              // Only Bill items carry this field (see checkStockAdjustmentConflicts) —
+              // undefined for PO/Return items, so this is a no-op for them.
+              (i.affectsStock === false ? ' <span class="badge bg-warning text-dark">Ledger only</span>' : '')
             : escapeHtml(i)
         )
         .join('<br>');
@@ -1230,7 +1233,13 @@
 
         confirmAction(message, callback) {
           const msgText = document.getElementById('confirmMessageText');
-          if (msgText) msgText.innerText = message;
+          if (msgText) {
+            // pre-line lets multi-line warnings (e.g. stock-adjustment
+            // conflicts) render as actual line breaks; plain single-line
+            // messages are unaffected since they contain no \n.
+            msgText.style.whiteSpace = 'pre-line';
+            msgText.innerText = message;
+          }
           App.State.confirmCallback = callback;
 
           const el = document.getElementById('confirmModal');
@@ -2213,6 +2222,28 @@
           const confirmMsg = isEdit
             ? `Are you sure you want to update Bill #${formData.billNumber} and automatically update the Items and Vendors master lists?`
             : `Are you sure you want to record Bill #${formData.billNumber} and automatically update the Items and Vendors master lists?`;
+
+          // Only fires when this bill's date is on/before a manual Stock
+          // correction already logged for one of its items — recalculateStock()
+          // sums Bill Ledger qty with no regard for Bill Date, so such a bill
+          // may double-count goods that correction's physical recount already
+          // included. Let the user decide per-save whether it should still hit
+          // Stock, or be recorded for the ledger only. Every other bill save
+          // is completely unaffected by this check.
+          formData.excludeFromStockKeys = '[]';
+          try {
+            const conflictRes = await Api.call('checkStockAdjustmentConflicts', items, formData.billDate);
+            if (conflictRes?.success && conflictRes.data?.length) {
+              const choice = await App.Bill.showStockConflictChoice(conflictRes.data);
+              if (choice === 'cancel') return;
+              if (choice === 'ledger') {
+                const keys = conflictRes.data.map(c => `${c.itemName}|${c.size || ''}`.trim().toLowerCase());
+                formData.excludeFromStockKeys = JSON.stringify(keys);
+              }
+            }
+          } catch (err) {
+            // Advisory check failing must never block the actual save.
+          }
 
           App.Utils.confirmAction(
             confirmMsg,

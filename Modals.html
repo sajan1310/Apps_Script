@@ -27,6 +27,33 @@
   </div>
 </div>
 
+<!-- Bill vs. Manual Stock Correction Conflict Modal -->
+<!-- Shown only when a bill's date falls on/before a manual Stock correction
+     already logged for one of its items (see checkStockAdjustmentConflicts,
+     module_stock.js) — the correction's physical recount may already include
+     this bill's goods. Purely advisory; the user decides how the bill should
+     affect Stock. -->
+<div class="modal fade" id="billStockConflictModal" tabindex="-1" aria-hidden="true" style="z-index: 1075;">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-warning">
+        <h5 class="modal-title text-dark"><i class="bi bi-exclamation-triangle"></i> Possible Stock Double-Count</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body fs-6">
+        <p>This bill's date is on or before a manual Stock correction already recorded for the following item(s):</p>
+        <ul id="billStockConflictList" class="mb-2"></ul>
+        <p class="mb-0">If those goods were already on hand when that correction was made, adding this bill to Stock will double-count them. Update Stock only if this is a genuinely separate delivery.</p>
+      </div>
+      <div class="modal-footer flex-column flex-sm-row">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel Save</button>
+        <button type="button" class="btn btn-outline-warning" id="billStockConflictLedgerBtn">No — Ledger Only (don't affect Stock)</button>
+        <button type="button" class="btn btn-primary" id="billStockConflictUpdateBtn">Yes — Update Stock</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- BOM Access Password Modal -->
 <div class="modal fade" id="bomAccessModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true" style="z-index: 1075;">
   <div class="modal-dialog modal-dialog-centered">

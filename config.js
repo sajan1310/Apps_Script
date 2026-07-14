@@ -379,7 +379,10 @@ const BILL_COL = Object.freeze({
   TOTAL:          13,     // Line total with GST
   REMARKS:        14,     // Bill remarks
   BASE_QTY:       15,     // QTY converted to the item's Base Unit (e.g. Pcs) — drives stock/BOM math
-  BASE_RATE:      16      // PRICE converted to a per-Base-Unit rate
+  BASE_RATE:      16,     // PRICE converted to a per-Base-Unit rate
+  AFFECTS_STOCK:  17      // 'Y' (default/legacy) or 'N' — 'N' means this line is recorded for the
+                           // ledger only and is excluded from Stock's Billed Qty sum (see
+                           // checkStockAdjustmentConflicts in module_stock.js)
 });
 
 /**
@@ -401,7 +404,8 @@ const BILL_COL_NAMES = Object.freeze({
   'total': BILL_COL.TOTAL,
   'remarks': BILL_COL.REMARKS,
   'baseQty': BILL_COL.BASE_QTY,
-  'baseRate': BILL_COL.BASE_RATE
+  'baseRate': BILL_COL.BASE_RATE,
+  'affectsStock': BILL_COL.AFFECTS_STOCK
 });
 
 // ─────────────────────────────────────────────────────────────────────────

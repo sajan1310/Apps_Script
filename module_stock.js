@@ -78,11 +78,18 @@ function _getBilledAndConsumedQtyMaps(ss) {
   if (billSheet) {
     const billLastRow = billSheet.getLastRow();
     if (billLastRow >= 2) {
-      // Read columns PO_NUMBER (1) through BASE_RATE (16)
-      const numCols = Math.max(billSheet.getLastColumn(), BILL_COL.BASE_RATE);
+      // Read columns PO_NUMBER (1) through AFFECTS_STOCK (17)
+      const numCols = Math.max(billSheet.getLastColumn(), BILL_COL.AFFECTS_STOCK);
       const billData = billSheet.getRange(2, 1, billLastRow - 1, numCols).getValues();
       for (let i = 0; i < billData.length; i++) {
         const row = billData[i];
+        // 'N' means the user chose "Ledger only" for this line (see
+        // checkStockAdjustmentConflicts / saveBill) — the goods were already
+        // reflected in a later manual stock correction, so counting this
+        // line too would double-count them. Blank/legacy rows default to 'Y'.
+        const affectsStock = String(row[BILL_COL.AFFECTS_STOCK - 1] || 'Y').trim().toUpperCase() !== 'N';
+        if (!affectsStock) continue;
+
         const itemName = String(row[BILL_COL.ITEM_NAME - 1] || '').trim().toLowerCase();
         const size = String(row[BILL_COL.SIZE - 1] || '').trim().toLowerCase();
         // Stock is tracked in each item's Base Unit — use the converted
@@ -739,6 +746,67 @@ function getStockAdjustmentHistory() {
   } catch (error) {
     Log.error('[getStockAdjustmentHistory] Error:', error.message);
     return buildResponse(false, null, 'Failed to load stock adjustment history: ' + error.message);
+  }
+}
+
+/**
+ * Advisory check run before saving a Bill: recalculateStock() sums Bill
+ * Ledger quantities unconditionally, with no regard for the Bill Date field,
+ * while adjustStockManually() fixes Current Stock as of the moment it's
+ * saved. So a bill whose date falls on/before an item's last manual
+ * correction may represent goods that correction's physical recount already
+ * counted (e.g. delivered before the recount but entered into the system
+ * afterward) — saving it would silently double-count that quantity. This
+ * flags such items for a UI warning; it never blocks the save, since the
+ * bill may legitimately be for a separate, later delivery.
+ * @param {Array<{name:string, size:string}>} items
+ * @param {string} billDate - DD/MM/YYYY or YYYY-MM-DD
+ * @returns {Object} response.data: Array<{itemName, size, adjustmentDate, reason}>
+ */
+function checkStockAdjustmentConflicts(items, billDate) {
+  try {
+    const billDateNative = toSafeDateObject(billDate);
+    if (!billDateNative || !Array.isArray(items) || items.length === 0) {
+      return buildResponse(true, []);
+    }
+
+    const historyRes = getStockAdjustmentHistory();
+    if (!historyRes.success || !historyRes.data.length) {
+      return buildResponse(true, []);
+    }
+
+    // Latest ADJUST/RESET per item|size key
+    const latestByKey = {};
+    historyRes.data.forEach(rec => {
+      const key = String(rec.itemName).trim().toLowerCase() + '|' + String(rec.size).trim().toLowerCase();
+      const recDate = new Date(rec.date);
+      if (!latestByKey[key] || recDate > latestByKey[key].date) {
+        latestByKey[key] = { date: recDate, reason: rec.reason };
+      }
+    });
+
+    const conflicts = [];
+    const seenKeys = new Set();
+    items.forEach(item => {
+      const key = String(item.name || '').trim().toLowerCase() + '|' + String(item.size || '').trim().toLowerCase();
+      if (seenKeys.has(key)) return;
+      const latest = latestByKey[key];
+      if (latest && latest.date >= billDateNative) {
+        seenKeys.add(key);
+        conflicts.push({
+          itemName: item.name,
+          size: item.size || '',
+          adjustmentDate: latest.date.toISOString(),
+          reason: latest.reason
+        });
+      }
+    });
+
+    return buildResponse(true, conflicts);
+  } catch (error) {
+    Log.error('[checkStockAdjustmentConflicts] Error:', error.message);
+    // Advisory only — never let this check block a bill save on failure.
+    return buildResponse(true, []);
   }
 }
 

@@ -1042,10 +1042,14 @@ const PO_PRICE_MATCH_EPSILON = 0.01;
  *
  * Given a vendor and a set of "DIRECT" bill line items (qty/unit/price,
  * not yet linked to any PO), suggests which open PO line(s) each item most
- * likely belongs to. Matches by item name + size + price (compared in the
- * item's base unit, so a PO ordered in "Gross" can match a bill received in
- * "Pcs"), allocating oldest-PO-first, and splits a single bill line across
- * multiple PO lines if one PO doesn't have enough open quantity left.
+ * likely belongs to. Matches by item name + size (required), then narrows by
+ * narration and price where available — both are preferences, not hard
+ * requirements, same as elsewhere in the codebase (see getLatestRate) — so a
+ * missing/mismatched narration or a renegotiated price never falls back to
+ * DIRECT on their own. Quantities are compared in the item's base unit (so a
+ * PO ordered in "Gross" can match a bill received in "Pcs"), allocating
+ * oldest-PO-first, and a single bill line is split across multiple PO lines
+ * if one PO doesn't have enough open quantity left.
  *
  * This never writes anything — it only proposes allocations for the UI to
  * show and the user to confirm or override before save.
@@ -1109,6 +1113,7 @@ function suggestPoAllocations(vendor, items, billDate) {
             poDateRaw: po.poDateRaw,
             name: String(poItem.name),
             size: String(poItem.size),
+            narration: String(poItem.narration || ''),
             price: poItem.price,
             unit: String(poItem.unit || 'Pcs'),
             baseRate: poItem.baseRate,
@@ -1174,19 +1179,36 @@ function suggestPoAllocations(vendor, items, billDate) {
       const sameNameSize = (candidatesByKey.get(name.toLowerCase() + '|' + size.toLowerCase()) || [])
         .filter(function(c) { return c.remainingBaseQty > 0.0001; });
 
+      // Narration is a preference, not a hard requirement — same idea as
+      // price below. A vendor's open POs can carry more than one line for
+      // the same name+size (narration is how two specs/variants of the same
+      // item+size get told apart, e.g. two colors at an identical price), so
+      // when this bill row already has narration text, prefer the open
+      // line(s) whose narration matches it — that's what keeps the correct
+      // PO line's balance getting drawn down instead of an arbitrary sibling
+      // one. Falls back to every same-name+size line when the row has no
+      // narration yet, or its text doesn't match anything currently open —
+      // never give up to DIRECT just because narration text drifted.
+      const narration = String(item.narration || '').trim().toLowerCase();
+      const narrationMatched = narration
+        ? sameNameSize.filter(function(c) { return c.narration.trim().toLowerCase() === narration; })
+        : [];
+      const narrationPool = narrationMatched.length > 0 ? narrationMatched : sameNameSize;
+
       // Price is a preference, not a hard requirement: if the bill gives a
       // price and it disambiguates between PO lines at different rates
       // (e.g. the same item ordered at ₹23 on one PO and ₹25 on another),
       // prefer the matching-price lines. If price is absent, or doesn't
       // match any open line (a renegotiated rate), fall back to every open
-      // line for that name+size, oldest PO first — never give up to DIRECT
-      // just because the price didn't line up exactly.
+      // line for that name+size (already narrowed by narration above),
+      // oldest PO first — never give up to DIRECT just because the price
+      // didn't line up exactly.
       const priceMatched = price > 0
-        ? sameNameSize.filter(function(c) {
+        ? narrationPool.filter(function(c) {
             return Math.abs(c.baseRate - baseRate) <= PO_PRICE_MATCH_EPSILON;
           })
         : [];
-      const matching = priceMatched.length > 0 ? priceMatched : sameNameSize;
+      const matching = priceMatched.length > 0 ? priceMatched : narrationPool;
 
       let baseQtyLeft = baseQty;
       const allocations = [];

@@ -4,6 +4,49 @@
 
       // ── Bills ────────────────────────────────────────────────────
       App.Bill = {
+        // Shows the "this bill may double-count Stock" choice modal and
+        // resolves to the user's decision: 'update' (bill affects Stock
+        // normally), 'ledger' (bill is saved but excluded from Stock's
+        // Billed Qty sum), or 'cancel' (dismissed without choosing — abort
+        // the whole save). Only shown when checkStockAdjustmentConflicts
+        // actually finds a conflict; see the billForm submit handler.
+        showStockConflictChoice(conflicts) {
+          return new Promise(resolve => {
+            const listEl = document.getElementById('billStockConflictList');
+            if (listEl) {
+              listEl.innerHTML = conflicts.map(c => {
+                const d = new Date(c.adjustmentDate).toLocaleDateString('en-GB');
+                return `<li>${escapeHtml(c.itemName)}${c.size ? ' (' + escapeHtml(c.size) + ')' : ''} — corrected on ${d} (reason: ${escapeHtml(c.reason || '')})</li>`;
+              }).join('');
+            }
+
+            const el = document.getElementById('billStockConflictModal');
+            if (!el || typeof bootstrap === 'undefined') { resolve('update'); return; }
+
+            const updateBtn = document.getElementById('billStockConflictUpdateBtn');
+            const ledgerBtn = document.getElementById('billStockConflictLedgerBtn');
+
+            let settled = false;
+            const finish = choice => {
+              if (settled) return;
+              settled = true;
+              updateBtn?.removeEventListener('click', onUpdate);
+              ledgerBtn?.removeEventListener('click', onLedger);
+              el.removeEventListener('hidden.bs.modal', onHidden);
+              resolve(choice);
+            };
+            const onUpdate = () => { safeModalHide('billStockConflictModal'); finish('update'); };
+            const onLedger = () => { safeModalHide('billStockConflictModal'); finish('ledger'); };
+            const onHidden = () => finish('cancel');
+
+            updateBtn?.addEventListener('click', onUpdate);
+            ledgerBtn?.addEventListener('click', onLedger);
+            el.addEventListener('hidden.bs.modal', onHidden);
+
+            safeModalShow('billStockConflictModal');
+          });
+        },
+
         async loadData() {
           const tbody = document.getElementById('billTableBody');
           if (tbody)
