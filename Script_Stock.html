@@ -764,7 +764,11 @@
       },
 
       filterWarehousePool(searchTerm) {
-        App.State.warehousePoolSearchTerm = (searchTerm || '').toLowerCase().trim();
+        // Preserve original case (matchesKeywords lowercases internally for
+        // matching) so bulkPrintWarehousePool's report title/filename echo
+        // back what the user actually typed — mirrors App.Stock.filterData's
+        // stockSearchTerm handling above.
+        App.State.warehousePoolSearchTerm = String(searchTerm || '').trim();
         this.renderWarehousePoolTable();
       },
 
@@ -945,12 +949,23 @@
             acc.produced += r.producedQty || 0;
             acc.consumed += r.consumedQty || 0;
             acc.available += r.availableQty || 0;
+            if ((r.availableQty || 0) < -0.0001) acc.hasNegativeBucket = true;
             return acc;
-          }, { produced: 0, consumed: 0, available: 0 });
+          }, { produced: 0, consumed: 0, available: 0, hasNegativeBucket: false });
 
           const encProcessId = encodeURIComponent(p.processId);
           const comboLabel = entry.leafRows.length === 1 ? '1 combination' : `${entry.leafRows.length} combinations`;
           const checked = App.Selection.isSelected(App.State.selectedWarehousePool, p.processId) ? 'checked' : '';
+
+          // A negative Total is shown directly in red; a Total that nets to
+          // zero/positive can still be HIDING a negative Color/Product-Tag
+          // bucket underneath (e.g. one color at -120, another at +120) —
+          // flag that case too, or an operator glancing at a fine-looking
+          // Total has no signal to open the breakdown at all.
+          const totalIsNegative = totals.available < -0.0001;
+          const maskedNegativeWarning = (!totalIsNegative && totals.hasNegativeBucket)
+            ? ' <i class="bi bi-exclamation-triangle-fill text-danger" title="One or more Color/Product-Tag combinations below are negative even though the Total nets out — open the breakdown to see which."></i>'
+            : '';
 
           html += `<tr class="pool-process-row" style="cursor:pointer;" onclick="App.Stock.openWarehousePoolProcessModal('${encProcessId}')">
             <td class="text-center" onclick="event.stopPropagation();">
@@ -960,7 +975,7 @@
             ${processCell}
             <td class="text-center">${App.Production.formatQty(totals.produced)}</td>
             <td class="text-center">${App.Production.formatQty(totals.consumed)}</td>
-            <td class="text-center fw-bold">${App.Production.formatQty(totals.available)}</td>
+            <td class="text-center fw-bold${totalIsNegative ? ' text-danger' : ''}">${App.Production.formatQty(totals.available)}${maskedNegativeWarning}</td>
             <td class="text-center">
               <button type="button" class="btn btn-outline-primary btn-sm" title="View / Edit Breakdown">
                 <i class="bi bi-list-ul me-1"></i>${comboLabel}
@@ -1026,8 +1041,13 @@
         const encTag = encodeURIComponent(r.productTag || '');
         const encColor = encodeURIComponent(r.color || '');
         const encProcessId = encodeURIComponent(r.processId || process.processId || '');
+        // Flagged red when negative — the row-level Total Available can net
+        // this out against another bucket (see renderWarehousePoolTable's
+        // maskedNegativeWarning), so this is often the only place the
+        // shortfall is actually visible.
+        const isNegative = (r.availableQty || 0) < -0.0001;
         const availableCell = r.outputItemName
-          ? `<span class="pool-stock-display" data-qty="${r.availableQty}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
+          ? `<span class="pool-stock-display${isNegative ? ' text-danger fw-bold' : ''}" data-qty="${r.availableQty}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
               onclick="App.Stock.editPoolStockCell(this, '${encName}', '${encProcessId}', '${encTag}', '${encColor}')">${App.Production.formatQty(r.availableQty)}</span>`
           : '<span class="text-muted">—</span>';
 
@@ -1422,7 +1442,14 @@
             (lot.colorBreakdown || []).forEach(entry => {
               if ((entry.color || '').toLowerCase() !== colorLower) return;
               const qty = Number(entry.qty) || 0;
-              if (qty <= 0) return;
+              // A negative colorBreakdown qty is a legitimate correction/
+              // reversal lot (see saveProduction in module_production.js,
+              // which recalculateWarehousePool already folds into the real
+              // Total Available) — only an exact zero is dropped here.
+              // Split by sign instead of always crediting inQty, so a
+              // reversal shows as an Out like the Manual Correction rows
+              // below instead of a negative "Incoming Qty".
+              if (qty === 0) return;
               credited = true;
               entries.push({
                 dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
@@ -1431,11 +1458,12 @@
                 badgeClass: 'bg-success',
                 ref: lot.lotNumber || '-',
                 remarks: lot.remarks || '-',
-                inQty: qty,
-                outQty: 0
+                inQty: qty > 0 ? qty : 0,
+                outQty: qty < 0 ? -qty : 0
               });
             });
             if (!credited && !colorLower && !(lot.colorBreakdown || []).length) {
+              const flatQty = Number(lot.qty) || 0;
               entries.push({
                 dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
                 dateStr: lot.date,
@@ -1443,8 +1471,8 @@
                 badgeClass: 'bg-success',
                 ref: lot.lotNumber || '-',
                 remarks: lot.remarks || '-',
-                inQty: Number(lot.qty) || 0,
-                outQty: 0
+                inQty: flatQty > 0 ? flatQty : 0,
+                outQty: flatQty < 0 ? -flatQty : 0
               });
             }
           }
@@ -1457,7 +1485,12 @@
               const compColor = colorGroup && colorGroup.toUpperCase() !== 'COMMON' ? colorGroup.toLowerCase() : '';
               if (compColor !== colorLower) return;
               const qty = Number(comp.qty) || 0;
-              if (qty <= 0) return;
+              // A negative consumption qty is a correction that credits the
+              // pool back (see module_stock.js/_getBilledAndConsumedQtyMaps
+              // and module_warehouse.js/recalculateWarehousePool, both
+              // already summing negative qtys into the real total) — split
+              // by sign so it shows as an In here, not a negative Out.
+              if (qty === 0) return;
               entries.push({
                 dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
                 dateStr: lot.date,
@@ -1465,8 +1498,8 @@
                 badgeClass: 'bg-danger',
                 ref: lot.lotNumber || '-',
                 remarks: lot.remarks || '-',
-                inQty: 0,
-                outQty: qty
+                inQty: qty < 0 ? -qty : 0,
+                outQty: qty > 0 ? qty : 0
               });
             });
           }

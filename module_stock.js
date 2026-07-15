@@ -224,8 +224,11 @@ function _getBilledAndConsumedQtyMaps(ss) {
           if (sourceType === COMPONENT_SOURCE_TYPES.POOL) return;
           const itemName = String(comp.itemName || '').trim().toLowerCase();
           const size = String(comp.size || '').trim().toLowerCase();
+          // Zero/negative are both kept — a negative component qty is a
+          // correction/reversal that credits Stock back (see saveProduction
+          // in module_production.js), not junk to be filtered out.
           let qty = Number(comp.qty) || 0;
-          if (!itemName || qty <= 0) return;
+          if (!itemName) return;
 
           // Blank unit (the default for every pre-existing recipe row) means
           // "already in the item's Base Unit" — preserves old behavior

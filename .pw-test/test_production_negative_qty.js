@@ -1,12 +1,13 @@
 /**
  * Standalone Node harness (same mock-SpreadsheetApp pattern as
  * test_color_axes.js) exercising saveProduction()'s relaxed quantity
- * validation: negative quantities are now allowed (a lot can be logged as a
- * correction/reversal without editing history, mirroring
+ * validation: zero AND negative quantities are both allowed, for the
+ * produced qty itself and for each component consumed (ITEM or POOL
+ * sourced) — a lot can be logged as a correction/reversal, or an explicit
+ * zero-output record, without editing history, mirroring
  * adjustStockManually/adjustWarehousePoolManually's existing "negative is
- * allowed, only manual review needed later" behavior) — only an exact zero
- * (no output at all) is still rejected. Covers both the flat (no
- * color-specific components) and per-color-breakdown save paths.
+ * allowed, only manual review needed later" behavior. Covers both the flat
+ * (no color-specific components) and per-color-breakdown save paths.
  *
  * Run: node .pw-test/test_production_negative_qty.js
  */
@@ -129,7 +130,7 @@ let flatProcessId;
   assert(!!flatProcessId, 'processId returned');
 }
 
-console.log('\n=== Test 1: flat path rejects an exact-zero quantity ===');
+console.log('\n=== Test 1: flat path accepts an exact-zero quantity (explicit zero-output record) ===');
 {
   const res = saveProduction({
     processId: flatProcessId,
@@ -140,8 +141,11 @@ console.log('\n=== Test 1: flat path rejects an exact-zero quantity ===');
       { itemName: 'Assembly Screws', sourceType: 'ITEM', qty: 0, colorGroup: 'COMMON' }
     ])
   });
-  assert(res.success === false, 'zero-quantity flat lot is rejected');
-  assert(/cannot be zero/i.test(res.message || ''), `rejection message mentions zero (got "${res.message}")`);
+  assert(res.success, 'zero-quantity flat lot saves successfully: ' + res.message);
+  const lotNumber = res.data && res.data.lotNumber;
+  const lot = (getProductionData().data || []).find(l => l.lotNumber === lotNumber);
+  assert(!!lot, 'saved zero-qty lot found by lot number');
+  assert(lot && lot.qty === 0, `saved lot qty is 0 (got ${lot && lot.qty})`);
 }
 
 console.log('\n=== Test 2: flat path accepts a negative quantity (correction/reversal lot) ===');
@@ -184,7 +188,7 @@ let colorProcessId;
   assert(!!colorProcessId, 'processId returned');
 }
 
-console.log('\n=== Test 3: color-breakdown path rejects a single checked color at qty 0 ===');
+console.log('\n=== Test 3: color-breakdown path accepts a single checked color at qty 0 ===');
 {
   const res = saveProduction({
     processId: colorProcessId,
@@ -195,8 +199,30 @@ console.log('\n=== Test 3: color-breakdown path rejects a single checked color a
       { itemName: 'Red Paint', sourceType: 'ITEM', qty: 0, colorGroup: 'Red' }
     ])
   });
-  assert(res.success === false, 'all-zero color breakdown is rejected (filtered to empty, not silently zeroed)');
-  assert(/non-zero quantity/i.test(res.message || ''), `rejection message mentions non-zero (got "${res.message}")`);
+  assert(res.success, 'zero-qty color-breakdown lot saves successfully: ' + res.message);
+  const lotNumber = res.data && res.data.lotNumber;
+  const lot = (getProductionData().data || []).find(l => l.lotNumber === lotNumber);
+  assert(!!lot, 'saved zero-qty color lot found by lot number');
+  assert(lot && lot.qty === 0, `saved lot qty is 0 (got ${lot && lot.qty})`);
+}
+
+console.log('\n=== Test 5: componentsConsumed accepts a negative ITEM-sourced qty (credits Stock back) ===');
+{
+  const res = saveProduction({
+    processId: flatProcessId,
+    assignedTo: 'Test Contractor',
+    status: 'Pending',
+    qty: 5,
+    componentsConsumed: JSON.stringify([
+      { itemName: 'Assembly Screws', sourceType: 'ITEM', qty: -20, colorGroup: 'COMMON' }
+    ])
+  });
+  assert(res.success, 'negative component-qty lot saves successfully: ' + res.message);
+  const lotNumber = res.data && res.data.lotNumber;
+  const lot = (getProductionData().data || []).find(l => l.lotNumber === lotNumber);
+  const comp = lot && lot.componentsConsumed && lot.componentsConsumed[0];
+  assert(!!comp, 'saved lot retained its negative-qty component (not filtered out)');
+  assert(comp && comp.qty === -20, `saved component qty is -20 (got ${comp && comp.qty})`);
 }
 
 console.log('\n=== Test 4: color-breakdown path accepts a negative total (correction/reversal lot) ===');

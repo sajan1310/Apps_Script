@@ -616,8 +616,12 @@ function recalculateWarehousePool() {
           if (colorBreakdown.length > 0) {
             colorBreakdown.forEach(entry => {
               const color = String(entry.color || '').trim();
+              // Zero/negative kept — a negative per-color qty is a
+              // correction/reversal lot that credits this bucket back down
+              // (see saveProduction in module_production.js), mirroring the
+              // flat (non-color) path just below which never filtered by sign.
               const qty = Number(entry.qty) || 0;
-              if (!color || qty <= 0) return;
+              if (!color) return;
               getBucket(outputItemName, processId, productTag, color).producedQty += qty;
             });
           } else {

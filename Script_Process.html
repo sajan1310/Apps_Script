@@ -1955,6 +1955,18 @@
             const response = await Api.call('saveProcess', formData);
             if (response.success) {
               await App.Process.loadData();
+
+              // A saved Color Sub-Group changes the known-colors list Warehouse
+              // Pool uses to render placeholder rows (App.Stock.computeLeafRowsForProcess,
+              // fed by getAllProcessColorGroups) — refresh it now instead of
+              // leaning solely on App.Stock.loadData()'s own "if the pool
+              // sub-tab is still showing" refresh, which only fires on the
+              // NEXT Stock-tab visit.
+              const poolTab = document.getElementById('warehousePoolSubTab');
+              if (poolTab && poolTab.style.display !== 'none' && typeof App.Stock !== 'undefined') {
+                App.Stock.loadWarehousePoolData();
+              }
+
               if (isEdit) {
                 const modalEl = document.getElementById('editProcessModal');
                 if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();

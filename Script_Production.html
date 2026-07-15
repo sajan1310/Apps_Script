@@ -2204,7 +2204,7 @@
           const cellsHtml = visibleColors.map(col => {
             const qty = this._poolGroupCellValue(mode, r, col, axisKey);
             const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
-            return `<td><input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(col)}"${qtyPerUnitAttr} min="0" step="any" value="${display}"></td>`;
+            return `<td><input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(col)}"${qtyPerUnitAttr} step="any" value="${display}"></td>`;
           }).join('');
           return `
         <tr id="${rowId}" data-row-idx="${rowIdx}">
@@ -2330,7 +2330,7 @@
               const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
               const qtyPerUnitAttr = (def.mode === 'create' && rowObj && rowObj.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${rowObj.qtyPerUnit}"` : '';
               const td = document.createElement('td');
-              td.innerHTML = `<input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(matchColor)}"${qtyPerUnitAttr} min="0" step="any" value="${display}">`;
+              td.innerHTML = `<input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(matchColor)}"${qtyPerUnitAttr} step="any" value="${display}">`;
               tr.insertBefore(td, tr.children[insertIdx] || null);
             });
           });
@@ -2498,7 +2498,7 @@
             <option value="POOL" ${sourceType === 'POOL' ? 'selected' : ''}>Pool (Warehouse)</option>
           </select>
         </td>
-        <td><input type="number" class="form-control text-end prod-comp-qty" min="0" step="any" value="${qty}" required></td>
+        <td><input type="number" class="form-control text-end prod-comp-qty" step="any" value="${qty}" required></td>
         <td class="prod-comp-available text-muted small">-</td>
         <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Production.removeComponentRow('${rowId}')">✕</button></td>
       </tr>
@@ -2606,12 +2606,11 @@
         const td = document.createElement('td');
         if (isMerged) {
           td.innerHTML = '<select class="form-select form-select-sm prod-comp-item-select mb-1"><option value=""></option></select>'
-            + '<input type="number" class="form-control form-control-sm text-end matrix-qty" min="0" step="any" value="">';
+            + '<input type="number" class="form-control form-control-sm text-end matrix-qty" step="any" value="">';
         } else {
           const input = document.createElement('input');
           input.type = 'number';
           input.className = 'form-control text-end matrix-qty';
-          input.min = '0';
           input.step = '0.0001';
           td.appendChild(input);
         }
@@ -2704,7 +2703,7 @@
 
         const colorCellsHtml = colors
           .map(() => '<td><select class="form-select form-select-sm prod-comp-item-select mb-1"><option value=""></option></select>'
-            + '<input type="number" class="form-control form-control-sm text-end matrix-qty" min="0" step="any" value=""></td>')
+            + '<input type="number" class="form-control form-control-sm text-end matrix-qty" step="any" value=""></td>')
           .join('');
 
         const rowHtml = `
@@ -2786,7 +2785,7 @@
         const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
 
         const colorCellsHtml = this.getMatrixColors()
-          .map(() => `<td><input type="number" class="form-control text-end matrix-qty" min="0" step="any" value=""></td>`)
+          .map(() => `<td><input type="number" class="form-control text-end matrix-qty" step="any" value=""></td>`)
           .join('');
 
         const rowHtml = `
@@ -3027,8 +3026,15 @@
 
           headerColors.forEach(({ color, index }) => {
             const cell = row.children[index];
-            const qty = toNumber(cell?.querySelector('.matrix-qty')?.value);
-            if (qty <= 0) return;
+            const qtyInput = cell?.querySelector('.matrix-qty');
+            // An untouched cell (blank) is skipped, not counted as an
+            // explicit zero — toNumber('') is 0, indistinguishable from a
+            // typed "0", so the skip decision must be made on the raw text
+            // instead. A typed 0 or negative value IS kept (correction/
+            // reversal consumption, mirroring the output qty's own
+            // zero/negative handling).
+            if (!qtyInput || qtyInput.value.trim() === '') return;
+            const qty = toNumber(qtyInput.value);
 
             let itemName = rowItemName;
             if (isMerged) {
@@ -3061,8 +3067,10 @@
           const size = row.querySelector('.prod-comp-size')?.value.trim() || '';
 
           row.querySelectorAll('.pool-group-qty').forEach(input => {
+            // See serializeColorMatrix's matching comment — blank is
+            // skipped, but a typed 0 or negative value is kept.
+            if (input.value.trim() === '') return;
             const qty = toNumber(input.value);
-            if (qty <= 0) return;
             const color = input.dataset.color || '';
             if (!color) return;
             components.push({ itemName, size, color: '', sourceType: 'POOL', qty, colorGroup: color });
@@ -3429,15 +3437,27 @@
             const itemName = (itemOpt?.dataset.name || itemOpt?.textContent || '').trim().toLowerCase();
             const size = row.querySelector('.prod-comp-size')?.value.trim().toLowerCase();
 
+            let qty = 0;
             if (sourceSel.value === 'POOL') {
               const entry = wip.find(w => w.outputItemName.toLowerCase() === itemName);
+              qty = entry ? entry.availableQty : 0;
               availEl.innerText = entry ? `${this.formatQty(entry.availableQty)} avail. (Pool)` : '0 avail. (Pool)';
             } else {
               const entry = stock.find(s =>
                 s.name.toLowerCase() === itemName && (!size || (s.size || '').toLowerCase() === size)
               );
+              qty = entry ? entry.currentStock : 0;
               availEl.innerText = entry ? `${this.formatQty(entry.currentStock)} avail.` : '0 avail.';
             }
+            // Negative available stock/pool is allowed to save (see
+            // saveProduction), but easy to miss as plain gray text — flag it
+            // in red so the operator sees it before committing, instead of
+            // discovering it later via a summary elsewhere that nets it
+            // against an unrelated color/tag bucket (see Warehouse Pool's
+            // per-Process Total Available column).
+            availEl.classList.toggle('text-danger', qty < 0);
+            availEl.classList.toggle('fw-bold', qty < 0);
+            availEl.classList.toggle('text-muted', qty >= 0);
           });
         } catch (err) {
           // Ignored — availability hints are advisory, not blocking.
@@ -4514,13 +4534,9 @@
               App.Utils.showToast('Check at least one Color and enter its quantity.', true);
               return;
             }
-            // Negative quantities are allowed (e.g. a correction/reversal lot,
-            // matching Stock/Warehouse Pool's manual-adjustment behavior) —
-            // only an exact zero (nothing entered) is rejected here.
-            if (colorQtys.some(c => c.qty === 0)) {
-              App.Utils.showToast('Every checked Color needs a non-zero quantity.', true);
-              return;
-            }
+            // Zero and negative quantities are both allowed here (e.g. a
+            // correction/reversal lot, or an explicit zero-output record),
+            // matching Stock/Warehouse Pool's manual-adjustment behavior.
             // Color Axis mode (see renderGroupedColorChecklist): a process
             // with 2+ independent groups must have exactly one marked
             // Primary before saving — otherwise the server has nothing to

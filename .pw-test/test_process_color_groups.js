@@ -330,7 +330,7 @@ console.log('\n=== Test 4: saveProduction Color requirement/validation ===');
 
   const noColor = saveProduction(Object.assign({}, baseLot)); // color omitted entirely
   assert(noColor.success === false, 'missing Color is rejected when process has color sub-groups');
-  assert(/Color with a non-zero quantity/i.test(noColor.message), 'rejection message explains Color is required (got "' + noColor.message + '")');
+  assert(/At least one Color is required/i.test(noColor.message), 'rejection message explains Color is required (got "' + noColor.message + '")');
 
   const badColor = saveProduction(Object.assign({}, baseLot, { colorBreakdown: JSON.stringify([{ color: 'Green', qty: 5 }]) }));
   assert(badColor.success === false, 'unconfigured Color ("Green") is rejected');

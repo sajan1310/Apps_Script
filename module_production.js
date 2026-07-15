@@ -581,10 +581,10 @@ function saveProduction(formData) {
         .map(c => ({
           color: sanitizeString(c.color || '', 'color'),
           size: sanitizeString(c.size || '', 'size'),
-          // Negative quantities are allowed — a lot can be logged as a
-          // correction/reversal (e.g. a prior over-count) without editing
-          // history, mirroring adjustStockManually/adjustWarehousePoolManually.
-          // Only an exact zero is filtered out below.
+          // Zero and negative quantities are both allowed — a lot can be
+          // logged as a correction/reversal (e.g. a prior over-count)
+          // without editing history, mirroring
+          // adjustStockManually/adjustWarehousePoolManually.
           qty: validateNumber(c.qty, -10000000, 10000000),
           isCustom: !!c.isCustom,
           // See Script.html's getCheckedColorQtys — false for a true
@@ -601,10 +601,10 @@ function saveProduction(formData) {
           // rather than by color name, which can collide across axes.
           axisKey: sanitizeString(c.axisKey || '', 'colorAxisKey')
         }))
-        .filter(c => c.color && c.qty !== 0);
+        .filter(c => c.color);
 
       if (colorBreakdown.length === 0) {
-        return buildResponse(false, null, 'At least one Color with a non-zero quantity is required for this lot (this process has color-specific components).');
+        return buildResponse(false, null, 'At least one Color is required for this lot (this process has color-specific components).');
       }
 
       // A custom sub-group (operator-typed at production time, not part of
@@ -693,22 +693,29 @@ function saveProduction(formData) {
       // when present: exact axis identity, immune to name collisions.
       // Falls back to the name-only match for older submitted payloads with
       // no axisKey, or a row from the legacy (non-axis) checklist.
+      const isPrimaryAxisRow = c => {
+        const isKnownPrimaryColor = c.axisKey
+          ? c.axisKey.toLowerCase() === primaryAxisKeyLower
+          : primaryAxisColorsLower.has(c.color.toLowerCase());
+        const countsAsCustom = c.isCustom && c.countsTowardTotal !== false;
+        return isKnownPrimaryColor || countsAsCustom;
+      };
+
       qty = primaryAxisColorsLower
-        ? colorBreakdown.reduce((sum, c) => {
-            const isKnownPrimaryColor = c.axisKey
-              ? c.axisKey.toLowerCase() === primaryAxisKeyLower
-              : primaryAxisColorsLower.has(c.color.toLowerCase());
-            const countsAsCustom = c.isCustom && c.countsTowardTotal !== false;
-            return sum + ((isKnownPrimaryColor || countsAsCustom) ? c.qty : 0);
-          }, 0)
+        ? colorBreakdown.reduce((sum, c) => sum + (isPrimaryAxisRow(c) ? c.qty : 0), 0)
         : colorBreakdown.reduce((sum, c) => sum + (c.countsTowardTotal ? c.qty : 0), 0);
 
-      // A zero net total means nothing happened; negative is allowed (see the
-      // colorBreakdown mapping above — a correction/reversal lot).
-      if (qty === 0) {
-        return buildResponse(false, null, primaryColorAxis
-          ? `At least one "${primaryColorAxis}" color with a non-zero quantity is required for this lot.`
-          : 'At least one Color with a non-zero quantity is required for this lot (this process has color-specific components).');
+      // The total itself may legitimately be zero or negative (a
+      // correction/reversal lot, or an explicit zero-output record) — see
+      // the colorBreakdown mapping above. What's still rejected is a
+      // Primary-Axis-configured process where NO checked row actually
+      // belongs to the primary group at all (e.g. only a non-primary
+      // "Mudguard Color" row was checked) — that's an operator forgetting
+      // to address the primary axis, not a deliberate zero, and would
+      // otherwise silently save attribute-only consumption against zero
+      // real output.
+      if (primaryAxisColorsLower && !colorBreakdown.some(isPrimaryAxisRow)) {
+        return buildResponse(false, null, `At least one "${primaryColorAxis}" color is required for this lot.`);
       }
 
       // The operator explicitly picked/changed the Primary Axis on this
@@ -721,14 +728,10 @@ function saveProduction(formData) {
         _setProcessPrimaryColorAxis(processId, submittedPrimaryColorAxis);
       }
     } else {
-      // Negative quantities are allowed — a lot can be logged as a
-      // correction/reversal (e.g. a prior over-count) without editing
+      // Zero and negative quantities are both allowed — a lot can be logged
+      // as a correction/reversal (e.g. a prior over-count) without editing
       // history, mirroring adjustStockManually/adjustWarehousePoolManually.
-      // Only an exact zero (nothing entered / no output) is rejected.
       qty = validateNumber(formData.qty, -10000000, 10000000);
-      if (qty === 0) {
-        return buildResponse(false, null, 'Production Quantity cannot be zero.');
-      }
     }
 
     // Components consumed: required list of {itemName, size, color, sourceType, qty, colorGroup}.
@@ -753,13 +756,16 @@ function saveProduction(formData) {
         sourceType: String(c.sourceType || '').trim().toUpperCase() === COMPONENT_SOURCE_TYPES.POOL
           ? COMPONENT_SOURCE_TYPES.POOL
           : COMPONENT_SOURCE_TYPES.ITEM,
-        qty: validateNumber(c.qty, 0, 10000000),
+        // Zero and negative consumption are both allowed — e.g. a correction/
+        // reversal lot that credits stock/pool back, mirroring the output
+        // qty's own zero/negative handling above.
+        qty: validateNumber(c.qty, -10000000, 10000000),
         colorGroup: sanitizeString(c.colorGroup || '', 'colorGroup') || COMPONENT_COLOR_GROUP_COMMON,
         // Blank = "already in the item's Base Unit" — see PROCESS_COMPONENTS_COL.UNIT
         // and module_stock.js#_getBilledAndConsumedQtyMaps.
         unit: sanitizeString(c.unit || '', 'unit')
       }))
-      .filter(c => c.itemName && c.qty > 0);
+      .filter(c => c.itemName);
 
     if (colorBreakdown.length > 0) {
       // Drop any leftover row scoped to a color that isn't part of this
