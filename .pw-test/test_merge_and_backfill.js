@@ -171,7 +171,11 @@ const files = [
   'module_bill.js',
   'module_po.js',
   'module_bom.js',
-  'module_process.js'
+  'module_process.js',
+  'module_return.js',
+  'module_wastage.js',
+  'module_issue.js',
+  'module_production.js'
 ];
 
 files.forEach(f => {
@@ -190,12 +194,20 @@ vm.runInContext(`
   global.BILL_COL = BILL_COL;
   global.PO_COL = PO_COL;
   global.BOM_COL = BOM_COL;
+  global.RETURN_COL = RETURN_COL;
+  global.WASTAGE_COL = WASTAGE_COL;
+  global.ISSUE_COL = ISSUE_COL;
+  global.PRODUCTION_COL = PRODUCTION_COL;
+  global.COMPONENT_SOURCE_TYPES = COMPONENT_SOURCE_TYPES;
 `, ctx, { filename: 'expose.js' });
 
 const {
   APP_CONFIG, ITEMS_COL, STOCK_COL, BILL_COL, PO_COL, BOM_COL,
+  RETURN_COL, WASTAGE_COL, ISSUE_COL, PRODUCTION_COL, COMPONENT_SOURCE_TYPES,
   saveItem, mergeItemEdit, syncStockForItem,
-  backfillBillItemRefs, backfillPOItemRefs, backfillBOMItemRefs
+  backfillBillItemRefs, backfillPOItemRefs, backfillBOMItemRefs,
+  backfillReturnItemRefs, backfillWastageItemRefs, backfillIssueItemRefs,
+  backfillProductionConsumedItemRefs, getItemIdentityDriftReport
 } = ctx;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -305,6 +317,58 @@ function seedBomSheet() {
   return sheet;
 }
 
+function seedReturnSheet() {
+  const sheet = ss.addSheet(APP_CONFIG.SHEETS.RETURN);
+  sheet._set(2, RETURN_COL.RETURN_NUMBER, 'RET-1');
+  sheet._set(2, RETURN_COL.RETURN_DATE, '01/01/2026');
+  sheet._set(2, RETURN_COL.VENDOR, 'PJ Cycle Industries');
+  sheet._set(2, RETURN_COL.ITEM_NAME, 'BACK-REST-D-26---BLACK');
+  sheet._set(2, RETURN_COL.SIZE, '24 inch');
+  sheet._set(2, RETURN_COL.QTY, 1);
+  sheet._set(2, RETURN_COL.BASE_QTY, 1);
+  return sheet;
+}
+
+function seedWastageSheet() {
+  const sheet = ss.addSheet(APP_CONFIG.SHEETS.WASTAGE);
+  sheet._set(2, WASTAGE_COL.WASTAGE_ID, 'WST-1');
+  sheet._set(2, WASTAGE_COL.DATE, '01/01/2026');
+  sheet._set(2, WASTAGE_COL.ITEM_NAME, 'BACK-REST-D-26---BLACK');
+  sheet._set(2, WASTAGE_COL.SIZE, '24 inch');
+  sheet._set(2, WASTAGE_COL.QTY, 1);
+  sheet._set(2, WASTAGE_COL.BASE_QTY, 1);
+  return sheet;
+}
+
+function seedIssueSheet() {
+  const sheet = ss.addSheet(APP_CONFIG.SHEETS.ISSUE);
+  sheet._set(2, ISSUE_COL.ISSUE_ID, 'ISS-1');
+  sheet._set(2, ISSUE_COL.DATE, '01/01/2026');
+  sheet._set(2, ISSUE_COL.ISSUED_TO, 'Contractor A');
+  sheet._set(2, ISSUE_COL.ITEM_NAME, 'BACK-REST-D-26---BLACK');
+  sheet._set(2, ISSUE_COL.SIZE, '24 inch');
+  sheet._set(2, ISSUE_COL.QTY, 1);
+  sheet._set(2, ISSUE_COL.BASE_QTY, 1);
+  return sheet;
+}
+
+function seedProductionSheet() {
+  const sheet = ss.addSheet(APP_CONFIG.SHEETS.PRODUCTION);
+  sheet._set(2, PRODUCTION_COL.DATE, '01/01/2026');
+  sheet._set(2, PRODUCTION_COL.QTY, 10);
+  sheet._set(2, PRODUCTION_COL.STATUS, 'Completed');
+  sheet._set(2, PRODUCTION_COL.PROCESS_ID, 'PRC-1');
+  sheet._set(2, PRODUCTION_COL.LOT_NUMBER, 'LOT-1');
+  sheet._set(2, PRODUCTION_COL.COMPONENTS_CONSUMED, JSON.stringify([
+    { itemName: 'BACK-REST-D-26---BLACK', size: '24 inch', sourceType: 'ITEM', qty: 10 },
+    { itemName: 'Painted Frame', size: '', sourceType: 'POOL', qty: 10 }
+  ]));
+  sheet._set(2, PRODUCTION_COL.CUSTOM_COMPONENTS, JSON.stringify([
+    { itemName: 'BACK-REST-D-26---BLACK', size: '24 inch', narration: '', color: '', requiredQty: 10 }
+  ]));
+  return sheet;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Test 1: rename backfill (no merge)
 // ─────────────────────────────────────────────────────────────────────────
@@ -315,6 +379,10 @@ console.log('\n=== Test 1: rename backfill (no collision) ===');
   const billSheet = seedBillSheet();
   const poSheet = seedPOSheet();
   const bomSheet = seedBomSheet();
+  const returnSheet = seedReturnSheet();
+  const wastageSheet = seedWastageSheet();
+  const issueSheet = seedIssueSheet();
+  const productionSheet = seedProductionSheet();
 
   // Remove the GENERAL row so the rename has no collision target.
   itemsSheet.deleteRow(3);
@@ -348,6 +416,24 @@ console.log('\n=== Test 1: rename backfill (no collision) ===');
 
   const bomRow = bomSheet.getRange(2, BOM_COL.ITEM_NAME, 1, 2).getValues()[0];
   assert(bomRow[1] === '26 inch', 'BOM backfilled to 26 inch (got "' + bomRow[1] + '")');
+
+  const returnRow = returnSheet.getRange(2, RETURN_COL.ITEM_NAME, 1, 2).getValues()[0];
+  assert(returnRow[1] === '26 inch', 'Return Ledger backfilled to 26 inch (got "' + returnRow[1] + '")');
+
+  const wastageRow = wastageSheet.getRange(2, WASTAGE_COL.ITEM_NAME, 1, 2).getValues()[0];
+  assert(wastageRow[1] === '26 inch', 'Wastage Log backfilled to 26 inch (got "' + wastageRow[1] + '")');
+
+  const issueRow = issueSheet.getRange(2, ISSUE_COL.ITEM_NAME, 1, 2).getValues()[0];
+  assert(issueRow[1] === '26 inch', 'Issued Stock Log backfilled to 26 inch (got "' + issueRow[1] + '")');
+
+  const consumed = JSON.parse(productionSheet.getRange(2, PRODUCTION_COL.COMPONENTS_CONSUMED, 1, 1).getValue());
+  assert(consumed[0].itemName === 'BACK-REST-D-26---BLACK' && consumed[0].size === '26 inch',
+    'Production Components Consumed (ITEM-sourced) backfilled to 26 inch (got ' + JSON.stringify(consumed[0]) + ')');
+  assert(consumed[1].itemName === 'Painted Frame' && consumed[1].sourceType === 'POOL',
+    'Production Components Consumed POOL-sourced entry left untouched (got ' + JSON.stringify(consumed[1]) + ')');
+
+  const custom = JSON.parse(productionSheet.getRange(2, PRODUCTION_COL.CUSTOM_COMPONENTS, 1, 1).getValue());
+  assert(custom[0].size === '26 inch', 'Production legacy Custom Components backfilled to 26 inch (got ' + JSON.stringify(custom[0]) + ')');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -396,6 +482,10 @@ console.log('\n=== Test 3: mergeItemEdit full flow ===');
   const billSheet = seedBillSheet();
   const poSheet = seedPOSheet();
   const bomSheet = seedBomSheet();
+  const returnSheet = seedReturnSheet();
+  const wastageSheet = seedWastageSheet();
+  const issueSheet = seedIssueSheet();
+  const productionSheet = seedProductionSheet();
 
   const formData = {
     itemName: 'BACK-REST-D-26---BLACK',
@@ -449,6 +539,18 @@ console.log('\n=== Test 3: mergeItemEdit full flow ===');
 
   const bomRow = bomSheet.getRange(2, BOM_COL.ITEM_NAME, 1, 2).getValues()[0];
   assert(bomRow[1] === 'GENERAL', 'BOM backfilled to GENERAL (got "' + bomRow[1] + '")');
+
+  const returnRow = returnSheet.getRange(2, RETURN_COL.ITEM_NAME, 1, 2).getValues()[0];
+  assert(returnRow[1] === 'GENERAL', 'Return Ledger backfilled to GENERAL (got "' + returnRow[1] + '")');
+
+  const wastageRow = wastageSheet.getRange(2, WASTAGE_COL.ITEM_NAME, 1, 2).getValues()[0];
+  assert(wastageRow[1] === 'GENERAL', 'Wastage Log backfilled to GENERAL (got "' + wastageRow[1] + '")');
+
+  const issueRow = issueSheet.getRange(2, ISSUE_COL.ITEM_NAME, 1, 2).getValues()[0];
+  assert(issueRow[1] === 'GENERAL', 'Issued Stock Log backfilled to GENERAL (got "' + issueRow[1] + '")');
+
+  const consumed = JSON.parse(productionSheet.getRange(2, PRODUCTION_COL.COMPONENTS_CONSUMED, 1, 1).getValue());
+  assert(consumed[0].size === 'GENERAL', 'Production Components Consumed backfilled to GENERAL on merge (got ' + JSON.stringify(consumed[0]) + ')');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -509,6 +611,51 @@ console.log('\n=== Test 5: repeat merge request fails cleanly, no double-merge =
   const stockSheet = ss.getSheetByName(APP_CONFIG.SHEETS.STOCK);
   const stockVals = stockSheet.getRange(2, 1, 1, 5).getValues()[0];
   assert(stockVals[3] === 642, 'stock was combined exactly once, not twice (got ' + stockVals[3] + ')');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Test 6: getItemIdentityDriftReport() diagnostic
+// ─────────────────────────────────────────────────────────────────────────
+console.log('\n=== Test 6: getItemIdentityDriftReport diagnostic ===');
+{
+  ss.sheets = {};
+  seedItemsSheet();
+  seedStockSheet();
+  seedBillSheet();
+  seedPOSheet();
+  seedBomSheet();
+  seedReturnSheet();
+  seedWastageSheet();
+  seedIssueSheet();
+  seedProductionSheet();
+
+  const clean = getItemIdentityDriftReport();
+  assert(clean.success, 'clean report call succeeds: ' + clean.message);
+  assert(clean.data.length === 0, 'no drift found when every reference matches a current Items Master row (got ' + JSON.stringify(clean.data) + ')');
+
+  // Simulate leftover damage from before this fix existed: a Wastage row
+  // and a Production Components-Consumed entry still naming a size Items
+  // Master no longer has (as if a rename backfill had been skipped).
+  const wastageSheet = ss.getSheetByName(APP_CONFIG.SHEETS.WASTAGE);
+  wastageSheet._set(2, WASTAGE_COL.SIZE, '99 inch (renamed away)');
+
+  const prodSheet = ss.getSheetByName(APP_CONFIG.SHEETS.PRODUCTION);
+  const staleConsumed = JSON.parse(prodSheet.getRange(2, PRODUCTION_COL.COMPONENTS_CONSUMED, 1, 1).getValue());
+  staleConsumed[0].size = '99 inch (renamed away)';
+  prodSheet.getRange(2, PRODUCTION_COL.COMPONENTS_CONSUMED, 1, 1).setValue(JSON.stringify(staleConsumed));
+
+  const dirty = getItemIdentityDriftReport();
+  assert(dirty.success, 'dirty report call succeeds: ' + dirty.message);
+  assert(dirty.data.length === 2, 'exactly 2 stale references found (got ' + JSON.stringify(dirty.data) + ')');
+
+  const bySheet = Object.fromEntries(dirty.data.map(f => [f.sheet, f]));
+  assert(!!bySheet['Wastage Log'], 'stale Wastage Log reference flagged');
+  assert(!!bySheet['Production (Components Consumed)'], 'stale Production Components-Consumed reference flagged');
+  assert(bySheet['Wastage Log'].size === '99 inch (renamed away)', 'flagged finding reports the actual stale size (got "' + bySheet['Wastage Log'].size + '")');
+
+  // The POOL-sourced entry in Production's snapshot must never be flagged —
+  // its itemName is an upstream process's Output Item Name, not Items Master.
+  assert(!dirty.data.some(f => f.itemName === 'Painted Frame'), 'POOL-sourced Production entry is never flagged as drift');
 }
 
 // ─────────────────────────────────────────────────────────────────────────

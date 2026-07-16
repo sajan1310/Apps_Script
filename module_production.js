@@ -1336,3 +1336,110 @@ function saveProductionSheet(rowIdx, expectedProductId, expectedQty, customCompo
     lock.releaseLock();
   }
 }
+
+/**
+ * Repoints an item's old name+size to its new name+size inside every
+ * Production lot's already-saved COMPONENTS_CONSUMED JSON (and the legacy
+ * CUSTOM_COMPONENTS JSON) snapshot. Called from module_items.js's
+ * _propagateItemIdentityChange after a rename (saveItem) or a merge
+ * (mergeItemEdit).
+ *
+ * Without this, a completed lot's Components Consumed snapshot keeps
+ * pointing at the item's old name — module_stock.js's
+ * _getBilledAndConsumedQtyMaps() keys its consumedQtyMap off that snapshot's
+ * itemName, so once Stock's own row is renamed (syncStockForItem('rename'))
+ * the stale snapshot silently stops matching on the next recalculateStock()
+ * and that lot's consumption drops out of Current Stock math entirely.
+ *
+ * Only ITEM-sourced COMPONENTS_CONSUMED entries are touched — a POOL-sourced
+ * entry's itemName is an upstream process's Output Item Name (Warehouse
+ * Pool), not an Items Master reference, so it must never be repointed by an
+ * Items Master rename. CUSTOM_COMPONENTS (module_production.js's
+ * "sheet customization" display snapshot) has no sourceType field to check —
+ * it's a display-only list of Items Master components, so every matching
+ * entry is repointed.
+ *
+ * Runs under the caller's existing document lock — does not acquire its own.
+ *
+ * @param {string} oldName
+ * @param {string} oldSize
+ * @param {string} newName
+ * @param {string} newSize
+ */
+function backfillProductionConsumedItemRefs(oldName, oldSize, newName, newSize) {
+  let sheet;
+  try {
+    sheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+  } catch (e) {
+    return;
+  }
+
+  const startRow = APP_CONFIG.PRODUCTION_SETTINGS.DATA_START_ROW;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < startRow) return;
+  if (sheet.getLastColumn() < PRODUCTION_COL.COMPONENTS_CONSUMED) return;
+
+  const numRows = lastRow - startRow + 1;
+  const tOldName = String(oldName || '').trim().toLowerCase();
+  const tOldSize = String(oldSize || '').trim().toLowerCase();
+
+  const _repoint = function(raw, matchSourceType) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) return null;
+
+    let list;
+    try {
+      list = JSON.parse(trimmed);
+    } catch (e) {
+      return null;
+    }
+    if (!Array.isArray(list) || list.length === 0) return null;
+
+    let changed = false;
+    list.forEach(function(comp) {
+      if (matchSourceType) {
+        const sourceType = String(comp.sourceType || '').trim().toUpperCase();
+        if (sourceType === COMPONENT_SOURCE_TYPES.POOL) return;
+      }
+      const rowName = String(comp.itemName || '').trim().toLowerCase();
+      const rowSize = String(comp.size || '').trim().toLowerCase();
+      if (rowName === tOldName && rowSize === tOldSize) {
+        comp.itemName = newName;
+        comp.size = newSize;
+        changed = true;
+      }
+    });
+
+    return changed ? JSON.stringify(list) : null;
+  };
+
+  const consumedRange = sheet.getRange(startRow, PRODUCTION_COL.COMPONENTS_CONSUMED, numRows, 1);
+  const consumedValues = consumedRange.getValues();
+  let consumedChanged = false;
+  for (let i = 0; i < consumedValues.length; i++) {
+    const rewritten = _repoint(consumedValues[i][0], true);
+    if (rewritten !== null) {
+      consumedValues[i][0] = rewritten;
+      consumedChanged = true;
+    }
+  }
+  if (consumedChanged) {
+    consumedRange.setValues(consumedValues);
+  }
+
+  if (sheet.getLastColumn() >= PRODUCTION_COL.CUSTOM_COMPONENTS) {
+    const customRange = sheet.getRange(startRow, PRODUCTION_COL.CUSTOM_COMPONENTS, numRows, 1);
+    const customValues = customRange.getValues();
+    let customChanged = false;
+    for (let i = 0; i < customValues.length; i++) {
+      const rewritten = _repoint(customValues[i][0], false);
+      if (rewritten !== null) {
+        customValues[i][0] = rewritten;
+        customChanged = true;
+      }
+    }
+    if (customChanged) {
+      customRange.setValues(customValues);
+    }
+  }
+}

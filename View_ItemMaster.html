@@ -14,6 +14,9 @@
       <button id="btnMergeDuplicates" class="btn btn-outline-warning fw-bold shadow-sm" onclick="App.Item.mergeDuplicates()" title="Fix truncated-name duplicates and merge any rows that share the same Name + Size">
         <i class="bi bi-magic"></i> Merge Duplicates
       </button>
+      <button id="btnCheckItemRefIntegrity" class="btn btn-outline-secondary fw-bold shadow-sm" type="button" title="Verifies every Item Name/Size reference in Bill, PO, BOM, Process Components, Return, Wastage, Issue, and Production still resolves to a current Items Master row — catches anything a rename/merge left behind. Informational only, never changes anything." onclick="App.Item.checkReferenceIntegrity()">
+        <i class="bi bi-clipboard-check"></i> Check Reference Integrity
+      </button>
       <button class="btn btn-info fw-bold text-white shadow-sm" onclick="App.Item.openCreateModal()">+ Register New Item</button>
     </div>
   </div>

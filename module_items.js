@@ -1105,10 +1105,16 @@ function deleteItem(name, size) {
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Repoints historical Bill Ledger, PO Tracker, and BOM rows from an item's
- * old name+size to its new name+size. Called after a rename (saveItem) or
- * a merge (mergeItemEdit) so history doesn't silently drift out of sync
- * with Item Master / Stock.
+ * Repoints historical Bill Ledger, PO Tracker, BOM, Process Components,
+ * Return Ledger, Wastage Log, Issued Stock Log, and Production
+ * Components-Consumed rows from an item's old name+size to its new
+ * name+size. Called after a rename (saveItem) or a merge (mergeItemEdit) so
+ * history doesn't silently drift out of sync with Item Master / Stock — see
+ * module_stock.js's _getBilledAndConsumedQtyMaps(), which keys every one of
+ * these sheets' historical rows to the Stock sheet by lowercase name+size;
+ * an un-backfilled sheet's rows silently stop matching the (renamed) Stock
+ * row on the next recalculateStock() and their qty drops out of Current
+ * Stock math entirely.
  *
  * Each sheet's backfill is isolated in its own try/catch so a failure in
  * one sheet doesn't prevent the others from being updated.
@@ -1127,7 +1133,11 @@ function _propagateItemIdentityChange(oldName, oldSize, newName, newSize) {
     { label: 'Bill Ledger', fn: backfillBillItemRefs },
     { label: 'PO Tracker', fn: backfillPOItemRefs },
     { label: 'BOM', fn: backfillBOMItemRefs },
-    { label: 'Process Components', fn: backfillProcessComponentItemRefs }
+    { label: 'Process Components', fn: backfillProcessComponentItemRefs },
+    { label: 'Return Ledger', fn: backfillReturnItemRefs },
+    { label: 'Wastage Log', fn: backfillWastageItemRefs },
+    { label: 'Issued Stock Log', fn: backfillIssueItemRefs },
+    { label: 'Production (Components Consumed)', fn: backfillProductionConsumedItemRefs }
   ];
 
   backfills.forEach(({ label, fn }) => {
@@ -1145,6 +1155,285 @@ function _propagateItemIdentityChange(oldName, oldSize, newName, newSize) {
       );
     }
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ITEM IDENTITY DRIFT DIAGNOSTIC (verify rename/merge cascades)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Builds a lowercase "name|size" -> true lookup of every (Item Name, Size)
+ * combination currently in Items Master. Shared by getItemIdentityDriftReport
+ * so every sheet-scanner below checks against the exact same snapshot.
+ * @returns {Set<string>}
+ * @private
+ */
+function _getValidItemIdentityKeys() {
+  const keys = new Set();
+  const sheet = getSheet(APP_CONFIG.SHEETS.ITEMS);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return keys;
+
+  const data = sheet.getRange(2, ITEMS_COL.ITEM_NAME, lastRow - 1, ITEMS_COL.SIZE - ITEMS_COL.ITEM_NAME + 1).getValues();
+  data.forEach(row => {
+    const name = String(row[0] || '').trim().toLowerCase();
+    if (!name) return;
+    const size = String(row[1] || '').trim().toLowerCase();
+    keys.add(name + '|' + size);
+  });
+  return keys;
+}
+
+/**
+ * getItemIdentityDriftReport()
+ *
+ * Read-only diagnostic — never blocks a save, never auto-fixes anything.
+ * Verifies that every (Item Name, Size) reference outside Items Master
+ * still resolves to a row that actually exists there. Same philosophy as
+ * module_bom.js's getBomProcessComponentsDrift().
+ *
+ * Exists because a rename/merge cascade (see _propagateItemIdentityChange)
+ * only knows how to repoint the sheets it's explicitly wired to backfill —
+ * a sheet added later without a matching backfill, or historical rows saved
+ * before a given backfill existed, would otherwise drift silently out of
+ * sync with Items Master and nobody would notice until Stock math went
+ * wrong. This scans every sheet that stores an Items Master (name, size)
+ * reference and flags any that don't currently resolve to a real item —
+ * whether that's leftover damage from before a fix existed, or a brand new
+ * gap in a cascade that hasn't been added yet.
+ *
+ * POOL-sourced rows (Process Components / Production Components Consumed)
+ * are skipped — their "item name" is an upstream process's Output Item
+ * Name (Warehouse Pool), not an Items Master reference.
+ *
+ * @returns {Object} API response; data = [{sheet, context, itemName, size}],
+ *   one entry per reference that doesn't resolve to a current Items Master
+ *   row.
+ */
+function getItemIdentityDriftReport() {
+  try {
+    const validKeys = _getValidItemIdentityKeys();
+    const findings = [];
+
+    const check = (sheetLabel, context, itemName, size) => {
+      const name = String(itemName || '').trim();
+      if (!name) return;
+      const key = name.toLowerCase() + '|' + String(size || '').trim().toLowerCase();
+      if (validKeys.has(key)) return;
+      findings.push({ sheet: sheetLabel, context: context, itemName: name, size: String(size || '').trim() });
+    };
+
+    // Bill Ledger
+    try {
+      const sheet = getSheet(APP_CONFIG.SHEETS.BILL);
+      const startRow = APP_CONFIG.BILL_SETTINGS.DATA_START_ROW;
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= startRow) {
+        const data = sheet.getRange(startRow, 1, lastRow - startRow + 1, BILL_COL.SIZE).getValues();
+        data.forEach(row => {
+          check('Bill Ledger', `Bill #${row[BILL_COL.BILL_NUMBER - 1] || ''}`, row[BILL_COL.ITEM_NAME - 1], row[BILL_COL.SIZE - 1]);
+        });
+      }
+    } catch (e) { /* sheet not found — nothing to check */ }
+
+    // PO Tracker
+    try {
+      const sheet = getSheet(APP_CONFIG.SHEETS.PO);
+      const startRow = APP_CONFIG.PO_SETTINGS.DATA_START_ROW;
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= startRow) {
+        const data = sheet.getRange(startRow, 1, lastRow - startRow + 1, PO_COL.SIZE).getValues();
+        data.forEach(row => {
+          check('PO Tracker', `PO #${row[PO_COL.PO_NUMBER - 1] || ''}`, row[PO_COL.ITEM_NAME - 1], row[PO_COL.SIZE - 1]);
+        });
+      }
+    } catch (e) { /* sheet not found — nothing to check */ }
+
+    // BOM
+    try {
+      const sheet = getSheet(APP_CONFIG.SHEETS.BOM);
+      const startRow = APP_CONFIG.BOM_SETTINGS.DATA_START_ROW;
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= startRow) {
+        const data = sheet.getRange(startRow, 1, lastRow - startRow + 1, BOM_COL.SIZE).getValues();
+        data.forEach(row => {
+          check('BOM', `${row[BOM_COL.PRODUCT_NAME - 1] || ''} (${row[BOM_COL.PRODUCT_ID - 1] || ''})`, row[BOM_COL.ITEM_NAME - 1], row[BOM_COL.SIZE - 1]);
+        });
+      }
+    } catch (e) { /* sheet not found — nothing to check */ }
+
+    // Process Components (ITEM-sourced only — POOL rows reference an
+    // upstream process's Output Item Name, not Items Master)
+    try {
+      const sheet = getSheet(APP_CONFIG.SHEETS.PROCESS_COMPONENTS);
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= 2) {
+        const data = sheet.getRange(2, 1, lastRow - 1, PROCESS_COMPONENTS_COL.SOURCE_TYPE).getValues();
+        data.forEach(row => {
+          const sourceType = String(row[PROCESS_COMPONENTS_COL.SOURCE_TYPE - 1] || '').trim().toUpperCase();
+          if (sourceType === COMPONENT_SOURCE_TYPES.POOL) return;
+          check('Process Components', `Process ${row[PROCESS_COMPONENTS_COL.PROCESS_ID - 1] || ''}`, row[PROCESS_COMPONENTS_COL.ITEM_NAME - 1], row[PROCESS_COMPONENTS_COL.SIZE - 1]);
+        });
+      }
+    } catch (e) { /* sheet not found — nothing to check */ }
+
+    // Return Ledger
+    try {
+      const sheet = getSheet(APP_CONFIG.SHEETS.RETURN);
+      const startRow = APP_CONFIG.RETURN_SETTINGS.DATA_START_ROW;
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= startRow) {
+        const data = sheet.getRange(startRow, 1, lastRow - startRow + 1, RETURN_COL.SIZE).getValues();
+        data.forEach(row => {
+          check('Return Ledger', `Return #${row[RETURN_COL.RETURN_NUMBER - 1] || ''}`, row[RETURN_COL.ITEM_NAME - 1], row[RETURN_COL.SIZE - 1]);
+        });
+      }
+    } catch (e) { /* sheet not found — nothing to check */ }
+
+    // Wastage Log
+    try {
+      const sheet = getSheet(APP_CONFIG.SHEETS.WASTAGE);
+      const startRow = APP_CONFIG.WASTAGE_SETTINGS.DATA_START_ROW;
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= startRow) {
+        const data = sheet.getRange(startRow, 1, lastRow - startRow + 1, WASTAGE_COL.SIZE).getValues();
+        data.forEach(row => {
+          check('Wastage Log', `Wastage ${row[WASTAGE_COL.WASTAGE_ID - 1] || ''}`, row[WASTAGE_COL.ITEM_NAME - 1], row[WASTAGE_COL.SIZE - 1]);
+        });
+      }
+    } catch (e) { /* sheet not found — nothing to check */ }
+
+    // Issued Stock Log
+    try {
+      const sheet = getSheet(APP_CONFIG.SHEETS.ISSUE);
+      const startRow = APP_CONFIG.ISSUE_SETTINGS.DATA_START_ROW;
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= startRow) {
+        const data = sheet.getRange(startRow, 1, lastRow - startRow + 1, ISSUE_COL.SIZE).getValues();
+        data.forEach(row => {
+          check('Issued Stock Log', `Issue ${row[ISSUE_COL.ISSUE_ID - 1] || ''}`, row[ISSUE_COL.ITEM_NAME - 1], row[ISSUE_COL.SIZE - 1]);
+        });
+      }
+    } catch (e) { /* sheet not found — nothing to check */ }
+
+    // Production — Components Consumed (ITEM-sourced only) and the legacy
+    // Custom Components display snapshot
+    try {
+      const sheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+      const startRow = APP_CONFIG.PRODUCTION_SETTINGS.DATA_START_ROW;
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= startRow && sheet.getLastColumn() >= PRODUCTION_COL.COMPONENTS_CONSUMED) {
+        const numRows = lastRow - startRow + 1;
+        const consumedData = sheet.getRange(startRow, PRODUCTION_COL.COMPONENTS_CONSUMED, numRows, 1).getValues();
+        const lotNumberData = sheet.getRange(startRow, PRODUCTION_COL.LOT_NUMBER, numRows, 1).getValues();
+
+        for (let i = 0; i < consumedData.length; i++) {
+          const raw = String(consumedData[i][0] || '').trim();
+          if (!raw) continue;
+          let components;
+          try {
+            components = JSON.parse(raw);
+          } catch (e) {
+            continue;
+          }
+          if (!Array.isArray(components)) continue;
+
+          const context = `Lot ${lotNumberData[i][0] || '(row ' + (startRow + i) + ')'}`;
+          components.forEach(comp => {
+            const sourceType = String(comp.sourceType || '').trim().toUpperCase();
+            if (sourceType === COMPONENT_SOURCE_TYPES.POOL) return;
+            check('Production (Components Consumed)', context, comp.itemName, comp.size);
+          });
+        }
+      }
+    } catch (e) { /* sheet not found — nothing to check */ }
+
+    const counts = findings.reduce((acc, f) => { acc[f.sheet] = (acc[f.sheet] || 0) + 1; return acc; }, {});
+    const message = findings.length === 0
+      ? 'No drift found — every Item Name/Size reference resolves to a current Items Master row.'
+      : `${findings.length} stale reference(s) found: ` +
+        Object.keys(counts).map(s => `${counts[s]} in ${s}`).join(', ');
+
+    return buildResponse(true, findings, message);
+  } catch (error) {
+    Log.error('[getItemIdentityDriftReport] Error:', error.message);
+    return buildResponse(false, null, 'Failed to check item reference integrity: ' + error.message);
+  }
+}
+
+/**
+ * fixItemIdentityDriftReference(staleName, staleSize, targetName, targetSize)
+ *
+ * Repairs one distinct stale reference surfaced by getItemIdentityDriftReport
+ * by repointing EVERY row across EVERY referencing sheet (Bill, PO, BOM,
+ * Process Components, Return, Wastage, Issue, Production) from the stale
+ * (name, size) to a real, currently-existing Items Master (name, size) that
+ * the caller identifies — the system cannot infer this on its own, since
+ * Items Master keeps no rename history, so the target must be a deliberate
+ * human choice from the "Check Reference Integrity" dialog.
+ *
+ * Reuses the exact same backfill functions the rename/merge cascade already
+ * relies on (_propagateItemIdentityChange) — a stale reference and a normal
+ * rename are the same repair, just with the "before" identity sourced from
+ * the drift report instead of a live saveItem() call.
+ *
+ * @param {string} staleName - The orphaned name currently on the referencing rows
+ * @param {string} staleSize - The orphaned size currently on the referencing rows
+ * @param {string} targetName - A name that currently exists in Items Master
+ * @param {string} targetSize - A size that currently exists in Items Master (paired with targetName)
+ * @returns {Object} API response
+ */
+function fixItemIdentityDriftReference(staleName, staleSize, targetName, targetSize) {
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(ITEMS_LOCK_TIMEOUT_MS)) {
+    return buildResponse(false, null, 'System is busy. Please try again in a moment.');
+  }
+
+  try {
+    const validStaleName = sanitizeString(staleName || '', 'staleName');
+    const validStaleSize = sanitizeString(staleSize || '', 'staleSize');
+    if (!validStaleName) {
+      return buildResponse(false, null, 'A stale item name is required.');
+    }
+
+    const validTargetName = _validateItemName(targetName);
+    const validTargetSize = sanitizeString(targetSize || '', 'targetSize');
+
+    const itemsSheet = getSheet(APP_CONFIG.SHEETS.ITEMS);
+    if (!itemsSheet) {
+      throw new Error(`Sheet "${APP_CONFIG.SHEETS.ITEMS}" not found.`);
+    }
+    const { matchRow } = _findItemRow(itemsSheet, validTargetName, validTargetSize);
+    if (matchRow === -1) {
+      return buildResponse(
+        false,
+        null,
+        `Target item "${validTargetName}"${validTargetSize ? ' (size: "' + validTargetSize + '")' : ''} was not found in Items Master. Pick an item that currently exists.`
+      );
+    }
+
+    _propagateItemIdentityChange(validStaleName, validStaleSize, validTargetName, validTargetSize);
+
+    if (typeof recalculateStock === 'function') {
+      recalculateStock();
+    }
+
+    const msg = `Repointed all references from "${validStaleName}"${validStaleSize ? ' (' + validStaleSize + ')' : ''} to "${validTargetName}"${validTargetSize ? ' (' + validTargetSize + ')' : ''}.`;
+    logAction(
+      'UPDATE',
+      'Item Reference Integrity Fix',
+      `${validStaleName}|${validStaleSize} -> ${validTargetName}|${validTargetSize}`,
+      msg,
+      'SUCCESS'
+    );
+    return buildResponse(true, null, msg);
+  } catch (error) {
+    Log.error('[fixItemIdentityDriftReference] Error:', error.message);
+    logAction('ERROR', 'fixItemIdentityDriftReference', `${staleName}|${staleSize}`, error.message, 'ERROR');
+    return buildResponse(false, null, 'Failed to fix reference: ' + error.message);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

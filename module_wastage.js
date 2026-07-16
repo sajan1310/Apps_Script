@@ -299,3 +299,45 @@ function deleteWastageBulk(wastageIds) {
     lock.releaseLock();
   }
 }
+
+/**
+ * Repoints historical Wastage Log rows from an item's old name+size to its
+ * new name+size. Called from module_items.js's _propagateItemIdentityChange
+ * after a rename (saveItem) or a merge (mergeItemEdit) — mirrors
+ * backfillBillItemRefs (module_bill.js). Runs under the caller's existing
+ * document lock — does not acquire its own.
+ * @param {string} oldName
+ * @param {string} oldSize
+ * @param {string} newName
+ * @param {string} newSize
+ */
+function backfillWastageItemRefs(oldName, oldSize, newName, newSize) {
+  const sheet = getSheet(APP_CONFIG.SHEETS.WASTAGE);
+  if (!sheet) return;
+
+  const startRow = APP_CONFIG.WASTAGE_SETTINGS.DATA_START_ROW;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < startRow) return;
+
+  const numRows = lastRow - startRow + 1;
+  const range = sheet.getRange(startRow, WASTAGE_COL.ITEM_NAME, numRows, 2);
+  const values = range.getValues();
+
+  const tOldName = String(oldName || '').trim().toLowerCase();
+  const tOldSize = String(oldSize || '').trim().toLowerCase();
+
+  let changed = false;
+  for (let i = 0; i < values.length; i++) {
+    const rowName = String(values[i][0] || '').trim().toLowerCase();
+    const rowSize = String(values[i][1] || '').trim().toLowerCase();
+    if (rowName === tOldName && rowSize === tOldSize) {
+      values[i][0] = newName;
+      values[i][1] = newSize;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    range.setValues(values);
+  }
+}
