@@ -3636,6 +3636,24 @@
   </div>
 </div>
 
+<!-- Item Identity Reference Integrity Modal (read-only diagnostic, App.Item.checkReferenceIntegrity) -->
+<div class="modal fade" id="itemDriftModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen-sm-down" style="max-width: 95vw;">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-secondary text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">
+          <i class="bi bi-clipboard-check me-2"></i>Item Reference Integrity
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light" id="itemDriftModalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        MAIN APPLICATION CONTAINER
@@ -4941,6 +4959,9 @@
       <button id="btnMergeDuplicates" class="btn btn-outline-warning fw-bold shadow-sm" onclick="App.Item.mergeDuplicates()" title="Fix truncated-name duplicates and merge any rows that share the same Name + Size">
         <i class="bi bi-magic"></i> Merge Duplicates
       </button>
+      <button id="btnCheckItemRefIntegrity" class="btn btn-outline-secondary fw-bold shadow-sm" type="button" title="Verifies every Item Name/Size reference in Bill, PO, BOM, Process Components, Return, Wastage, Issue, and Production still resolves to a current Items Master row — catches anything a rename/merge left behind. Informational only, never changes anything." onclick="App.Item.checkReferenceIntegrity()">
+        <i class="bi bi-clipboard-check"></i> Check Reference Integrity
+      </button>
       <button class="btn btn-info fw-bold text-white shadow-sm" onclick="App.Item.openCreateModal()">+ Register New Item</button>
     </div>
   </div>
@@ -5569,7 +5590,7 @@
        ═══════════════════════════════════════════════════════════ -->
   <div id="processTab" class="products-sub-tab">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-      <input type="text" id="searchProcess" class="form-control w-50" placeholder="Search Processes by Name or Lot Prefix..." onkeyup="App.Process.filterData(this.value)">
+      <input type="text" id="searchProcess" class="form-control w-50" placeholder="Search Processes by ID, Name, or Lot Prefix..." onkeyup="App.Process.filterData(this.value)">
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintProcesses" type="button" onclick="App.Process.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
@@ -5623,7 +5644,7 @@
   <div id="bomTab" class="products-sub-tab" style="display: none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center">
-        <input type="text" id="searchBOM" class="form-control me-2" placeholder="Search Product ID, Name, or Components..." autocomplete="off" onkeyup="App.BOM.filterData(this.value)">
+        <input type="text" id="searchBOM" class="form-control me-2" placeholder="Search Product ID, Name, Process ID, or Components..." autocomplete="off" onkeyup="App.BOM.filterData(this.value)">
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintBOMs" type="button" onclick="App.BOM.bulkPrint()" style="white-space: nowrap;">
@@ -14849,6 +14870,278 @@
           );
         },
 
+        // Groups raw getItemIdentityDriftReport() findings (one per
+        // referencing row) into one entry per distinct stale (name, size) —
+        // the Fix action operates on the whole identity at once (every sheet
+        // that names it), not row-by-row.
+        _groupDriftFindings(drift) {
+          const groups = new Map();
+          drift.forEach(d => {
+            const key = d.itemName.toLowerCase() + '|' + (d.size || '').toLowerCase();
+            if (!groups.has(key)) {
+              groups.set(key, { itemName: d.itemName, size: d.size || '', sheets: new Map() });
+            }
+            const group = groups.get(key);
+            const contexts = group.sheets.get(d.sheet) || [];
+            contexts.push(d.context);
+            group.sheets.set(d.sheet, contexts);
+          });
+          return Array.from(groups.values());
+        },
+
+        // Deduped, sorted current-Items-Master list shared by every drift
+        // group's "repoint to" picker, cached on `this._driftTargetItems`
+        // (indexed by array position — fixDriftReference looks the chosen
+        // option back up by that index, same convention as the ajax `id` in
+        // initItemSelect2 below). Just builds the cache; rendering is done
+        // lazily per-dropdown by _initDriftTargetSelects's ajax transport,
+        // NOT by dumping every item as a static <option> into every select —
+        // with hundreds/thousands of items and several stale groups open at
+        // once, that duplicated the full list N times over and made Select2
+        // render its entire unfiltered results list on every open, which is
+        // exactly what made the dropdown hang.
+        _buildDriftTargetItems() {
+          const seen = new Set();
+          this._driftTargetItems = (App.State.globalItems || [])
+            .filter(it => {
+              const key = (it.name || '').toLowerCase() + '|' + (it.size || '').toLowerCase();
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            })
+            .sort((a, b) => a.name.localeCompare(b.name) || a.size.localeCompare(b.size));
+        },
+
+        // Destroys any Select2 instances currently attached to
+        // ".drift-target-select" elements before the modal body markup gets
+        // thrown away and rebuilt — every OTHER Select2 usage in this file
+        // destroys before re-init/removal (see destroyItemSelect2,
+        // initCostContractorSelect2); skipping it here left Select2's own
+        // document-level listeners attached to detached DOM nodes on every
+        // checkReferenceIntegrity() re-render, which piles up across a
+        // realistic session of "open → fix a few → re-check" cycles.
+        _destroyDriftTargetSelects() {
+          if (!window.jQuery?.fn?.select2) return;
+          document.querySelectorAll('.drift-target-select').forEach(el => {
+            const $el = window.jQuery(el);
+            if ($el.data('select2')) $el.select2('destroy');
+          });
+        },
+
+        // Turns every rendered ".drift-target-select" into a searchable,
+        // paginated Select2 — same ajax/local-transport pattern as
+        // initItemSelect2 (App.BOM's component item picker) so opening the
+        // dropdown only ever renders one page (PAGE_SIZE) of results
+        // regardless of how large Items Master is, instead of the whole
+        // list at once.
+        //
+        // dropdownParent is document.body, NOT the scrollable #itemDriftModalBody
+        // (tried that first — see git history/memory). Select2's own position
+        // math for a scrollable dropdownParent is only reliable while a
+        // dropdown that was ALREADY open tracks a scroll; opening a dropdown
+        // for the FIRST TIME on a row that only became visible by scrolling
+        // computes a badly wrong position (observed rendering far off-screen,
+        // e.g. y:-234, in a table scrolled a few hundred px down) — a known
+        // Select2 limitation with scrollable dropdownParents, not something
+        // fixable by tweaking options. document.body is never scrolled while
+        // a Bootstrap modal is open (Bootstrap locks body scroll), so
+        // Select2's position math against it is always correct. The
+        // trade-off: a dropdown no longer follows the row while scrolling
+        // WITH it open — instead the scroll listener below just closes it,
+        // which is the standard workaround for this class of bug.
+        _initDriftTargetSelects() {
+          if (!window.jQuery?.fn?.select2) return;
+          const PAGE_SIZE = 40;
+          const items = this._driftTargetItems || [];
+
+          document.querySelectorAll('.drift-target-select').forEach(el => {
+            window.jQuery(el).select2({
+              placeholder: 'Repoint to…',
+              width: '100%',
+              dropdownParent: window.jQuery(document.body),
+              ajax: {
+                delay: 150,
+                data(params) {
+                  return { q: params.term || '', page: params.page || 1 };
+                },
+                transport(params, success) {
+                  const q = (params.data.q || '').trim();
+                  const page = params.data.page || 1;
+                  const start = (page - 1) * PAGE_SIZE;
+
+                  const pool = q
+                    ? items.map((it, idx) => ({ idx, it })).filter(({ it }) => App.Utils.matchesKeywords(`${it.name} ${it.size || ''}`, q))
+                    : items.map((it, idx) => ({ idx, it }));
+
+                  const pageSlice = pool.slice(start, start + PAGE_SIZE);
+                  success({
+                    results: pageSlice.map(({ idx, it }) => ({
+                      id: String(idx),
+                      text: `${it.name}${it.size ? ' (' + it.size + ')' : ''}`
+                    })),
+                    pagination: { more: (start + PAGE_SIZE) < pool.length }
+                  });
+                },
+                processResults(data) { return data; }
+              }
+            }).on('change', function() {
+              const fixBtn = this.closest('tr')?.querySelector('.drift-fix-btn');
+              if (fixBtn) fixBtn.disabled = !this.value;
+            });
+          });
+
+          // dropdownParent is document.body (see above), so an open dropdown
+          // does NOT move with the row list when it scrolls — close it
+          // instead, same as clicking outside would. #itemDriftModalBody
+          // itself is never replaced (only its innerHTML), so this listener
+          // only needs binding once, not on every re-render.
+          const modalBody = document.getElementById('itemDriftModalBody');
+          if (modalBody && !modalBody.dataset.driftScrollCloseBound) {
+            modalBody.dataset.driftScrollCloseBound = '1';
+            modalBody.addEventListener('scroll', () => {
+              document.querySelectorAll('.drift-target-select').forEach(el => {
+                window.jQuery(el).select2('close');
+              });
+            });
+          }
+        },
+
+        // Read-only diagnostic (module_items.js#getItemIdentityDriftReport) —
+        // verifies that every Item Name/Size reference in Bill/PO/BOM/Process
+        // Components/Return/Wastage/Issue/Production still resolves to a
+        // current Items Master row, so a rename/merge cascade gap (past or
+        // newly introduced) surfaces instead of silently corrupting Stock
+        // math. Each distinct stale identity gets a "repoint to" picker and a
+        // Fix button (see fixDriftReference) — nothing is changed just by
+        // running the check itself.
+        async checkReferenceIntegrity() {
+          const btn = document.getElementById('btnCheckItemRefIntegrity');
+          const originalBtnHtml = btn?.innerHTML;
+          try {
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-clipboard-check"></i> Checking…'; }
+            const res = await Api.call('getItemIdentityDriftReport');
+            if (!res?.success) {
+              App.Utils.showToast(res?.message || 'Failed to check reference integrity.', true);
+              return;
+            }
+            const drift = res.data || [];
+            this._destroyDriftTargetSelects();
+            if (drift.length === 0) {
+              App.Utils.showToast(res.message || 'No drift found — every reference resolves to a current Items Master row.');
+              safeModalHide('itemDriftModal');
+              return;
+            }
+
+            const groups = this._groupDriftFindings(drift);
+            this._buildDriftTargetItems();
+            this._driftGroups = groups;
+
+            const rowsHtml = groups.map((g, i) => {
+              const sheetsHtml = Array.from(g.sheets.entries())
+                .map(([sheet, contexts]) => `<div><strong>${escapeHtml(sheet)}</strong> (${contexts.length}): <span class="text-muted">${escapeHtml(contexts.slice(0, 3).join(', '))}${contexts.length > 3 ? ', …' : ''}</span></div>`)
+                .join('');
+              return `
+                <tr>
+                  <td>${escapeHtml(g.itemName)}${g.size ? ' <small class="text-muted">(' + escapeHtml(g.size) + ')</small>' : ''}</td>
+                  <td>${sheetsHtml}</td>
+                  <td style="min-width: 220px;">
+                    <select class="form-select form-select-sm drift-target-select" id="driftTarget_${i}"></select>
+                  </td>
+                  <td>
+                    <button type="button" class="btn btn-sm btn-warning fw-bold drift-fix-btn" disabled onclick="App.Item.fixDriftReference(${i})">Fix</button>
+                  </td>
+                </tr>`;
+            }).join('');
+
+            const body = document.getElementById('itemDriftModalBody');
+            if (body) {
+              body.innerHTML = `
+                <p class="text-muted small" id="itemDriftSummary">These ${groups.length} distinct item identit${groups.length === 1 ? 'y' : 'ies'} (${drift.length} reference${drift.length === 1 ? '' : 's'} total) name an Item Name/Size that no longer exists in Items Master — most likely left behind by a rename or merge from before this check existed. Pick the item it should now resolve to and click Fix to repoint every reference to it at once. Nothing changes until you click Fix.</p>
+                <div class="table-responsive">
+                  <table class="table table-sm table-bordered align-middle">
+                    <thead class="table-light">
+                      <tr>
+                        <th style="width: 20%;">Stale Item Referenced</th>
+                        <th style="width: 40%;">Used In</th>
+                        <th style="width: 30%;">Repoint To</th>
+                        <th style="width: 10%;"></th>
+                      </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                  </table>
+                </div>`;
+            }
+            // Select2 measures its container's width/position at init time —
+            // doing that while the modal is still `display:none` (before
+            // Bootstrap's fade-in finishes) reads bogus zero/stale layout
+            // values and can leave a dropdown mispositioned or unable to
+            // open correctly the first time. Wait for the modal to actually
+            // be shown (laid out, fully visible) before initializing.
+            document.getElementById('itemDriftModal')
+              ?.addEventListener('shown.bs.modal', () => this._initDriftTargetSelects(), { once: true });
+            safeModalShow('itemDriftModal');
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to check reference integrity.', true);
+          } finally {
+            if (btn) { btn.disabled = false; if (originalBtnHtml) btn.innerHTML = originalBtnHtml; }
+          }
+        },
+
+        // Repoints one drift group (see checkReferenceIntegrity) to the
+        // Items Master row the user picked in its "Repoint to" dropdown.
+        // Removes just that row from the already-open modal on success
+        // instead of re-running the whole check — a full re-fetch +
+        // re-render would rebuild every OTHER row's Select2 too (discarding
+        // any in-progress picks) just to reflect one row disappearing,
+        // which is unnecessary: fixing (staleName, staleSize) deterministically
+        // repoints every reference to it, so the group cannot reappear.
+        async fixDriftReference(groupIndex) {
+          const group = this._driftGroups?.[groupIndex];
+          const select = document.getElementById(`driftTarget_${groupIndex}`);
+          const picked = select?.value;
+          const target = (picked !== undefined && picked !== '') ? this._driftTargetItems?.[Number(picked)] : null;
+          if (!group || !target) {
+            App.Utils.showToast('Pick an item to repoint to first.', true);
+            return;
+          }
+
+          const btn = select?.closest('tr')?.querySelector('.drift-fix-btn');
+          try {
+            if (btn) { btn.disabled = true; btn.textContent = 'Fixing…'; }
+            const res = await Api.call('fixItemIdentityDriftReference', group.itemName, group.size, target.name, target.size || '');
+            App.Utils.showToast(res?.message || (res?.success ? 'Fixed.' : 'Failed to fix reference.'), !res?.success);
+            if (res?.success) {
+              this._removeDriftRow(groupIndex);
+            }
+          } catch (err) {
+            App.Utils.showToast(err.message || 'Failed to fix reference.', true);
+          } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Fix'; }
+          }
+        },
+
+        // Removes one fixed group's row from the still-open drift modal
+        // without touching any other row's Select2 instance, and updates the
+        // remaining-count summary. Closes the modal once nothing is left.
+        _removeDriftRow(groupIndex) {
+          const select = document.getElementById(`driftTarget_${groupIndex}`);
+          if (window.jQuery?.fn?.select2 && select && window.jQuery(select).data('select2')) {
+            window.jQuery(select).select2('destroy');
+          }
+          select?.closest('tr')?.remove();
+          if (this._driftGroups) this._driftGroups[groupIndex] = null;
+
+          const remaining = document.querySelectorAll('#itemDriftModalBody tbody tr').length;
+          if (remaining === 0) {
+            safeModalHide('itemDriftModal');
+            return;
+          }
+          const summary = document.getElementById('itemDriftSummary');
+          if (summary) {
+            summary.textContent = `${remaining} distinct item identit${remaining === 1 ? 'y' : 'ies'} remaining. Pick the item each should now resolve to and click Fix to repoint every reference to it at once.`;
+          }
+        },
+
         serializeForm() {
           const form = document.getElementById('itemForm');
           const formData = Object.fromEntries(new FormData(form));
@@ -15074,7 +15367,7 @@
             const haystack = [
               bom.productId,
               bom.productName,
-              ...bom.components.map(c => `${c.itemName} ${c.vendor}`)
+              ...bom.components.map(c => `${c.itemName} ${c.vendor} ${c.processId} ${c.processGroup}`)
             ].join(' ');
             return App.Utils.matchesKeywords(haystack, term);
           });

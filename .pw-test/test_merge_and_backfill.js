@@ -207,7 +207,8 @@ const {
   saveItem, mergeItemEdit, syncStockForItem,
   backfillBillItemRefs, backfillPOItemRefs, backfillBOMItemRefs,
   backfillReturnItemRefs, backfillWastageItemRefs, backfillIssueItemRefs,
-  backfillProductionConsumedItemRefs, getItemIdentityDriftReport
+  backfillProductionConsumedItemRefs, getItemIdentityDriftReport,
+  fixItemIdentityDriftReference
 } = ctx;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -656,6 +657,48 @@ console.log('\n=== Test 6: getItemIdentityDriftReport diagnostic ===');
   // The POOL-sourced entry in Production's snapshot must never be flagged —
   // its itemName is an upstream process's Output Item Name, not Items Master.
   assert(!dirty.data.some(f => f.itemName === 'Painted Frame'), 'POOL-sourced Production entry is never flagged as drift');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Test 7: fixItemIdentityDriftReference() repairs a stale reference
+// ─────────────────────────────────────────────────────────────────────────
+console.log('\n=== Test 7: fixItemIdentityDriftReference repairs stale references ===');
+{
+  ss.sheets = {};
+  seedItemsSheet();
+  seedStockSheet();
+  seedBillSheet();
+  seedPOSheet();
+  seedBomSheet();
+  seedWastageSheet();
+  seedIssueSheet();
+  const productionSheet = seedProductionSheet();
+
+  // Simulate leftover pre-fix damage: Wastage and Production's Components
+  // Consumed still name a size ("99 inch") Items Master no longer has.
+  const wastageSheet = ss.getSheetByName(APP_CONFIG.SHEETS.WASTAGE);
+  wastageSheet._set(2, WASTAGE_COL.SIZE, '99 inch');
+  const staleConsumed = JSON.parse(productionSheet.getRange(2, PRODUCTION_COL.COMPONENTS_CONSUMED, 1, 1).getValue());
+  staleConsumed[0].size = '99 inch';
+  productionSheet.getRange(2, PRODUCTION_COL.COMPONENTS_CONSUMED, 1, 1).setValue(JSON.stringify(staleConsumed));
+
+  // Reject: target doesn't exist in Items Master.
+  const badFix = fixItemIdentityDriftReference('BACK-REST-D-26---BLACK', '99 inch', 'BACK-REST-D-26---BLACK', 'NOT-A-REAL-SIZE');
+  assert(badFix.success === false, 'fix rejects a target that is not in Items Master');
+
+  // Real fix: repoint to the existing GENERAL row.
+  const goodFix = fixItemIdentityDriftReference('BACK-REST-D-26---BLACK', '99 inch', 'BACK-REST-D-26---BLACK', 'GENERAL');
+  assert(goodFix.success, 'fix succeeds when target exists: ' + goodFix.message);
+
+  const fixedWastageRow = wastageSheet.getRange(2, WASTAGE_COL.ITEM_NAME, 1, 2).getValues()[0];
+  assert(fixedWastageRow[1] === 'GENERAL', 'Wastage Log repointed to GENERAL (got "' + fixedWastageRow[1] + '")');
+
+  const fixedConsumed = JSON.parse(productionSheet.getRange(2, PRODUCTION_COL.COMPONENTS_CONSUMED, 1, 1).getValue());
+  assert(fixedConsumed[0].size === 'GENERAL', 'Production Components Consumed repointed to GENERAL (got ' + JSON.stringify(fixedConsumed[0]) + ')');
+
+  // Confirm the drift report is now clean.
+  const afterFix = getItemIdentityDriftReport();
+  assert(afterFix.data.length === 0, 'no drift remains after fixItemIdentityDriftReference (got ' + JSON.stringify(afterFix.data) + ')');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
