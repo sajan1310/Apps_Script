@@ -454,6 +454,15 @@ function _poolNeedKey(itemNameLower, colorGroup) {
  */
 function _buildPoolNeededMap(components) {
   const poolNeeded = {};
+  // Lazily loaded only if some component actually carries a non-blank Unit
+  // (see PROCESS_COMPONENTS_COL.UNIT) — mirrors module_warehouse.js#
+  // recalculateWarehousePool's Pass 2, which is what actually debits the
+  // pool once this lot completes. This map must convert the same way that
+  // debit does, or a lot with a unit-converted POOL component could pass
+  // this availability check yet still overdraw the pool once completed
+  // (or vice versa, be rejected here despite fitting the true debit).
+  let itemUnitMap = null;
+  let unitsMap = null;
   (components || []).forEach(c => {
     if (String(c.sourceType || '').toUpperCase() !== COMPONENT_SOURCE_TYPES.POOL) return;
     const itemName = String(c.itemName || '').trim();
@@ -463,7 +472,24 @@ function _buildPoolNeededMap(components) {
     const isColorScoped = colorGroup && colorGroup.toUpperCase() !== COMPONENT_COLOR_GROUP_COMMON;
     const key = _poolNeedKey(itemNameLower, colorGroup);
     if (!poolNeeded[key]) poolNeeded[key] = { itemName, colorGroup: isColorScoped ? colorGroup : '', isColorScoped, qty: 0 };
-    poolNeeded[key].qty += Number(c.qty) || 0;
+
+    let qty = Number(c.qty) || 0;
+    const unit = String(c.unit || '').trim();
+    if (unit && typeof convertQtyToBaseUnit === 'function') {
+      if (!itemUnitMap) itemUnitMap = typeof _getItemUnitInfoMap === 'function' ? _getItemUnitInfoMap() : {};
+      if (!unitsMap) unitsMap = typeof _getUnitsMap === 'function' ? _getUnitsMap() : {};
+      const unitInfo = typeof _lookupItemUnitInfo === 'function'
+        ? _lookupItemUnitInfo(itemUnitMap, itemName, '')
+        : { baseUnit: 'Pcs', purchaseUnit: 'Pcs', weightPerBaseUnit: 0 };
+      try {
+        qty = convertQtyToBaseUnit(qty, unit, unitInfo, unitsMap);
+      } catch (e) {
+        // Unconvertible — fall back to the as-entered qty, same as the
+        // Warehouse Pool debit this is validating against.
+      }
+    }
+
+    poolNeeded[key].qty += qty;
   });
   return poolNeeded;
 }
@@ -752,6 +778,7 @@ function saveProduction(formData) {
       .map(c => ({
         itemName: sanitizeString(c.itemName || '', 'itemName'),
         size: sanitizeString(c.size || '', 'size'),
+        narration: sanitizeString(c.narration || '', 'narration'),
         color: sanitizeString(c.color || '', 'color'),
         sourceType: String(c.sourceType || '').trim().toUpperCase() === COMPONENT_SOURCE_TYPES.POOL
           ? COMPONENT_SOURCE_TYPES.POOL
@@ -886,7 +913,16 @@ function saveProduction(formData) {
     // and the shortfall is left to show up as a negative Available Qty in
     // the Warehouse Pool (recalculateWarehousePool computes producedQty -
     // consumedQty directly with no floor at 0 — see module_warehouse.js).
-    const poolWarning = _validatePoolAvailability(poolNeeded, originalPoolConsumed);
+    //
+    // Only worth checking when this save will actually result in a
+    // 'Completed' lot — recalculateWarehousePool only ever debits Completed
+    // rows, so a Pending (or Pending-staying-Pending) save can't yet affect
+    // the pool, and running the check anyway produced a misleading "pool
+    // will go negative" warning on lots that hadn't actually consumed
+    // anything.
+    const poolWarning = status.toLowerCase() === 'completed'
+      ? _validatePoolAvailability(poolNeeded, originalPoolConsumed)
+      : null;
 
     // Snapshot the contractor rate at save time (Assigned To IS the
     // contractor reference). If Assigned To has no matching rate card entry

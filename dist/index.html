@@ -1926,7 +1926,8 @@
     padding: 4px 6px;
   }
   .prod-color-table .prod-comp-display-name,
-  .prod-color-table .prod-comp-size {
+  .prod-color-table .prod-comp-size,
+  .prod-color-table .prod-comp-narration {
     font-size: 0.8rem;
     padding-left: 6px;
     padding-right: 6px;
@@ -6396,12 +6397,13 @@
             <table class="table table-bordered bg-white shadow-sm mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width: 30%;">Item / Pool Name</th>
-                  <th style="width: 12%;">Size</th>
-                  <th style="width: 12%;">Color</th>
-                  <th style="width: 13%;">Source</th>
-                  <th style="width: 13%; text-align: right;">Qty</th>
-                  <th style="width: 15%;">Available</th>
+                  <th style="width: 24%;">Item / Pool Name</th>
+                  <th style="width: 9%;">Size</th>
+                  <th style="width: 15%;">Narration</th>
+                  <th style="width: 10%;">Color</th>
+                  <th style="width: 12%;">Source</th>
+                  <th style="width: 12%; text-align: right;">Qty</th>
+                  <th style="width: 13%;">Available</th>
                   <th style="width: 5%; text-align: center;">✕</th>
                 </tr>
               </thead>
@@ -6423,9 +6425,10 @@
               <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table">
                 <thead class="table-light">
                   <tr id="productionColorMatrixHeaderRow">
-                    <th style="width: 22%;">Item / Pool Name</th>
-                    <th style="width: 8%;">Size</th>
-                    <th style="width: 13%;">Source</th>
+                    <th style="width: 18%;">Item / Pool Name</th>
+                    <th style="width: 7%;">Size</th>
+                    <th style="width: 13%;">Narration</th>
+                    <th style="width: 11%;">Source</th>
                     <th style="width: 3%;" class="text-center">✕</th>
                   </tr>
                 </thead>
@@ -15476,7 +15479,11 @@
         <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(bom.productId)}</span></td>
         <td><strong class="text-primary">${escapeHtml(bom.productName)}</strong></td>
         <td id="${previewId}"><small class="text-muted" style="line-height: 1.6;">${componentsCell}</small></td>
-        <td class="text-end fw-bold text-success">${formatCurrency(bom.grandTotal ?? bom.totalCost)}</td>
+        <td class="text-end fw-bold text-success"${
+          (bom.colorCosts || []).length > 1
+            ? ` title="Cost by color — ${escapeHtml((bom.colorCosts || []).map(c => `${c.color}: ${formatCurrency(c.totalCost)}`).join(', '))} (headline total shown is for ${escapeHtml(bom.colorCosts[0].color)})"`
+            : ''
+        }>${formatCurrency(bom.grandTotal ?? bom.totalCost)}</td>
         <td class="text-center">
           <button class="btn btn-sm btn-outline-primary btn-action w-100 mb-1" onclick="App.BOM.openEditModal('${idx}')">Edit BOM</button>
           <button class="btn btn-sm btn-outline-dark btn-action w-100 mb-1" onclick="App.BOM.openDuplicateModal('${idx}')">Duplicate BOM</button>
@@ -15765,6 +15772,11 @@
         <span style="font-size:15px;font-weight:800;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
           ${formatCurrency(bom.grandTotal ?? bom.totalCost)}
         </span>
+        ${(bom.colorCosts || []).length > 1 ? `
+        <div style="font-size:10px;color:#777;margin-top:2px;">
+          Color rows are alternatives, not additive — cost above is for <strong>${escapeHtml(bom.colorCosts[0].color)}</strong> only.
+          By color: ${bom.colorCosts.map(c => `${escapeHtml(c.color)} ${formatCurrency(c.totalCost + bom.totalAdditionalCost)}`).join(' &nbsp;|&nbsp; ')}
+        </div>` : ''}
       </div>
       ${remarksHtml}
     </div>`;
@@ -19136,7 +19148,7 @@
       // place below that sets/adjusts a prod-color-table's inline
       // min-width — see _buildPoolColorGroupTable's comment for why the
       // table needs an explicit min-width at all.
-      PROD_COLOR_TABLE_FIXED_RESERVE_PX: 378, // Item/Pool Name + Size + Source + ✕ columns
+      PROD_COLOR_TABLE_FIXED_RESERVE_PX: 478, // Item/Pool Name + Size + Narration + Source + ✕ columns
       PROD_COLOR_TABLE_COLOR_COL_PX: 88, // matches .prod-color-table th[data-color]
 
       // Bumped at the start of every handleProcessChange/openEditModal/
@@ -21148,6 +21160,7 @@
             this.addComponentRow({
               itemName: c.itemName,
               size: c.size,
+              narration: c.narration,
               sourceType: c.sourceType,
               color: singleColor,
               colorScope: singleColor || undefined,
@@ -21335,6 +21348,7 @@
             </select>
           </td>
           <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(r.size || '')}" placeholder="-" readonly></td>
+          <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(r.narration || '')}" placeholder="-" readonly title="From the Process recipe — Warehouse Pool output items have no Item Master entry of their own"></td>
           <td>
             <select class="form-select prod-comp-source" disabled>
               <option value="POOL" selected>Pool (Warehouse)</option>
@@ -21363,9 +21377,10 @@
           <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table" id="${tableId}" data-all-colors="${escapeHtml(colors.join('|'))}" data-axis-key="${escapeHtml(axisKey || '')}" style="min-width: ${minWidthPx}px;">
             <thead class="table-light">
               <tr>
-                <th style="width: 22%;">Item / Pool Name</th>
-                <th style="width: 8%;">Size</th>
-                <th style="width: 13%;">Source</th>
+                <th style="width: 18%;">Item / Pool Name</th>
+                <th style="width: 7%;">Size</th>
+                <th style="width: 13%;">Narration</th>
+                <th style="width: 11%;">Source</th>
                 ${headHtml}
                 <th style="width: 3%;" class="text-center">✕</th>
               </tr>
@@ -21518,6 +21533,7 @@
           components.forEach(c => this.addComponentRow({
             itemName: c.itemName,
             size: c.size,
+            narration: c.narration,
             sourceType: c.sourceType,
             qty: lotQty > 0 ? lotQty * c.qtyPerUnit : c.qtyPerUnit,
             qtyPerUnit: c.qtyPerUnit,
@@ -21590,6 +21606,7 @@
         const rowId = 'prod_comp_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
         const itemName = (comp && comp.itemName) || '';
         const size = (comp && comp.size) || '';
+        const narration = (comp && comp.narration) || '';
         const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
         const color = (comp && comp.color) || '';
         const colorScope = (comp && comp.colorScope) || '';
@@ -21610,7 +21627,8 @@
             ${preSelectedOption}
           </select>
         </td>
-        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-" onchange="App.Production.refreshPoolAvailability()"></td>
+        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-" onchange="App.Production.handleProdSizeChange(this)"></td>
+        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-"></td>
         <td><input type="text" class="form-control prod-comp-color" list="colorList" value="${escapeHtml(color)}" placeholder="All colors"${colorReadonlyAttrs}></td>
         <td>
           <select class="form-select prod-comp-source" onchange="App.Production.handleSourceChange(this)">
@@ -21818,6 +21836,7 @@
         const rowId = 'prod_matrix_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
         const itemName = (comp && comp.itemName) || '';
         const size = (comp && comp.size) || '';
+        const narration = (comp && comp.narration) || '';
         const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
         const colors = this.getMatrixColors();
 
@@ -21830,6 +21849,7 @@
       <tr id="${rowId}" data-merged="true">
         <td><input type="text" class="form-control prod-comp-display-name" value="${escapeHtml(itemName)}" readonly title="Merged across colors — each color cell below has its own item picker"></td>
         <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-"></td>
+        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-" title="Shared across this row's colors, even though each color cell may secretly use a different literal item"></td>
         <td>
           <select class="form-select prod-comp-source" onchange="App.Production.handleMergedSourceChange(this)">
             <option value="ITEM" ${sourceType === 'ITEM' ? 'selected' : ''}>Item (Stock)</option>
@@ -21882,6 +21902,8 @@
         });
         const sizeInput = row?.querySelector('.prod-comp-size');
         if (sizeInput) sizeInput.value = '';
+        const narrationInput = row?.querySelector('.prod-comp-narration');
+        if (narrationInput) narrationInput.value = '';
       },
 
       // Manually appends a blank Per-Color row with a real item picker
@@ -21901,6 +21923,7 @@
         const rowId = 'prod_matrix_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
         const itemName = (comp && comp.itemName) || '';
         const size = (comp && comp.size) || '';
+        const narration = (comp && comp.narration) || '';
         const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
         const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
 
@@ -21916,7 +21939,8 @@
             ${preSelectedOption}
           </select>
         </td>
-        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-"></td>
+        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-" onchange="App.Production.handleProdSizeChange(this)"></td>
+        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-"></td>
         <td>
           <select class="form-select prod-comp-source" onchange="App.Production.handleMatrixSourceChange(this)">
             <option value="ITEM" ${sourceType === 'ITEM' ? 'selected' : ''}>Item (Stock)</option>
@@ -21949,6 +21973,8 @@
         }
         const sizeInput = row?.querySelector('.prod-comp-size');
         if (sizeInput) sizeInput.value = '';
+        const narrationInput = row?.querySelector('.prod-comp-narration');
+        if (narrationInput) narrationInput.value = '';
       },
 
       // Finds an existing non-merged matrix row (one real shared item-select
@@ -22036,7 +22062,7 @@
 
               colorComps.forEach(c => {
                 let row = this.findMatrixRowByDisplayName(c.displayName, c.size || '');
-                if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, sourceType: c.sourceType });
+                if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, sourceType: c.sourceType, narration: c.narration });
                 const cell = row.children[colIndex];
                 const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
                 this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
@@ -22052,7 +22078,7 @@
               commonOverrideComps.forEach(c => {
                 if (overriddenKeys.has(this._itemSlotKey(c.itemName, c.size))) return;
                 let row = this.findMatrixRowByDisplayName(c.itemName, c.size || '');
-                if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType });
+                if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType, narration: c.narration });
                 const cell = row.children[colIndex];
                 const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
                 this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
@@ -22133,6 +22159,10 @@
         document.querySelectorAll('#productionColorMatrixBody tr').forEach(row => {
           const isMerged = row.dataset.merged === 'true';
           const size = row.querySelector('.prod-comp-size')?.value.trim() || '';
+          // One shared Narration per row, even for a merged row whose color
+          // cells are secretly different literal items — same simplification
+          // as the row's own read-only display name (see addMergedMatrixRow).
+          const narration = row.querySelector('.prod-comp-narration')?.value.trim() || '';
           const sourceType = row.querySelector('.prod-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM';
 
           let rowItemName = '';
@@ -22164,7 +22194,7 @@
               itemName = (cellOpt.dataset.name || cellOpt.textContent || '').trim();
             }
             if (!itemName) return;
-            components.push({ itemName, size, color: '', sourceType, qty, colorGroup: color });
+            components.push({ itemName, size, narration, color: '', sourceType, qty, colorGroup: color });
           });
         });
         return components;
@@ -22185,6 +22215,7 @@
           const itemName = (itemOpt.dataset.name || itemOpt.textContent || '').trim();
           if (!itemName) return;
           const size = row.querySelector('.prod-comp-size')?.value.trim() || '';
+          const narration = row.querySelector('.prod-comp-narration')?.value.trim() || '';
 
           row.querySelectorAll('.pool-group-qty').forEach(input => {
             // See serializeColorMatrix's matching comment — blank is
@@ -22193,7 +22224,7 @@
             const qty = toNumber(input.value);
             const color = input.dataset.color || '';
             if (!color) return;
-            components.push({ itemName, size, color: '', sourceType: 'POOL', qty, colorGroup: color });
+            components.push({ itemName, size, narration, color: '', sourceType: 'POOL', qty, colorGroup: color });
           });
         });
         return components;
@@ -22246,7 +22277,7 @@
             const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
             let entry = poolGroupAccum.get(key);
             if (!entry) {
-              entry = { itemName: c.itemName, size: c.size, sourceType: c.sourceType, colorsQty: {} };
+              entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {} };
               poolGroupAccum.set(key, entry);
             }
 
@@ -22285,7 +22316,7 @@
             const fallbackColors = colors.filter(col => !overriddenColors.has(col));
             const perColorQty = fallbackColors.length > 0 ? c.qty / fallbackColors.length : c.qty;
             let row = this.findMatrixRowByDisplayName(c.itemName, c.size || '');
-            if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType });
+            if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType, narration: c.narration });
             fallbackColors.forEach(col => {
               const colIndex = this.getMatrixColumnIndex(col);
               if (colIndex === -1) return;
@@ -22304,6 +22335,7 @@
             this.addComponentRow({
               itemName: c.itemName,
               size: c.size,
+              narration: c.narration,
               sourceType: c.sourceType,
               qty: c.qty,
               color: isLockedPoolColor ? colorGroup : c.color,
@@ -22318,7 +22350,7 @@
           // per color cell.
           const displayName = this._stripColorSubstring(c.itemName || '', colorGroup);
           let row = this.findMatrixRowByDisplayName(displayName, c.size || '');
-          if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, sourceType: c.sourceType });
+          if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, sourceType: c.sourceType, narration: c.narration });
           const colIndex = this.getMatrixColumnIndex(colorGroup);
           const cell = row.children[colIndex];
           this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty);
@@ -22344,7 +22376,7 @@
               if (itemColors.length <= 1) return;
               const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
               if (!poolGroupAccum.has(key)) {
-                poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, colorsQty: {} });
+                poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {} });
               }
             });
         }
@@ -22421,7 +22453,49 @@
         }
         const sizeInput = row?.querySelector('.prod-comp-size');
         if (sizeInput) sizeInput.value = '';
+        const narrationInput = row?.querySelector('.prod-comp-narration');
+        if (narrationInput) narrationInput.value = '';
         this.refreshPoolAvailability();
+      },
+
+      // Fired when a component row's Size is typed/changed by hand (the Item
+      // picker itself only carries a name — see _wireItemSelect2 — so Size
+      // is this row's own free-text field, not a per-item dropdown like
+      // Process's). Re-syncs Narration to Item Master for this exact
+      // item+size, same as picking the item fresh would (see
+      // _refillNarrationForRow), then refreshes the availability hint as before.
+      handleProdSizeChange(input) {
+        this._refillNarrationForRow(input?.closest('tr'));
+        this.refreshPoolAvailability();
+      },
+
+      // Looks up this row's current item+size in Item Master and syncs its
+      // Narration field to match — mirrors App.Process.handleComponentSizeChange.
+      // No-ops for a Pool-sourced row (Warehouse Pool output items have no
+      // Item Master entry/narration of their own) and for a row with no
+      // narration input at all (e.g. a Per-Process Pool Components row).
+      // `itemSelect`, if given, is used instead of the row's own (first)
+      // item-select — required for a merged matrix row (see
+      // addMergedMatrixRow), where every color cell has its OWN item-select
+      // but they all share this one row-level Narration field; without it,
+      // picking the 2nd+ color cell's item would always re-derive Narration
+      // from the 1st cell instead of the one actually just changed.
+      _refillNarrationForRow(row, itemSelect) {
+        if (!row) return;
+        const narrationInput = row.querySelector('.prod-comp-narration');
+        if (!narrationInput) return;
+        const sourceSel = row.querySelector('.prod-comp-source');
+        if (sourceSel && sourceSel.value === 'POOL') return;
+
+        const selectEl = itemSelect || row.querySelector('.prod-comp-item-select');
+        const itemOpt = selectEl ? selectEl.options[selectEl.selectedIndex] : null;
+        const itemName = (itemOpt?.dataset.name || itemOpt?.textContent || '').trim();
+        if (!itemName) return;
+
+        const size = row.querySelector('.prod-comp-size')?.value.trim() || '';
+        const match = (App.State.globalItems || []).find(it =>
+          App.Utils.sameText(it.name, itemName) && App.Utils.sameText(it.size || '', size));
+        narrationInput.value = (match && match.narration) || '';
       },
 
       // Searchable Select2 for a component row's item picker (Common table,
@@ -22514,6 +22588,13 @@
           const row = selectEl.closest('tr');
           const sizeInput = row?.querySelector('.prod-comp-size');
           if (sizeInput && !sizeInput.value) sizeInput.value = data._size || '';
+          // Narration is shown/autofilled from Item Master for this exact
+          // item+size, matching what App.Process does for a recipe's own
+          // component rows — see _refillNarrationForRow. No-ops for a Pool
+          // row (no Item Master entry to look up). selectEl (not just the
+          // row) is passed explicitly since a merged row's color cells each
+          // have their own item-select sharing one row-level Narration field.
+          App.Production._refillNarrationForRow(row, selectEl);
           App.Production.refreshPoolAvailability();
         });
       },
@@ -22604,6 +22685,7 @@
         return {
           itemName,
           size: row.querySelector('.prod-comp-size')?.value.trim() || '',
+          narration: row.querySelector('.prod-comp-narration')?.value.trim() || '',
           color: row.querySelector('.prod-comp-color')?.value.trim() || '',
           sourceType: row.querySelector('.prod-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM',
           qty: toNumber(row.querySelector('.prod-comp-qty')?.value),

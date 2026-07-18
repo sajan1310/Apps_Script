@@ -48,11 +48,6 @@ const BILL_LOCK_TIMEOUT_MS = 15000;
  */
 const DEFAULT_GST_RATE_PCT = 18;
 
-/**
- * Minimum line item amount (prevents invalid micro-transactions)
- */
-const MIN_LINE_ITEM_AMOUNT = 0.01;
-
 // ─────────────────────────────────────────────────────────────────────────
 // VALIDATION HELPERS
 // ─────────────────────────────────────────────────────────────────────────
@@ -453,6 +448,72 @@ function _aggregateBilledBaseQtyByPo(preloadedBillRecords) {
   return map;
 }
 
+/**
+ * _computeBillOverageWarnings(items)
+ *
+ * Advisory, non-blocking check run AFTER a bill has been saved: for every
+ * bill line linked to a real PO (not "DIRECT"/blank), re-aggregates the
+ * Bill Ledger fresh from the sheet (so it reflects this save's own effect)
+ * and flags any PO line whose cumulative billed base qty now exceeds what
+ * was ordered. Bills are intentionally allowed to exceed a PO line (freight
+ * corrections, renegotiated quantities, etc.) — this only surfaces the
+ * overage in the save's response message rather than leaving it invisible
+ * (see module_po.js#_attachPoStatus, which no longer clamps pendingQty to 0).
+ *
+ * @param {Array} items - the same items array saveBill() just wrote, each
+ *   already carrying .poNumber/.baseQty (set during saveBill's own item map).
+ * @returns {string[]} human-readable warning lines, empty if nothing is over.
+ */
+function _computeBillOverageWarnings(items) {
+  try {
+    const poNumbers = new Set();
+    (items || []).forEach(function(it) {
+      const po = String(it.poNumber || '').trim();
+      if (po && po.toUpperCase() !== 'DIRECT') poNumbers.add(po);
+    });
+    if (poNumbers.size === 0) return [];
+
+    const billedMap = _aggregateBilledBaseQtyByPo();
+    const poResponse = typeof getPOData === 'function' ? getPOData(billedMap) : null;
+    if (!poResponse || !poResponse.success) return [];
+
+    const poByNumber = new Map();
+    (poResponse.data || []).forEach(function(po) { poByNumber.set(String(po.poNumber), po); });
+
+    const warnings = [];
+    const seenKeys = new Set();
+    (items || []).forEach(function(it) {
+      const poNum = String(it.poNumber || '').trim();
+      if (!poNum || poNum.toUpperCase() === 'DIRECT') return;
+
+      const key = _buildPoLineKey(poNum, it.name, it.size || '', it.narration || '');
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
+
+      const po = poByNumber.get(poNum);
+      if (!po) return; // PO no longer exists — nothing to check against
+
+      const poItem = (po.items || []).find(function(pi) {
+        return _buildPoLineKey(poNum, pi.name, pi.size, pi.narration) === key;
+      });
+      if (!poItem) return; // this line doesn't match any existing PO line
+
+      const billedBaseQty = billedMap[key] || 0;
+      const orderedBaseQty = poItem.baseQty || 0;
+      if (billedBaseQty > orderedBaseQty + 0.0001) {
+        const overBy = billedBaseQty - orderedBaseQty;
+        warnings.push(
+          `"${it.name}" on PO ${poNum} is now billed ${billedBaseQty.toFixed(2)} vs ordered ${orderedBaseQty.toFixed(2)} (${overBy.toFixed(2)} over).`
+        );
+      }
+    });
+    return warnings;
+  } catch (e) {
+    // Advisory only — never let this check block or fail a bill save.
+    return [];
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // BILL CREATION
 // ─────────────────────────────────────────────────────────────────────────
@@ -718,9 +779,15 @@ function saveBill(formData) {
 
     SpreadsheetApp.flush();
 
-    const msg = isEdit
+    let msg = isEdit
       ? `Bill #${billNumber} updated successfully.`
       : `Bill #${billNumber} recorded successfully.`;
+
+    const overageWarnings = _computeBillOverageWarnings(items);
+    if (overageWarnings.length > 0) {
+      msg += ' Warning: ' + overageWarnings.join(' ');
+    }
+
     logAction(isEdit ? 'UPDATE' : 'CREATE', APP_CONFIG.SHEETS.BILL, billNumber, `Items: ${items.length}`, 'SUCCESS');
 
     return buildResponse(true, { billNumber }, msg);

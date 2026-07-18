@@ -449,9 +449,15 @@ function saveDispatch(formData) {
       originalQty = Number(existingRow[DISPATCH_COL.QTY - 1]) || 0;
     }
 
-    // Validate against currently available Ready to Dispatch quantity
+    // Validate against currently available Ready to Dispatch quantity.
+    // _computeReadyToDispatchMap() keys untagged final-stage rows under a
+    // '__output__' prefixed key (see there) to keep them from colliding with
+    // a differently-named Product Tag, but the productId the client echoes
+    // back is always the unprefixed display value for both cases — so an
+    // untagged product's lookup must fall back to the prefixed key.
     const readyMap = _computeReadyToDispatchMap();
-    const entry = readyMap[productId.toLowerCase()];
+    const productIdKey = productId.toLowerCase();
+    const entry = readyMap[productIdKey] || readyMap['__output__' + productIdKey];
     const currentReadyQty = entry ? (entry.producedQty - entry.dispatchedQty) : 0;
     const availableQty = currentReadyQty + originalQty; // add back this record's own qty when editing
 

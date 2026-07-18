@@ -922,8 +922,32 @@ function syncStockForItem(action, payload) {
       } else {
         const oldVals = sheet.getRange(oldRow, STOCK_COL.INITIAL_STOCK, 1, 2).getValues()[0];
         const newVals = sheet.getRange(newRow, STOCK_COL.INITIAL_STOCK, 1, 2).getValues()[0];
-        const mergedInitial = (Number(oldVals[0]) || 0) + (Number(newVals[0]) || 0);
-        const mergedCurrent = (Number(oldVals[1]) || 0) + (Number(newVals[1]) || 0);
+        let oldInitial = Number(oldVals[0]) || 0;
+        let oldCurrent = Number(oldVals[1]) || 0;
+
+        // Stock quantities are tracked in each item's own Base Unit — if the
+        // old and new identities were set up with different Base Units (a
+        // data-entry inconsistency merge is meant to fix), adding the raw
+        // numbers together would silently corrupt Current/Initial Stock.
+        // Convert the old row's figures into the target's Base Unit first.
+        if (typeof _getItemUnitInfoMap === 'function' && typeof _lookupItemUnitInfo === 'function' && typeof convertQtyToBaseUnit === 'function') {
+          try {
+            const itemUnitMap = _getItemUnitInfoMap();
+            const oldInfo = _lookupItemUnitInfo(itemUnitMap, oldName, oldSize);
+            const newInfo = _lookupItemUnitInfo(itemUnitMap, newName, newSize);
+            if (oldInfo.baseUnit !== newInfo.baseUnit) {
+              const unitsMap = typeof _getUnitsMap === 'function' ? _getUnitsMap() : undefined;
+              oldInitial = convertQtyToBaseUnit(oldInitial, oldInfo.baseUnit, newInfo, unitsMap);
+              oldCurrent = convertQtyToBaseUnit(oldCurrent, oldInfo.baseUnit, newInfo, unitsMap);
+            }
+          } catch (e) {
+            // Unconvertible (e.g. no Weight-per-Base-Unit set) — fall back to
+            // adding the as-entered figures rather than blocking the merge.
+          }
+        }
+
+        const mergedInitial = oldInitial + (Number(newVals[0]) || 0);
+        const mergedCurrent = oldCurrent + (Number(newVals[1]) || 0);
 
         sheet.getRange(newRow, STOCK_COL.INITIAL_STOCK, 1, 2).setValues([[mergedInitial, mergedCurrent]]);
         sheet.deleteRow(oldRow);

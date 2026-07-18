@@ -490,6 +490,33 @@ function _lookupItemUnitInfo(itemUnitMap, name, size) {
   return itemUnitMap[key] || { baseUnit: 'Pcs', purchaseUnit: 'Pcs', weightPerBaseUnit: 0 };
 }
 
+/**
+ * Converts a vendor rate quoted in a SOURCE item's Purchase Unit into the
+ * equivalent rate quoted in a TARGET item's Purchase Unit, via the target's
+ * Base Unit as the common reference (used when merging two Item Master rows
+ * — see mergeItemEdit/_mergeItemIdentities). Without this, copying a
+ * source's raw rate number straight into the target row silently
+ * misinterprets it whenever the two items were set up with different
+ * Purchase/Base Units (e.g. a rate quoted per Dozen copied onto a row whose
+ * Purchase Unit is Pcs — getItemsData would then read it back as 12x too
+ * high). If sourceInfo.purchaseUnit === targetInfo.purchaseUnit, this is a
+ * no-op (returns `rate` unchanged), matching prior behavior exactly for the
+ * common case.
+ *
+ * @param {number} rate - Vendor rate as quoted, per sourceInfo.purchaseUnit
+ * @param {{baseUnit: string, purchaseUnit: string, weightPerBaseUnit: number}} sourceInfo
+ * @param {{baseUnit: string, purchaseUnit: string, weightPerBaseUnit: number}} targetInfo
+ * @param {Object} unitsMap - _getUnitsMap() result
+ * @returns {number} Rate quoted per targetInfo.purchaseUnit
+ * @throws {Error} If the units can't be reconciled (propagates from convertQtyToBaseUnit/convertRateToBaseUnit)
+ */
+function _convertVendorRateAcrossItems(rate, sourceInfo, targetInfo, unitsMap) {
+  if (sourceInfo.purchaseUnit === targetInfo.purchaseUnit) return rate;
+  const ratePerTargetBaseUnit = convertRateToBaseUnit(rate, sourceInfo.purchaseUnit, targetInfo, unitsMap);
+  const baseUnitsPerTargetPurchaseUnit = convertQtyToBaseUnit(1, targetInfo.purchaseUnit, targetInfo, unitsMap);
+  return ratePerTargetBaseUnit * baseUnitsPerTargetPurchaseUnit;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // getItemsData
 // ─────────────────────────────────────────────────────────────────────────
@@ -1525,15 +1552,42 @@ function mergeItemEdit(formData) {
       throw new Error('Source and target are the same item — nothing to merge.');
     }
 
-    // Edited (source) vendors, validated the same way saveItem validates them.
+    const sourceRowValues = sheet.getRange(sourceRow, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const targetRowValues = sheet.getRange(targetRow, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const _rowUnitInfo = rowVals => {
+      const baseUnit = String(rowVals[ITEMS_COL.BASE_UNIT - 1] || '').trim() || 'Pcs';
+      return {
+        baseUnit,
+        purchaseUnit: String(rowVals[ITEMS_COL.PURCHASE_UNIT - 1] || '').trim() || baseUnit,
+        weightPerBaseUnit: Number(rowVals[ITEMS_COL.WEIGHT_PER_BASE_UNIT - 1]) || 0
+      };
+    };
+    const sourceUnitInfo = _rowUnitInfo(sourceRowValues);
+    const targetUnitInfo = _rowUnitInfo(targetRowValues);
+    const unitsMap = typeof _getUnitsMap === 'function' ? _getUnitsMap() : {};
+
+    // Edited (source) vendors, validated the same way saveItem validates them,
+    // then reconciled from the source item's own Purchase Unit into the
+    // target's — a raw rate copied across mismatched units would otherwise
+    // be silently misread on the target row (see _convertVendorRateAcrossItems).
     const sourceVendors = vendors
-      .map(v => ({
-        vendor: sanitizeString(String(v.vendor || ''), 'vendor.name'),
-        rate: _validateVendorRate(v.rate || 0)
-      }))
+      .map(v => {
+        const rate = _validateVendorRate(v.rate || 0);
+        let convertedRate = rate;
+        try {
+          convertedRate = _convertVendorRateAcrossItems(rate, sourceUnitInfo, targetUnitInfo, unitsMap);
+        } catch (e) {
+          // Unconvertible (e.g. no Weight-per-Base-Unit set, or module_units.js
+          // not loaded in this context) — fall back to the as-entered rate
+          // rather than blocking the merge.
+        }
+        return {
+          vendor: sanitizeString(String(v.vendor || ''), 'vendor.name'),
+          rate: convertedRate
+        };
+      })
       .filter(v => v.vendor && v.rate >= MIN_VENDOR_RATE);
 
-    const targetRowValues = sheet.getRange(targetRow, 1, 1, sheet.getLastColumn()).getValues()[0];
     const targetVendors = _parseVendorPairsFromRow(targetRowValues);
 
     // Union by vendor name; target's existing rate wins on collision.
@@ -1812,11 +1866,35 @@ function _mergeItemIdentities(sheet, sourceName, sourceSize, targetName, targetS
   const narration = _concatMetadataField(targetVals[ITEMS_COL.NARRATION - 1], sourceVals[ITEMS_COL.NARRATION - 1]);
   const spec = _concatMetadataField(targetVals[ITEMS_COL.SPECIFICATION - 1], sourceVals[ITEMS_COL.SPECIFICATION - 1]);
 
+  // Reconcile source vendor rates into the target's Purchase Unit before
+  // merging — see _convertVendorRateAcrossItems (mergeItemEdit's identical
+  // handling). Falls back to the raw rate if the units can't be reconciled.
+  const _rowUnitInfo = rowVals => {
+    const baseUnit = String(rowVals[ITEMS_COL.BASE_UNIT - 1] || '').trim() || 'Pcs';
+    return {
+      baseUnit,
+      purchaseUnit: String(rowVals[ITEMS_COL.PURCHASE_UNIT - 1] || '').trim() || baseUnit,
+      weightPerBaseUnit: Number(rowVals[ITEMS_COL.WEIGHT_PER_BASE_UNIT - 1]) || 0
+    };
+  };
+  const sourceUnitInfo = _rowUnitInfo(sourceVals);
+  const targetUnitInfo = _rowUnitInfo(targetVals);
+  const unitsMap = typeof _getUnitsMap === 'function' ? _getUnitsMap() : {};
+
   const vendorMap = new Map();
   _parseVendorPairsFromRow(targetVals).forEach(v => vendorMap.set(v.vendor.toLowerCase(), v));
   _parseVendorPairsFromRow(sourceVals).forEach(v => {
     const k = v.vendor.toLowerCase();
-    if (!vendorMap.has(k)) vendorMap.set(k, v);
+    if (!vendorMap.has(k)) {
+      let convertedRate = v.rate;
+      try {
+        convertedRate = _convertVendorRateAcrossItems(v.rate, sourceUnitInfo, targetUnitInfo, unitsMap);
+      } catch (e) {
+        // Unconvertible — fall back to the as-entered rate rather than
+        // blocking the merge.
+      }
+      vendorMap.set(k, { vendor: v.vendor, rate: convertedRate });
+    }
   });
 
   sheet.getRange(targetRow, ITEMS_COL.REMARKS, 1, 3).setValues([[remarks, narration, spec]]);

@@ -83,6 +83,39 @@ function _poolKey(outputItemName, productTag, color) {
   return String(outputItemName || '').trim().toLowerCase() + '||' + String(productTag || '').trim().toLowerCase() + '||' + String(color || '').trim().toLowerCase();
 }
 
+/**
+ * Resolves a single-axis-token colorGroup (e.g. "BCP") against a set of
+ * live bucket color strings for the same item, one of which may be a
+ * composite of 2+ independent pool axes (e.g. "BCP / Blue-White" — see
+ * COLOR_COMBO_DELIMITER). A Process Component recipe row's Color Sub-Group
+ * is configured manually from Color Master (see Script_Process.html's
+ * addColorGroup) — independently of whatever string the upstream item's
+ * own credits actually landed under — so an exact-string bucket match
+ * alone can miss a composite bucket that legitimately contains this
+ * token, treating real available/producible stock as an empty phantom
+ * bucket instead (and, on the debit side, would create+overdraw that
+ * phantom bucket while the real composite one never gets debited).
+ *
+ * Only resolves when EXACTLY ONE candidate composite color contains the
+ * token as one of its parts — a token shared by 2+ composite buckets is
+ * genuinely ambiguous (which one should this consumption be attributed
+ * to?) and is deliberately left unresolved rather than guessed.
+ *
+ * @param {string[]} candidateColors - lowercased, trimmed color strings live for this item (may include the exact token itself)
+ * @param {string} tokenLower - lowercased, trimmed single-axis token being sought
+ * @returns {string|null} the one matching composite color string, or null if there's an exact match already / nothing resolves
+ */
+function _resolveCompositeColorToken(candidateColors, tokenLower) {
+  if (!tokenLower || candidateColors.indexOf(tokenLower) !== -1) return null;
+  const matches = new Set(
+    candidateColors.filter(c =>
+      c.indexOf(COLOR_COMBO_DELIMITER) !== -1 &&
+      c.split(COLOR_COMBO_DELIMITER).some(t => t.trim() === tokenLower)
+    )
+  );
+  return matches.size === 1 ? Array.from(matches)[0] : null;
+}
+
 // ── Warehouse Pool Opening Balances ─────────────────────────────────────
 // Manual seed entries for stock that already existed before this app went
 // live (or a one-off correction). Unlike the Warehouse Pool sheet itself —
@@ -636,6 +669,17 @@ function recalculateWarehousePool() {
         // COMMON) debits that color's bucket specifically; a COMMON
         // component debits the blank-color bucket (the right bucket for an
         // upstream process that isn't itself multi-color).
+        //
+        // Only built if at least one component actually carries a non-blank
+        // Unit (see PROCESS_COMPONENTS_COL.UNIT) — most recipes still have
+        // none, so this stays a no-op cost in the common case. Mirrors
+        // module_stock.js#_getBilledAndConsumedQtyMaps's identical handling
+        // for ITEM-sourced components — a POOL-sourced row's Unit was being
+        // silently ignored here, understating pool consumption by whatever
+        // that row's conversion factor is (e.g. a "Dozen" row debiting as if
+        // it were 1 Pcs).
+        let poolItemUnitMap = null;
+        let poolUnitsMap = null;
         data.forEach(row => {
           const status = String(row[PRODUCTION_COL.STATUS - 1] || '').trim().toLowerCase();
           if (status !== 'completed') return;
@@ -656,10 +700,42 @@ function recalculateWarehousePool() {
             if (sourceType !== COMPONENT_SOURCE_TYPES.POOL) return;
             const itemName = String(comp.itemName || '').trim();
             if (!itemName) return;
-            const qty = Number(comp.qty) || 0;
+            let qty = Number(comp.qty) || 0;
+
+            // Blank unit means "already in the pool item's Base Unit" —
+            // preserves old behavior exactly for every pre-existing recipe row.
+            const unit = String(comp.unit || '').trim();
+            if (unit && typeof convertQtyToBaseUnit === 'function') {
+              if (!poolItemUnitMap) poolItemUnitMap = typeof _getItemUnitInfoMap === 'function' ? _getItemUnitInfoMap() : {};
+              if (!poolUnitsMap) poolUnitsMap = typeof _getUnitsMap === 'function' ? _getUnitsMap() : {};
+              const unitInfo = typeof _lookupItemUnitInfo === 'function'
+                ? _lookupItemUnitInfo(poolItemUnitMap, itemName, '')
+                : { baseUnit: 'Pcs', purchaseUnit: 'Pcs', weightPerBaseUnit: 0 };
+              try {
+                qty = convertQtyToBaseUnit(qty, unit, unitInfo, poolUnitsMap);
+              } catch (e) {
+                // Unconvertible (e.g. no Weight-per-Base-Unit set yet) — fall
+                // back to the as-entered qty rather than blocking the whole
+                // Warehouse Pool recalculation over one bad recipe row.
+              }
+            }
 
             const colorGroup = String(comp.colorGroup || '').trim();
-            const color = colorGroup && colorGroup.toUpperCase() !== COMPONENT_COLOR_GROUP_COMMON ? colorGroup : '';
+            let color = colorGroup && colorGroup.toUpperCase() !== COMPONENT_COLOR_GROUP_COMMON ? colorGroup : '';
+
+            // See _resolveCompositeColorToken — a manually-configured single
+            // -token Color Sub-Group can legitimately refer to one part of a
+            // composite bucket credited under Pass 1 above; resolve it to
+            // that bucket's real key when unambiguous, rather than debiting
+            // a phantom single-token bucket that was never credited.
+            if (color && !buckets[_poolKey(itemName, '', color.toLowerCase())]) {
+              const itemNameLower = itemName.toLowerCase();
+              const candidateColors = Object.values(buckets)
+                .filter(b => b.outputItemName.toLowerCase() === itemNameLower && !b.productTag)
+                .map(b => b.color.toLowerCase());
+              const resolved = _resolveCompositeColorToken(candidateColors, color.toLowerCase());
+              if (resolved) color = resolved;
+            }
 
             const bucket = getBucket(itemName, '', '', color);
             bucket.consumedQty += qty;
@@ -833,6 +909,32 @@ function getPoolAvailableQtyMap() {
       map[itemName].total += availableQty;
       map[itemName].byColor[color] = (map[itemName].byColor[color] || 0) + availableQty;
     });
+
+    // See _resolveCompositeColorToken — mirror the same single-token ->
+    // composite-bucket fallback here so a pre-save availability check
+    // (_validatePoolAvailability in module_production.js, which reads
+    // byColor[colorGroup]) agrees with what recalculateWarehousePool's
+    // Pass 2 will actually debit once the lot completes, instead of
+    // reporting a token-scoped need as unavailable when real (composite-
+    // keyed) stock for it exists.
+    Object.values(map).forEach(entry => {
+      const canonicalColors = Object.keys(entry.byColor);
+      const tokenSources = new Map(); // token -> Set of composite source colors
+      canonicalColors.forEach(c => {
+        if (c.indexOf(COLOR_COMBO_DELIMITER) === -1) return;
+        c.split(COLOR_COMBO_DELIMITER).forEach(t => {
+          const token = t.trim();
+          if (!token) return;
+          if (!tokenSources.has(token)) tokenSources.set(token, new Set());
+          tokenSources.get(token).add(c);
+        });
+      });
+      tokenSources.forEach((sources, token) => {
+        if (entry.byColor.hasOwnProperty(token) || sources.size !== 1) return;
+        entry.byColor[token] = entry.byColor[Array.from(sources)[0]];
+      });
+    });
+
     return map;
   } catch (e) {
     return map;

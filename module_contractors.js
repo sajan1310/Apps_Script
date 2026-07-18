@@ -740,8 +740,14 @@ function getContractorLedgerData() {
           const contractorName = String(row[PRODUCTION_COL.ASSIGNED_TO - 1] || '').trim();
           if (!contractorName) return;
 
+          // Skip only when no rate card actually matched (rate 0) — a real
+          // rate against a negative correction/reversal qty (Production
+          // deliberately allows negative qty) produces a legitimate negative
+          // payable that must still be summed in, not dropped. Filtering on
+          // payable's own sign here previously discarded those corrections.
+          const contractorRate = Number(row[PRODUCTION_COL.CONTRACTOR_RATE - 1]) || 0;
+          if (contractorRate === 0) return;
           const payable = Number(row[PRODUCTION_COL.CONTRACTOR_PAYABLE - 1]) || 0;
-          if (payable <= 0) return; // Skip in-house labor with no rate card match
 
           const qty = Number(row[PRODUCTION_COL.QTY - 1]) || 0;
           const processId = String(row[PRODUCTION_COL.PROCESS_ID - 1] || '').trim().toLowerCase();
@@ -1067,8 +1073,12 @@ function getContractorAccountLedger(contractorName) {
           const assignedTo = String(row[PRODUCTION_COL.ASSIGNED_TO - 1] || '').trim();
           if (assignedTo.toLowerCase() !== name.toLowerCase()) return;
 
+          // See getContractorLedgerData() above — skip only on no rate-card
+          // match, not on the payable's sign, so negative correction lots
+          // still appear as a reversal line in this contractor's ledger.
+          const contractorRate = Number(row[PRODUCTION_COL.CONTRACTOR_RATE - 1]) || 0;
+          if (contractorRate === 0) return;
           const payable = Number(row[PRODUCTION_COL.CONTRACTOR_PAYABLE - 1]) || 0;
-          if (payable <= 0) return;
 
           const rawDate = row[PRODUCTION_COL.DATE - 1];
           const processId = String(row[PRODUCTION_COL.PROCESS_ID - 1] || '').trim().toLowerCase();

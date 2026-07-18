@@ -413,9 +413,6 @@ function getBOMData(token) {
           productMap[productId].colors.push(color);
         }
       }
-
-      productMap[productId].totalCost += lineCost;
-      productMap[productId].totalQty += qty;
     }
 
     // Load additional/dynamic costs (labor, paint, fitting, overheads, etc.)
@@ -446,8 +443,45 @@ function getBOMData(token) {
       }
     }
 
+    // A blank-Color component row applies to every color of a product (see
+    // ensureBOMColorColumn's header comment above); a non-blank-Color row is
+    // an ALTERNATIVE that only applies when that specific color is produced
+    // — a unit is ever only one color, so two different colors' rows are
+    // mutually exclusive, never both incurred on the same unit. Summing
+    // every row regardless of color (the old behavior) double-, triple-,
+    // etc.-counted a multi-color product's cost by every extra color.
+    // totalCost/totalQty become "common rows + the FIRST color's rows" (a
+    // single representative number for the headline display); colorCosts
+    // carries the full per-color breakdown so no color's true cost is lost.
     const products = Object.values(productMap);
     products.forEach(p => {
+      let commonCost = 0, commonQty = 0;
+      const perColor = new Map(); // colorLower -> {color, cost, qty}
+      p.components.forEach(c => {
+        if (!c.color) {
+          commonCost += c.lineCost;
+          commonQty += c.qtyPerProduct;
+          return;
+        }
+        const key = c.color.toLowerCase();
+        if (!perColor.has(key)) perColor.set(key, { color: c.color, cost: 0, qty: 0 });
+        const bucket = perColor.get(key);
+        bucket.cost += c.lineCost;
+        bucket.qty += c.qtyPerProduct;
+      });
+
+      p.colorCosts = p.colors.map(color => {
+        const bucket = perColor.get(color.toLowerCase()) || { cost: 0, qty: 0 };
+        return {
+          color: color,
+          totalCost: commonCost + bucket.cost,
+          totalQty: commonQty + bucket.qty
+        };
+      });
+
+      const primary = p.colorCosts.length > 0 ? p.colorCosts[0] : null;
+      p.totalCost = primary ? primary.totalCost : commonCost;
+      p.totalQty = primary ? primary.totalQty : commonQty;
       p.grandTotal = p.totalCost + p.totalAdditionalCost;
     });
     // Sort by manual display order (drag-and-drop reorderable on the Products tab)
@@ -1186,24 +1220,63 @@ function backfillBOMItemRefs(oldName, oldSize, newName, newSize) {
   if (lastRow < startRow) return;
 
   const numRows = lastRow - startRow + 1;
-  const range = sheet.getRange(startRow, BOM_COL.ITEM_NAME, numRows, 2);
+  // PRODUCT_ID..COLOR are all needed to detect/merge a duplicate this
+  // rename could create (see below), not just ITEM_NAME/SIZE.
+  const range = sheet.getRange(startRow, BOM_COL.PRODUCT_ID, numRows, BOM_COL.COLOR - BOM_COL.PRODUCT_ID + 1);
   const values = range.getValues();
+  const idx = col => col - BOM_COL.PRODUCT_ID; // offset into this narrower read
 
   const tOldName = String(oldName || '').trim().toLowerCase();
   const tOldSize = String(oldSize || '').trim().toLowerCase();
 
   let changed = false;
   for (let i = 0; i < values.length; i++) {
-    const rowName = String(values[i][0] || '').trim().toLowerCase();
-    const rowSize = String(values[i][1] || '').trim().toLowerCase();
+    const rowName = String(values[i][idx(BOM_COL.ITEM_NAME)] || '').trim().toLowerCase();
+    const rowSize = String(values[i][idx(BOM_COL.SIZE)] || '').trim().toLowerCase();
     if (rowName === tOldName && rowSize === tOldSize) {
-      values[i][0] = newName;
-      values[i][1] = newSize;
+      values[i][idx(BOM_COL.ITEM_NAME)] = newName;
+      values[i][idx(BOM_COL.SIZE)] = newSize;
       changed = true;
     }
   }
 
-  if (changed) {
-    range.setValues(values);
+  if (!changed) return;
+
+  // The rename above can make a row's (Product, Item, Size, Color) identity
+  // collide with another row that already existed under the SAME product
+  // (e.g. the target item was already separately in that product's BOM).
+  // getBOMData sums every component row's cost with no de-duplication (an
+  // array, not a map), so a resulting duplicate pair would silently double
+  // -count that item's cost. Merge any such collision: sum QTY_PER_PRODUCT
+  // into the first row seen and drop the rest — same additive-quantity /
+  // first-row-wins-on-descriptive-fields precedent as the Items Master merge
+  // (see _mergeItemIdentities in module_items.js).
+  const seenAt = new Map(); // "productId|item|size|color" -> row index into `values`
+  const rowsToDelete = [];
+  for (let i = 0; i < values.length; i++) {
+    const productId = String(values[i][idx(BOM_COL.PRODUCT_ID)] || '').trim().toLowerCase();
+    if (!productId) continue;
+    const itemName = String(values[i][idx(BOM_COL.ITEM_NAME)] || '').trim().toLowerCase();
+    const size = String(values[i][idx(BOM_COL.SIZE)] || '').trim().toLowerCase();
+    const color = String(values[i][idx(BOM_COL.COLOR)] || '').trim().toLowerCase();
+    const key = productId + '|' + itemName + '|' + size + '|' + color;
+
+    if (seenAt.has(key)) {
+      const firstIdx = seenAt.get(key);
+      values[firstIdx][idx(BOM_COL.QTY_PER_PRODUCT)] =
+        (Number(values[firstIdx][idx(BOM_COL.QTY_PER_PRODUCT)]) || 0) +
+        (Number(values[i][idx(BOM_COL.QTY_PER_PRODUCT)]) || 0);
+      rowsToDelete.push(i);
+    } else {
+      seenAt.set(key, i);
+    }
   }
+
+  range.setValues(values);
+
+  // Highest row number first so an earlier deletion never shifts the row
+  // number of one still pending.
+  rowsToDelete.sort((a, b) => b - a).forEach(i => {
+    sheet.deleteRow(startRow + i);
+  });
 }

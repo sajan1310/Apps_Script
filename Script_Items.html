@@ -2014,7 +2014,11 @@
         <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(bom.productId)}</span></td>
         <td><strong class="text-primary">${escapeHtml(bom.productName)}</strong></td>
         <td id="${previewId}"><small class="text-muted" style="line-height: 1.6;">${componentsCell}</small></td>
-        <td class="text-end fw-bold text-success">${formatCurrency(bom.grandTotal ?? bom.totalCost)}</td>
+        <td class="text-end fw-bold text-success"${
+          (bom.colorCosts || []).length > 1
+            ? ` title="Cost by color — ${escapeHtml((bom.colorCosts || []).map(c => `${c.color}: ${formatCurrency(c.totalCost)}`).join(', '))} (headline total shown is for ${escapeHtml(bom.colorCosts[0].color)})"`
+            : ''
+        }>${formatCurrency(bom.grandTotal ?? bom.totalCost)}</td>
         <td class="text-center">
           <button class="btn btn-sm btn-outline-primary btn-action w-100 mb-1" onclick="App.BOM.openEditModal('${idx}')">Edit BOM</button>
           <button class="btn btn-sm btn-outline-dark btn-action w-100 mb-1" onclick="App.BOM.openDuplicateModal('${idx}')">Duplicate BOM</button>
@@ -2303,6 +2307,11 @@
         <span style="font-size:15px;font-weight:800;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
           ${formatCurrency(bom.grandTotal ?? bom.totalCost)}
         </span>
+        ${(bom.colorCosts || []).length > 1 ? `
+        <div style="font-size:10px;color:#777;margin-top:2px;">
+          Color rows are alternatives, not additive — cost above is for <strong>${escapeHtml(bom.colorCosts[0].color)}</strong> only.
+          By color: ${bom.colorCosts.map(c => `${escapeHtml(c.color)} ${formatCurrency(c.totalCost + bom.totalAdditionalCost)}`).join(' &nbsp;|&nbsp; ')}
+        </div>` : ''}
       </div>
       ${remarksHtml}
     </div>`;

@@ -491,7 +491,7 @@ function _normalizeItems(rawItems) {
       qty,
       unit,
       price,
-      total: qty * price,
+      total: parseFloat((qty * price).toFixed(2)),
       baseQty,
       baseRate
     };
@@ -849,7 +849,13 @@ function _attachPoStatus(po, billedMap) {
     // using the same qty/baseQty ratio the line itself was converted with.
     const ratio = effectiveBaseQty > 0 ? item.qty / effectiveBaseQty : 1;
     item.receivedQty = billedBaseQty * ratio;
-    item.pendingQty = Math.max(0, item.qty - item.receivedQty);
+    // Not clamped to 0 — a negative value means this line has been billed
+    // beyond what was ordered (see saveBill()'s advisory over-billing
+    // warning in module_bill.js). Every current reader of pendingQty already
+    // filters to `> 0.0001` before display, so this stays invisible in the
+    // "pending" lists but is now available to anything that wants to surface
+    // the overage instead of it being silently clamped away.
+    item.pendingQty = item.qty - item.receivedQty;
 
     if (billedBaseQty > 0.0001) anyBilled = true;
     if (orderedBaseQty - billedBaseQty > 0.0001) allLinesComplete = false;
@@ -976,7 +982,7 @@ function getPOData(preloadedBilledMap) {
       // Add item to PO
       const qty = _toFiniteNumber(r[OFF.qty], 0);
       const price = _toFiniteNumber(r[OFF.price], 0);
-      const total = qty * price;
+      const total = parseFloat((qty * price).toFixed(2));
 
       poMap[poNum].items.push({
         name: String(r[OFF.itemName] || ''),

@@ -120,6 +120,8 @@ const {
   APP_CONFIG, PRODUCTION_COL, UNITS_COL, ITEMS_COL, STOCK_COL,
   deleteProduction, recalculateWarehousePool, recalculateStock
 } = ctx;
+// getPoolAvailableQtyMap isn't destructured above (added after that binding
+// list was written) — read it off ctx directly where needed instead.
 
 let failures = 0;
 function assert(cond, msg) {
@@ -241,6 +243,47 @@ console.log('\n=== Fix #3: componentsConsumed with an explicit Unit converts to 
 
   const boltsCurrent = Number(stockSheet._get(3, STOCK_COL.CURRENT_STOCK));
   assert(boltsCurrent === 47, `Bolts: 50 Pcs initial - 3 Pcs (no unit -> no conversion, legacy behavior) = 47 (got ${boltsCurrent})`);
+}
+
+console.log('\n=== Fix: a POOL-sourced componentsConsumed entry with an explicit Unit now converts before debiting the Warehouse Pool (previously silently ignored) ===');
+{
+  // Units/Items sheets already seeded above: Dozen -> factor 12, Pcs -> factor 1,
+  // and an Items Master row isn't required for the pool item itself (WIP output
+  // items fall back to {baseUnit: 'Pcs', ...} same as an unregistered item).
+  const prodSheet = ss.getSheetByName(APP_CONFIG.SHEETS.PRODUCTION);
+
+  // Upstream credit: 10 units of "Painted Widget" WIP output.
+  let row = prodSheet.getLastRow() + 1;
+  prodSheet._set(row, PRODUCTION_COL.DATE, '05/01/2026');
+  prodSheet._set(row, PRODUCTION_COL.QTY, 10);
+  prodSheet._set(row, PRODUCTION_COL.STATUS, 'Completed');
+  prodSheet._set(row, PRODUCTION_COL.PROCESS_ID, 'PRC-5');
+  prodSheet._set(row, PRODUCTION_COL.LOT_NUMBER, 'LOT-5');
+  prodSheet._set(row, PRODUCTION_COL.OUTPUT_ITEM_NAME, 'Painted Widget');
+  prodSheet._set(row, PRODUCTION_COL.COMPONENTS_CONSUMED, '[]');
+  prodSheet._set(row, PRODUCTION_COL.COLOR_BREAKDOWN, '');
+
+  // Downstream lot draws 1 Dozen of "Painted Widget" from the pool -> must
+  // debit 12 (Dozen -> Pcs, factor 12), not 1.
+  row = prodSheet.getLastRow() + 1;
+  prodSheet._set(row, PRODUCTION_COL.DATE, '06/01/2026');
+  prodSheet._set(row, PRODUCTION_COL.QTY, 1);
+  prodSheet._set(row, PRODUCTION_COL.STATUS, 'Completed');
+  prodSheet._set(row, PRODUCTION_COL.PROCESS_ID, 'PRC-6');
+  prodSheet._set(row, PRODUCTION_COL.LOT_NUMBER, 'LOT-6');
+  prodSheet._set(row, PRODUCTION_COL.OUTPUT_ITEM_NAME, 'Assembled Widget');
+  prodSheet._set(row, PRODUCTION_COL.COMPONENTS_CONSUMED, JSON.stringify([
+    { itemName: 'Painted Widget', sourceType: 'POOL', qty: 1, unit: 'Dozen', colorGroup: 'COMMON' }
+  ]));
+  prodSheet._set(row, PRODUCTION_COL.COLOR_BREAKDOWN, '');
+
+  const recalc = recalculateWarehousePool();
+  assert(recalc.success, 'recalculateWarehousePool succeeds: ' + recalc.message);
+
+  const poolMap = ctx.getPoolAvailableQtyMap();
+  const entry = poolMap['painted widget'];
+  assert(!!entry, 'Painted Widget bucket exists in pool map');
+  assert(entry && entry.total === -2, `Painted Widget: 10 produced - 12 (1 Dozen converted to Pcs) consumed = -2 available (got ${entry && entry.total})`);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILURE(S)'}`);
