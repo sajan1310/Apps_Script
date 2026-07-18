@@ -1473,30 +1473,26 @@
         // regardless of how large Items Master is, instead of the whole
         // list at once.
         //
-        // dropdownParent is document.body, NOT the scrollable #itemDriftModalBody
-        // (tried that first — see git history/memory). Select2's own position
-        // math for a scrollable dropdownParent is only reliable while a
-        // dropdown that was ALREADY open tracks a scroll; opening a dropdown
-        // for the FIRST TIME on a row that only became visible by scrolling
-        // computes a badly wrong position (observed rendering far off-screen,
-        // e.g. y:-234, in a table scrolled a few hundred px down) — a known
-        // Select2 limitation with scrollable dropdownParents, not something
-        // fixable by tweaking options. document.body is never scrolled while
-        // a Bootstrap modal is open (Bootstrap locks body scroll), so
-        // Select2's position math against it is always correct. The
-        // trade-off: a dropdown no longer follows the row while scrolling
-        // WITH it open — instead the scroll listener below just closes it,
-        // which is the standard workaround for this class of bug.
+        // dropdownParent is the modal root (#itemDriftModal), NOT
+        // document.body — Bootstrap's modal focus trap (tabindex="-1")
+        // steals focus from any element outside the modal, which made
+        // Select2's search input uneditable when the dropdown was
+        // parented to body. The modal root is not itself scrollable
+        // (only .modal-body scrolls), so Select2's position math is
+        // reliable. This matches the pattern used by every other
+        // Select2-in-a-modal in this file (see initItemSelect2,
+        // initCostContractorSelect2, etc.).
         _initDriftTargetSelects() {
           if (!window.jQuery?.fn?.select2) return;
           const PAGE_SIZE = 40;
           const items = this._driftTargetItems || [];
+          const $modal = window.jQuery('#itemDriftModal');
 
           document.querySelectorAll('.drift-target-select').forEach(el => {
             window.jQuery(el).select2({
               placeholder: 'Repoint to…',
               width: '100%',
-              dropdownParent: window.jQuery(document.body),
+              dropdownParent: $modal.length ? $modal : window.jQuery(document.body),
               ajax: {
                 delay: 150,
                 data(params) {
@@ -1527,21 +1523,6 @@
               if (fixBtn) fixBtn.disabled = !this.value;
             });
           });
-
-          // dropdownParent is document.body (see above), so an open dropdown
-          // does NOT move with the row list when it scrolls — close it
-          // instead, same as clicking outside would. #itemDriftModalBody
-          // itself is never replaced (only its innerHTML), so this listener
-          // only needs binding once, not on every re-render.
-          const modalBody = document.getElementById('itemDriftModalBody');
-          if (modalBody && !modalBody.dataset.driftScrollCloseBound) {
-            modalBody.dataset.driftScrollCloseBound = '1';
-            modalBody.addEventListener('scroll', () => {
-              document.querySelectorAll('.drift-target-select').forEach(el => {
-                window.jQuery(el).select2('close');
-              });
-            });
-          }
         },
 
         // Read-only diagnostic (module_items.js#getItemIdentityDriftReport) —
@@ -1615,8 +1596,15 @@
             // values and can leave a dropdown mispositioned or unable to
             // open correctly the first time. Wait for the modal to actually
             // be shown (laid out, fully visible) before initializing.
-            document.getElementById('itemDriftModal')
-              ?.addEventListener('shown.bs.modal', () => this._initDriftTargetSelects(), { once: true });
+            // Guard: remove any stale listener from a previous
+            // checkReferenceIntegrity() call that hasn't fired yet (user
+            // re-ran the check before the modal finished opening).
+            const driftModal = document.getElementById('itemDriftModal');
+            if (driftModal) {
+              if (this._driftShownHandler) driftModal.removeEventListener('shown.bs.modal', this._driftShownHandler);
+              this._driftShownHandler = () => this._initDriftTargetSelects();
+              driftModal.addEventListener('shown.bs.modal', this._driftShownHandler, { once: true });
+            }
             safeModalShow('itemDriftModal');
           } catch (err) {
             App.Utils.showToast(err.message || 'Failed to check reference integrity.', true);
