@@ -1943,34 +1943,107 @@ function includeWarehousePoolColor(processId, color) {
 }
 
 /**
+ * @private Full read of every Production row's own logged color(s),
+ * grouped by processId — read once and shared across a single
+ * getAllProcessColorGroups computation, same discipline as poolRows/
+ * colorLinks/overrides. Distinct from pool-detected colors (see
+ * computeColorAxesForProcess), which reflects colors of UPSTREAM items
+ * this recipe CONSUMES — this is about colors THIS process's own output
+ * has actually been logged under, catching a color an operator typed/
+ * picked at production time (e.g. via the Production checklist's own
+ * full Color Master widening — see getProcessColorGroups) that neither
+ * recipe-tagging nor pool-consumed-item detection would otherwise surface
+ * in the Warehouse Pool breakdown dialog's known-colors list. Every
+ * logged status counts (not just Completed) — even a Pending/Cancelled
+ * lot's color choice is real evidence the combination is practically
+ * relevant, though only a Completed lot's colors ever get real Warehouse
+ * Pool bucket history (see recalculateWarehousePool), which is what
+ * ultimately protects a color from removal regardless of this list.
+ * @returns {Map<string, Set<string>>} processId (lowercase) -> Set of colors
+ */
+function _getProductionLoggedColorsByProcess() {
+  const result = new Map();
+  let sheet;
+  try {
+    sheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+  } catch (e) {
+    return result;
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return result;
+
+  const numCols = Math.max(PRODUCTION_COL.PROCESS_ID, PRODUCTION_COL.COLOR, PRODUCTION_COL.COLOR_BREAKDOWN);
+  const data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+
+  data.forEach(row => {
+    const processId = String(row[PRODUCTION_COL.PROCESS_ID - 1] || '').trim();
+    if (!processId) return;
+    const key = processId.toLowerCase();
+    if (!result.has(key)) result.set(key, new Set());
+    const colors = result.get(key);
+
+    const breakdownRaw = String(row[PRODUCTION_COL.COLOR_BREAKDOWN - 1] || '').trim();
+    if (breakdownRaw) {
+      try {
+        const parsed = JSON.parse(breakdownRaw);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(entry => {
+            const c = String((entry && entry.color) || '').trim();
+            if (c) colors.add(c);
+          });
+        }
+      } catch (e) { /* malformed/legacy cell - ignore */ }
+    } else {
+      // Comma-joined display string (see saveProduction's `color =
+      // colorBreakdown.map(...).join(', ')`) - split back into individual
+      // color names, stripping any "(Size)" qualifier suffix it may carry.
+      const colorCell = String(row[PRODUCTION_COL.COLOR - 1] || '').trim();
+      if (colorCell) {
+        colorCell.split(',').forEach(part => {
+          const c = part.replace(/\s*\([^)]*\)\s*$/, '').trim();
+          if (c) colors.add(c);
+        });
+      }
+    }
+  });
+
+  return result;
+}
+
+/**
  * Bulk variant of getProcessColorGroups — returns every process's color
  * groups in one call, keyed by Process ID, as { colors, removable }.
- * `colors` is the Warehouse-Pool-scoped known list (recipe/pool-detected +
- * INCLUDE overrides, minus EXCLUDE overrides — see computeColorGroupsForProcess)
- * — deliberately NOT widened to the full Color Master the way
- * getProcessColorGroups (singular, the Production checklist's own call
- * path) is. That widening is offering-side flexibility for what the
- * operator can pick when logging a lot; this bulk variant feeds the
- * Warehouse Pool breakdown dialog's zero-qty placeholder rows, where
- * unioning in every Color Master entry regardless of relevance just
- * produces one placeholder row per unused color per process — real clutter,
- * not real flexibility (the "+ Add Combination" override, via
- * includeWarehousePoolColor, is the correct opt-in escape hatch for a
- * specific color on a specific process, and still works exactly the same
- * regardless of this scoping). Passing an empty array here (instead of the
- * real Color Master list) short-circuits computeColorGroupsForProcess's own
- * `colorMasterNames || _getColorMasterNames()` fallback into a no-op widen.
+ * `colors` is the Warehouse-Pool-scoped known list: recipe/pool-detected
+ * colors (baseColors) UNION colors this process's own Production history
+ * has actually logged (see _getProductionLoggedColorsByProcess) UNION
+ * INCLUDE overrides, MINUS EXCLUDE overrides — deliberately NOT widened to
+ * the full Color Master the way getProcessColorGroups (singular, the
+ * Production checklist's own call path) is. That widening is
+ * offering-side flexibility for what the operator can pick when logging a
+ * new lot; this bulk variant feeds the Warehouse Pool breakdown dialog's
+ * zero-qty placeholder rows, where unioning in every Color Master entry
+ * regardless of relevance just produces one placeholder row per unused
+ * color per process — real clutter, not real flexibility (the
+ * "+ Add Combination" override, via includeWarehousePoolColor, is the
+ * correct opt-in escape hatch for a specific color on a specific process,
+ * and still works exactly the same regardless of this scoping). Built
+ * directly here rather than through computeColorGroupsForProcess, whose
+ * `colorMasterNames`-widening and its `baseColors.length===0` gate are
+ * tuned for the checklist's different needs and don't have a slot for
+ * "logged history" as a source.
  * `removable` is the subset of `colors` NOT configured on the process's own
- * recipe (i.e. safe to pass to excludeWarehousePoolColors) — the Warehouse
- * Pool breakdown dialog uses it to decide which zero-qty placeholder rows
- * get an enabled delete action versus a protected/disabled one; with the
- * widening gone, this is now just the manually-INCLUDEd colors. Reads
- * Process Components, Warehouse Pool, and both override sheets ONCE (not
- * once per process — see computeColorGroupsForProcess) so this stays fast
- * regardless of process count. Used by the Warehouse Pool table to list
- * every known color variant of each process (not just the ones that
- * already have a stock bucket), so the user can add initial/opening stock
- * for a variant that hasn't produced anything yet.
+ * recipe/pool detection (i.e. safe to pass to excludeWarehousePoolColors)
+ * — the Warehouse Pool breakdown dialog uses it to decide which zero-qty
+ * placeholder rows get an enabled delete action versus a protected/
+ * disabled one; excludeWarehousePoolColors' own separate real-history
+ * guard is what actually protects a logged-but-not-recipe/pool color from
+ * removal once it has a real bucket, regardless of this hint. Reads
+ * Process Components, Warehouse Pool, Production, and both override
+ * sheets ONCE (not once per process) so this stays fast regardless of
+ * process count. Used by the Warehouse Pool table to list every known
+ * color variant of each process (not just the ones that already have a
+ * stock bucket), so the user can add initial/opening stock for a variant
+ * that hasn't produced anything yet.
  */
 function getAllProcessColorGroups() {
   try {
@@ -1989,15 +2062,29 @@ function getAllProcessColorGroups() {
     const poolRows = (poolResp && poolResp.data) || [];
     const colorLinks = _getAllProcessColorLinks();
     const overridesByProcess = _getAllProcessColorOverrides();
+    const loggedColorsByProcess = _getProductionLoggedColorsByProcess();
 
     const result = {};
     processes.forEach(p => {
       const components = componentsByProcess.get(p.processId) || [];
       const overrides = overridesByProcess[p.processId.toLowerCase()];
       const baseColors = _computeConfiguredColorGroupsForProcess(p.processId, components, poolRows, colorLinks);
-      // [] (not the real Color Master list) — see doc comment above.
-      const colors = computeColorGroupsForProcess(p.processId, components, poolRows, colorLinks, [], overrides);
       const baseLower = new Set(baseColors.map(c => c.toLowerCase()));
+
+      const colorMap = new Map();
+      baseColors.forEach(c => _addUniqueCaseInsensitive(colorMap, c));
+      (loggedColorsByProcess.get(p.processId.toLowerCase()) || new Set())
+        .forEach(c => _addUniqueCaseInsensitive(colorMap, c));
+      if (overrides && overrides.included) {
+        Array.from(overrides.included.values()).forEach(c => _addUniqueCaseInsensitive(colorMap, c));
+      }
+      if (overrides && overrides.excluded && overrides.excluded.size > 0) {
+        Array.from(colorMap.keys()).forEach(key => {
+          if (overrides.excluded.has(key)) colorMap.delete(key);
+        });
+      }
+
+      const colors = Array.from(colorMap.values()).sort((a, b) => a.localeCompare(b));
       result[p.processId] = {
         colors,
         removable: colors.filter(c => !baseLower.has(c.toLowerCase()))

@@ -325,27 +325,32 @@ console.log('\n=== Test 3: saveProduction now accepts a Color Master color the r
 // zero-qty placeholder row per unused color per process (real clutter, not
 // real flexibility — see feature_axis_color_pairings_and_composite_rename_fix
 // / the Phase 3 Warehouse Pool combinations follow-up). `colors` here is now
-// just recipe/pool-detected colors plus anything explicitly INCLUDEd via
-// includeWarehousePoolColor (the "+ Add Combination" escape hatch, still
-// fully independent of this narrowing — see Test 6); `removable` is
-// therefore now just the manually-INCLUDEd subset, since baseColors itself
-// is never offered for removal (see excludeWarehousePoolColors).
-console.log('\n=== Test 4: bulk getAllProcessColorGroups stays recipe/pool-scoped, UNLIKE the single-process (checklist) endpoint ===');
+// recipe/pool-detected colors UNION colors this process has actually logged
+// producing (see _getProductionLoggedColorsByProcess - "Green" below is a
+// real example: not recipe-tagged, but Test 3 above logged a real Completed
+// lot with it) UNION anything explicitly INCLUDEd via includeWarehousePoolColor
+// (the "+ Add Combination" escape hatch, still fully independent of this
+// narrowing — see Test 6). `removable` stays keyed off baseColors only (not
+// logged history) — a logged-but-not-recipe/pool color like "Green" still
+// LOOKS removable here, but excludeWarehousePoolColors' own separate
+// real-bucket-history guard rejects the actual removal attempt regardless
+// (see Test 5 immediately below), so nothing real is ever actually at risk.
+console.log('\n=== Test 4: bulk getAllProcessColorGroups is recipe/pool/logged-history-scoped, UNLIKE the single-process (checklist) endpoint ===');
 {
   const bulkRes = getAllProcessColorGroups();
   assert(bulkRes.success, 'getAllProcessColorGroups succeeds');
-  const expectedColors = ['Blue', 'Red']; // just the 2 recipe-tagged colors - no Color Master widening
+  const expectedColors = ['Blue', 'Green', 'Red']; // 2 recipe-tagged + "Green" from Test 3's logged Completed lot - no Color Master union
   assert(
     JSON.stringify(bulkRes.data[framePaintingId].colors.slice().sort()) === JSON.stringify(expectedColors),
-    'bulk variant stays scoped to recipe-tagged colors only, no Color Master union (got ' + JSON.stringify(bulkRes.data[framePaintingId]) + ')'
+    'bulk variant is recipe-tagged + actually-logged colors only, no blanket Color Master union (got ' + JSON.stringify(bulkRes.data[framePaintingId]) + ')'
   );
   assert(
-    bulkRes.data[framePaintingId].removable.length === 0,
-    'removable is empty - nothing beyond the protected recipe-tagged colors exists yet (got ' + JSON.stringify(bulkRes.data[framePaintingId].removable) + ')'
+    JSON.stringify(bulkRes.data[framePaintingId].removable) === JSON.stringify(['Green']),
+    '"Green" (logged but not recipe/pool-configured) is the only removable-looking entry (got ' + JSON.stringify(bulkRes.data[framePaintingId].removable) + ')'
   );
   assert(
     Array.isArray(bulkRes.data[packingId].colors) && bulkRes.data[packingId].colors.length === 0,
-    'bulk variant still reports zero for the no-color-dimension process (got ' + JSON.stringify(bulkRes.data[packingId]) + ')'
+    'bulk variant still reports zero for the no-color-dimension, never-produced process (got ' + JSON.stringify(bulkRes.data[packingId]) + ')'
   );
 
   // The single-process (checklist) endpoint is a completely separate call
