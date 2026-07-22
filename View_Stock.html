@@ -382,12 +382,20 @@
       </div>
       <div class="modal-body bg-light">
         <div class="alert alert-info py-2" role="alert" style="font-size: 13px;">
-          <i class="bi bi-info-circle-fill me-2"></i>Every known Color / Product-Tag combination for this process. Click Available Qty to correct it — corrections are recorded in the audit log.
+          <i class="bi bi-info-circle-fill me-2"></i>Every known Color / Product-Tag combination for this process. Click Available Qty to correct it — corrections are recorded in the audit log. Combinations with real production/consumption history, or configured on the recipe, are protected and can't be removed here.
+        </div>
+        <input type="text" id="searchWarehousePoolCombo" class="form-control form-control-sm mb-2" placeholder="Search Color or Product Tag..." autocomplete="off" onkeyup="App.Stock.filterWarehousePoolCombos(this.value)">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <input type="text" id="warehousePoolAddComboInput" class="form-control form-control-sm" style="max-width:220px;" list="warehousePoolColorMasterList" placeholder="Color name...">
+          <datalist id="warehousePoolColorMasterList"></datalist>
+          <button type="button" class="btn btn-outline-success btn-sm" onclick="App.Stock.addWarehousePoolCombination()"><i class="bi bi-plus-lg"></i> Add Combination</button>
+          <button type="button" id="btnBulkDeleteWarehousePoolCombos" class="btn btn-outline-danger btn-sm ms-auto" style="display:none;" onclick="App.Stock.bulkDeleteWarehousePoolCombinations()"><i class="bi bi-trash"></i> Delete Selected</button>
         </div>
         <div class="table-responsive">
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
             <thead class="table-dark">
               <tr>
+                <th class="text-center" style="width: 4%;"><input type="checkbox" id="selectAllWarehousePoolCombos" class="form-check-input" onclick="App.Stock.toggleSelectAllWarehousePoolCombos(this)"></th>
                 <th>Product Tag</th>
                 <th class="text-center">Produced</th>
                 <th class="text-center">Consumed</th>

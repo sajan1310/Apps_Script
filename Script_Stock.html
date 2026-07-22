@@ -837,7 +837,14 @@
       // matches).
       computeLeafRowsForProcess(process, term) {
         const buckets = (App.State.globalWarehousePool || []).filter(r => r.processId === process.processId);
-        const knownColors = (App.State.warehousePoolColorsByProcess || {})[process.processId] || [];
+        // getAllProcessColorGroups (see module_process.js) returns
+        // { colors, removable } per process, not a flat array — `removable`
+        // is the subset of `colors` NOT configured on the process's own
+        // recipe, i.e. safe to offer a delete action for (see
+        // excludeWarehousePoolColors's matching server-side guard).
+        const colorInfo = (App.State.warehousePoolColorsByProcess || {})[process.processId] || {};
+        const knownColors = colorInfo.colors || [];
+        const removableLower = new Set((colorInfo.removable || []).map(c => String(c || '').trim().toLowerCase()));
         // Case-insensitive: knownColors is derived server-side from recipe/
         // pool color strings that may have been typed with different casing
         // than an existing bucket's own `color` (e.g. "Red" bucket vs a
@@ -847,7 +854,7 @@
         const existingColors = new Set(buckets.map(r => String(r.color || '').trim().toLowerCase()));
         const missingColorRows = knownColors
           .filter(c => !existingColors.has(String(c || '').trim().toLowerCase()))
-          .map(c => this._placeholderBucket(process, c));
+          .map(c => this._placeholderBucket(process, c, removableLower.has(String(c || '').trim().toLowerCase())));
         const rows = buckets.concat(missingColorRows)
           .sort((a, b) => a.color.localeCompare(b.color) || a.productTag.localeCompare(b.productTag));
         if (!rows.length) rows.push(this._placeholderBucket(process));
@@ -858,7 +865,7 @@
         return rows.filter(r => App.Utils.matchesKeywords([r.outputItemName, r.productTag, r.color].join(' '), term));
       },
 
-      _placeholderBucket(process, color) {
+      _placeholderBucket(process, color, removable) {
         return {
           outputItemName: process.outputItemName || '',
           processId: process.processId,
@@ -867,7 +874,11 @@
           producedQty: 0,
           consumedQty: 0,
           availableQty: 0,
-          isPlaceholder: true
+          isPlaceholder: true,
+          // A colorless fallback row (this process has nothing at all — see
+          // computeLeafRowsForProcess's `if (!rows.length)`) has nothing
+          // meaningful to remove, regardless of what the caller passed.
+          removable: !!removable && !!color
         };
       },
 
@@ -1009,13 +1020,20 @@
       // renderWarehousePoolTable() summed into the Total columns), each with
       // the same click-to-edit Available Qty cell the old flat table had.
       // Always computed with no search term so the full breakdown is visible
-      // even if the main table is currently filtered.
+      // even if the main table is currently filtered. Tracks its own
+      // selection state (_poolComboProcessId/_poolComboSelected) rather than
+      // reusing App.State.selectedWarehousePool — that array selects whole
+      // Processes on the OUTER table, a completely different granularity
+      // from selecting individual Color combinations inside one Process's
+      // breakdown here.
       openWarehousePoolProcessModal(encProcessId) {
         const processId = decodeURIComponent(encProcessId || '');
         const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
         if (!process) return;
 
-        const leafRows = this.computeLeafRowsForProcess(process, '');
+        this._poolComboProcessId = processId;
+        this._poolComboSelected = new Set();
+        this._poolComboSearchTerm = '';
 
         const titleEl = document.getElementById('warehousePoolProcessModalTitle');
         if (titleEl) {
@@ -1025,14 +1043,48 @@
           titleEl.innerHTML = `<i class="bi bi-boxes me-2"></i>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}`;
         }
 
+        const searchInput = document.getElementById('searchWarehousePoolCombo');
+        if (searchInput) searchInput.value = '';
+        const addInput = document.getElementById('warehousePoolAddComboInput');
+        if (addInput) addInput.value = '';
+        this._populateWarehousePoolComboDatalist();
+
+        this.renderWarehousePoolProcessModalBody();
+        safeModalShow('warehousePoolProcessModal');
+      },
+
+      // Filters the breakdown dialog's own rows by Color or Product Tag —
+      // independent of, and narrower than, the outer table's own search
+      // (App.Stock.filterWarehousePool): this dialog is already scoped to
+      // one Process, so there's no process-name-match "show everything"
+      // escape hatch here the way computeLeafRowsForProcess's own `term`
+      // param has for the outer table — a search inside an already-open
+      // breakdown should always narrow, never widen back out.
+      filterWarehousePoolCombos(term) {
+        this._poolComboSearchTerm = String(term || '').trim();
+        this.renderWarehousePoolProcessModalBody();
+      },
+
+      // Re-renders just the breakdown table body — shared by the initial
+      // open and every action that changes the combination list (delete/
+      // bulk delete/add/search) so the dialog refreshes in place instead of
+      // closing, matching editPoolStockCell's existing in-place pattern.
+      renderWarehousePoolProcessModalBody() {
+        const process = (App.State.globalProcesses || []).find(p => p.processId === this._poolComboProcessId);
         const body = document.getElementById('warehousePoolProcessModalBody');
-        if (body) {
-          body.innerHTML = leafRows.length
-            ? leafRows.map(r => `<tr>${this.renderWarehousePoolLeafCells(process, r)}</tr>`).join('')
-            : '<tr><td colspan="6" class="text-center text-muted p-4">No Warehouse Pool buckets found for this process.</td></tr>';
+        if (!process || !body) return;
+
+        let leafRows = this.computeLeafRowsForProcess(process, '');
+        const term = this._poolComboSearchTerm || '';
+        if (term) {
+          leafRows = leafRows.filter(r => App.Utils.matchesKeywords([r.productTag, r.color].join(' '), term));
         }
 
-        safeModalShow('warehousePoolProcessModal');
+        body.innerHTML = leafRows.length
+          ? leafRows.map(r => `<tr>${this.renderWarehousePoolLeafCells(process, r)}</tr>`).join('')
+          : `<tr><td colspan="7" class="text-center text-muted p-4">${term ? 'No combinations match your search.' : 'No Warehouse Pool buckets found for this process.'}</td></tr>`;
+
+        this.updatePoolComboBulkButton();
       },
 
       renderWarehousePoolLeafCells(process, r) {
@@ -1050,7 +1102,30 @@
               onclick="App.Stock.editPoolStockCell(this, '${encName}', '${encProcessId}', '${encTag}', '${encColor}')">${App.Production.formatQty(r.availableQty)}</span>`
           : '<span class="text-muted">—</span>';
 
+        // Only a zero-data PLACEHOLDER combination that isn't part of this
+        // process's own recipe configuration can ever be removed (see
+        // excludeWarehousePoolColors's server-side guard, mirrored here so
+        // the button/checkbox never even offers an action the server would
+        // just reject) — a real bucket (has actual Produced/Consumed
+        // history) or a recipe-configured color is protected.
+        const canRemove = !!r.isPlaceholder && !!r.removable && !!r.color;
+        const checkboxCell = canRemove
+          ? `<input type="checkbox" class="form-check-input warehousepool-combo-chk" data-color="${escapeHtml(r.color)}"
+              ${this._poolComboSelected && this._poolComboSelected.has(r.color) ? 'checked' : ''}
+              onchange="App.Stock.onPoolComboCheckChange()">`
+          : `<input type="checkbox" class="form-check-input" disabled title="${r.isPlaceholder ? 'Not removable — not a real combination for this process, or a recipe-configured color' : 'Has real production/consumption history — can\'t be removed'}">`;
+        const deleteBtn = canRemove
+          ? `<button type="button" class="btn btn-outline-danger btn-sm" title="Remove this combination"
+                  onclick="App.Stock.deleteWarehousePoolCombination('${encColor}')">
+              <i class="bi bi-x-lg"></i>
+            </button>`
+          : `<button type="button" class="btn btn-outline-secondary btn-sm" disabled
+                  title="${r.isPlaceholder ? 'Configured on this process\'s recipe — can\'t be removed here' : 'Has real production/consumption history — can\'t be removed'}">
+              <i class="bi bi-x-lg"></i>
+            </button>`;
+
         return `
+        <td class="text-center">${checkboxCell}</td>
         <td>${r.productTag ? `<span class="badge bg-dark">${escapeHtml(r.productTag)}</span>` : '<span class="text-muted">—</span>'}</td>
         <td class="text-center" data-pool-field="produced">${App.Production.formatQty(r.producedQty)}</td>
         <td class="text-center">${App.Production.formatQty(r.consumedQty)}</td>
@@ -1061,7 +1136,114 @@
                   onclick="App.Stock.openPoolLedgerModal('${encName}', '${encTag}', '${encColor}')">
             <i class="bi bi-journal-text"></i>
           </button>
+          ${deleteBtn}
         </td>`;
+      },
+
+      toggleSelectAllWarehousePoolCombos(masterChk) {
+        $$('#warehousePoolProcessModalBody .warehousepool-combo-chk').forEach(chk => {
+          chk.checked = masterChk.checked;
+          if (masterChk.checked) this._poolComboSelected.add(chk.dataset.color);
+          else this._poolComboSelected.delete(chk.dataset.color);
+        });
+        this.updatePoolComboBulkButton();
+      },
+
+      onPoolComboCheckChange() {
+        this._poolComboSelected = new Set(
+          $$('#warehousePoolProcessModalBody .warehousepool-combo-chk:checked').map(chk => chk.dataset.color)
+        );
+        const selectAllChk = document.getElementById('selectAllWarehousePoolCombos');
+        if (selectAllChk) {
+          const all = $$('#warehousePoolProcessModalBody .warehousepool-combo-chk');
+          selectAllChk.checked = all.length > 0 && all.every(chk => chk.checked);
+        }
+        this.updatePoolComboBulkButton();
+      },
+
+      updatePoolComboBulkButton() {
+        const btn = document.getElementById('btnBulkDeleteWarehousePoolCombos');
+        if (!btn) return;
+        const count = this._poolComboSelected ? this._poolComboSelected.size : 0;
+        btn.style.display = count > 0 ? '' : 'none';
+        btn.innerHTML = `<i class="bi bi-trash"></i> Delete Selected (${count})`;
+      },
+
+      // Single-row delete (the per-row "X" button) — thin wrapper around the
+      // same server call bulkDeleteWarehousePoolCombinations uses, so both
+      // paths share one confirm/refresh/toast flow.
+      deleteWarehousePoolCombination(encColor) {
+        const color = decodeURIComponent(encColor || '');
+        if (!color) return;
+        this._runWarehousePoolCombinationDelete([color]);
+      },
+
+      bulkDeleteWarehousePoolCombinations() {
+        const colors = Array.from(this._poolComboSelected || []);
+        if (colors.length === 0) return;
+        this._runWarehousePoolCombinationDelete(colors);
+      },
+
+      _runWarehousePoolCombinationDelete(colors) {
+        const processId = this._poolComboProcessId;
+        if (!processId || colors.length === 0) return;
+        const label = colors.length === 1 ? `"${colors[0]}"` : `these ${colors.length} combinations`;
+        App.Utils.confirmAction(
+          `Remove ${label} from this process's known Color/Product-Tag list? This only removes empty placeholders — anything with real production history is protected automatically.`,
+          async () => {
+            try {
+              const res = await Api.call('excludeWarehousePoolColors', processId, colors);
+              App.Utils.showToast(res?.message || 'Combination(s) removed.', !res?.success && (!res?.data || !res.data.removed || res.data.removed.length === 0));
+              // A partial success (some removed, some blocked) still needs a
+              // full refresh — re-fetch the known-colors list (removable set
+              // changes too) before repainting, same as any other Warehouse
+              // Pool-affecting save.
+              await App.Stock.loadWarehousePoolData();
+              this._poolComboSelected = new Set();
+              this.renderWarehousePoolProcessModalBody();
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to remove combination(s).', true);
+            }
+          }
+        );
+      },
+
+      // Populates the "Add Combination" input's Color Master suggestions —
+      // called once when the dialog opens (same ensureLoaded + datalist
+      // pattern as every other color-name input in the app, e.g.
+      // Production's productionCustomColorInput).
+      async _populateWarehousePoolComboDatalist() {
+        await App.Color.ensureLoaded();
+        const datalist = document.getElementById('warehousePoolColorMasterList');
+        if (!datalist) return;
+        datalist.innerHTML = (App.State.globalColors || [])
+          .map(c => `<option value="${escapeHtml(c.name)}">`).join('');
+      },
+
+      // "+ Add Combination" — force-adds a color (typically picked from the
+      // Color Master suggestions, but a one-off free-typed name works too)
+      // as known for the currently open process, even if nothing else
+      // (recipe, pool history, Color Master widening) would ever produce it
+      // on its own. Also the way to undo a prior removal (see
+      // includeWarehousePoolColor — re-adding the same name overwrites its
+      // exclusion).
+      async addWarehousePoolCombination() {
+        const processId = this._poolComboProcessId;
+        const input = document.getElementById('warehousePoolAddComboInput');
+        const color = (input?.value || '').trim();
+        if (!processId || !color) return;
+
+        try {
+          const res = await Api.call('includeWarehousePoolColor', processId, color);
+          App.Utils.showToast(res?.message || 'Combination added.', !res?.success);
+          if (res?.success) {
+            if (input) input.value = '';
+            await App.Stock.loadWarehousePoolData();
+            this.renderWarehousePoolProcessModalBody();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to add combination.', true);
+        }
       },
 
       // Click-to-edit Available Qty cell. Saves by SETTING the bucket's

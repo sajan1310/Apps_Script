@@ -409,14 +409,14 @@
 
       // Human-readable qualifier for an axisKey, used only to disambiguate
       // two different axes that happen to produce the exact same color name
-      // (see renderColorwiseSummary) — strips the "pool:"/"tag:" prefix
-      // computeColorAxesForProcess adds (module_process.js) and falls back
-      // to the raw key for anything else (a legacy grouping's "group_N" /
-      // "other" / "custom" bucket).
+      // (see renderColorwiseSummary) — strips the "pool:"/"tag:"/"merged:"
+      // prefix computeColorAxesForProcess adds (module_process.js) and falls
+      // back to the raw key for anything else (a legacy grouping's
+      // "group_N" / "other" / "custom" bucket).
       _axisQualifierLabel(axisKey) {
         const key = String(axisKey || '').trim();
         if (!key) return '';
-        const m = key.match(/^(pool|tag):(.+)$/i);
+        const m = key.match(/^(pool|tag|merged):(.+)$/i);
         return m ? m[2] : key;
       },
 
@@ -2122,10 +2122,17 @@
       // caller below treats '' as "no scoping, use the legacy unscoped
       // behavior", so this is always a safe, backward-compatible no-op
       // outside true 2+-axis processes.
+      // No `source` filter here — a 'pool' axis's own label is still
+      // itemNames.join(', '), and a Process Color Link can now merge that
+      // pool axis with a 'tag' axis into a 'merged' one (see
+      // computeColorAxesForProcess/_mergeLinkedAxes, module_process.js),
+      // which carries the SAME comma-joined label forward so this still
+      // resolves it; a plain 'tag' axis's own label is never a pool item
+      // name, so including it here is harmless (never matches).
       _axisKeyForPoolItemNames(itemNames) {
         const namesLower = (itemNames || []).map(n => String(n || '').trim().toLowerCase()).filter(Boolean);
         if (namesLower.length === 0) return '';
-        const opt = (this._customColorGroupOptions || []).find(o => o.source === 'pool' &&
+        const opt = (this._customColorGroupOptions || []).find(o =>
           o.label.split(',').map(s => s.trim().toLowerCase()).some(l => namesLower.includes(l)));
         return opt ? opt.key : '';
       },

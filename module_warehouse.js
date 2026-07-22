@@ -623,10 +623,28 @@ function recalculateWarehousePool() {
         const data = prodSheet.getRange(2, 1, lastRow - 1, numCols).getValues();
 
         // Pass 1: credit every Completed lot's own output to its pool
-        // bucket(s). A multi-color lot's Color Breakdown is split into one
-        // bucket per color so a downstream process can later draw a
-        // specific color back out; a color-agnostic lot credits the single
-        // blank-color bucket as before.
+        // bucket(s). A color-agnostic lot credits the single blank-color
+        // bucket. A multi-color lot's Color Breakdown entries (one per
+        // checked color across every axis — see getCheckedColorQtys,
+        // Script_Production.html) are combined into ONE bucket whenever the
+        // pairing is unambiguous: exactly one entry counts toward the lot's
+        // total (countsTowardTotal !== false — the primary axis, or the
+        // only entry on a single-axis/legacy lot) AND at most one OTHER
+        // entry is a genuinely independent axis, i.e. its color doesn't
+        // _colorNamesMatch the primary's (e.g. a Rim Color sharing no name
+        // segment with any Frame color — see module_process.js). A
+        // redundant axis (e.g. Mudguard Color, whose checked value DOES
+        // name-match the primary — the same batch described a second way,
+        // per the exact heuristic the Production checklist itself uses to
+        // auto-sync such rows) is folded into that one combined bucket
+        // instead of getting a separate credit of its own — this is what
+        // turns two independent credits (10 under "Red-White", 10 under
+        // "Black") into one real "Red-White / Black" bucket. Anything less
+        // clean-cut (no single counted entry, or 2+ independent-axis
+        // entries with no stored cross-axis pairing to tell which goes with
+        // which) falls back to crediting every entry under its own single
+        // color, exactly as before this combining logic existed — never
+        // guessing at a quantity attribution.
         data.forEach(row => {
           const status = String(row[PRODUCTION_COL.STATUS - 1] || '').trim().toLowerCase();
           if (status !== 'completed') return;
@@ -647,16 +665,33 @@ function recalculateWarehousePool() {
           }
 
           if (colorBreakdown.length > 0) {
-            colorBreakdown.forEach(entry => {
-              const color = String(entry.color || '').trim();
-              // Zero/negative kept — a negative per-color qty is a
-              // correction/reversal lot that credits this bucket back down
-              // (see saveProduction in module_production.js), mirroring the
-              // flat (non-color) path just below which never filtered by sign.
-              const qty = Number(entry.qty) || 0;
+            // Zero/negative kept — a negative per-color qty is a
+            // correction/reversal lot that credits this bucket back down
+            // (see saveProduction in module_production.js), mirroring the
+            // flat (non-color) path below which never filtered by sign.
+            const creditColor = (color, qty) => {
               if (!color) return;
-              getBucket(outputItemName, processId, productTag, color).producedQty += qty;
-            });
+              getBucket(outputItemName, processId, productTag, color).producedQty += (Number(qty) || 0);
+            };
+
+            const primaryEntries = colorBreakdown.filter(e => e && e.countsTowardTotal !== false && String(e.color || '').trim());
+            const otherEntries = colorBreakdown.filter(e => e && e.countsTowardTotal === false && String(e.color || '').trim());
+
+            let combined = false;
+            if (primaryEntries.length === 1) {
+              const primaryColor = String(primaryEntries[0].color).trim();
+              const independent = otherEntries.filter(e => !_colorNamesMatch(primaryColor, e.color));
+              if (independent.length <= 1) {
+                const parts = [primaryColor];
+                if (independent.length === 1) parts.push(String(independent[0].color).trim());
+                creditColor(parts.join(COLOR_COMBO_DELIMITER), primaryEntries[0].qty);
+                combined = true;
+              }
+            }
+
+            if (!combined) {
+              colorBreakdown.forEach(entry => creditColor(String(entry.color || '').trim(), entry.qty));
+            }
           } else {
             const qty = Number(row[PRODUCTION_COL.QTY - 1]) || 0;
             getBucket(outputItemName, processId, productTag, '').producedQty += qty;

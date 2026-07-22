@@ -65,6 +65,7 @@ const APP_CONFIG = Object.freeze({
     PROCESS_MASTER: 'Process Master',
     PROCESS_COMPONENTS: 'Process Components',
     PROCESS_COLOR_LINKS: 'Process Color Links',
+    PROCESS_COLOR_OVERRIDES: 'Process Color Overrides',
     WAREHOUSE_POOL: 'Warehouse Pool',
     WAREHOUSE_POOL_OPENING: 'Warehouse Pool Opening',
     UNITS: 'Unit Master',
@@ -770,33 +771,78 @@ const COLOR_COMBO_DELIMITER = ' / ';
 
 // ─────────────────────────────────────────────────────────────────────────
 // PROCESS COLOR LINKS SHEET COLUMN MAPPINGS (1-based indexing)
-// Manually-declared color correspondences between two processes (e.g. Process
-// B's "Orange/White" <-> Process D's "Orange"), so a downstream process
-// consuming pool items from both treats them as one paired color choice
-// instead of cross-multiplying every color of one against every color of the
-// other (see computeColorGroupsForProcess in module_process.js). One row per
-// paired color — a 6-color link is 6 rows. Storage is directional (A/B
-// columns) but always read symmetrically: a process's links are every row
-// where it appears in EITHER column.
+// Manually-declared color correspondences between two AXES (e.g. Process B's
+// "Orange/White" <-> Process D's "Orange"; or, since AXIS_A_KEY/AXIS_B_KEY
+// were added, two axes of the very SAME process, e.g. its own tag-based
+// "Rim Color" <-> "Mudguard Color"), so any recipe drawing on both treats
+// them as one paired color choice instead of cross-multiplying every color
+// of one against every color of the other (see computeColorGroupsForProcess/
+// computeColorAxesForProcess in module_process.js). One row per paired color
+// — a 6-color link is 6 rows. Storage is directional (A/B columns) but
+// always read symmetrically: a process's links are every row where it
+// appears in EITHER column.
+// AXIS_A_KEY/AXIS_B_KEY are new columns, blank on every row saved before
+// they existed — a blank axis key means "that side's own (single) Warehouse
+// Pool-detected axis", the original/only meaning this sheet ever had, so
+// every pre-existing row keeps resolving exactly as before
+// (ensureProcessColorLinksAxisColumns lazily backfills the columns
+// themselves; no value migration is needed since blank IS the compatible
+// default). A non-blank axis key (e.g. "tag:mudguard color") names a
+// specific manually-tagged axis, and is what makes a same-process link
+// (PROCESS_A_ID === PROCESS_B_ID, two DIFFERENT axis keys) meaningful
+// instead of ambiguous/self-referential.
 // ─────────────────────────────────────────────────────────────────────────
 const PROCESS_COLOR_LINKS_COL = Object.freeze({
   PROCESS_A_ID: 1,  // Reference to Process Master.Process ID
   COLOR_A:      2,  // One of Process A's own colors (see getProcessColorGroups)
-  PROCESS_B_ID: 3,  // Reference to Process Master.Process ID (the linked process)
-  COLOR_B:      4   // The corresponding color on Process B
+  PROCESS_B_ID: 3,  // Reference to Process Master.Process ID (the linked process — may equal PROCESS_A_ID)
+  COLOR_B:      4,  // The corresponding color on Process B
+  AXIS_A_KEY:   5,  // Optional — which of Process A's axes COLOR_A belongs to; blank = its pool axis
+  AXIS_B_KEY:   6   // Optional — which of Process B's axes COLOR_B belongs to; blank = its pool axis
 });
 
 const PROCESS_COLOR_LINKS_COL_NAMES = Object.freeze({
   'processAId': PROCESS_COLOR_LINKS_COL.PROCESS_A_ID,
   'colorA': PROCESS_COLOR_LINKS_COL.COLOR_A,
   'processBId': PROCESS_COLOR_LINKS_COL.PROCESS_B_ID,
-  'colorB': PROCESS_COLOR_LINKS_COL.COLOR_B
+  'colorB': PROCESS_COLOR_LINKS_COL.COLOR_B,
+  'axisAKey': PROCESS_COLOR_LINKS_COL.AXIS_A_KEY,
+  'axisBKey': PROCESS_COLOR_LINKS_COL.AXIS_B_KEY
 });
 
 const PROCESS_COLOR_LINKS_SETTINGS = Object.freeze({
   HEADER_ROWS: 1,
   DATA_START_ROW: 2,
   MAX_ROWS_PER_QUERY: 5000
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// PROCESS COLOR OVERRIDES SHEET COLUMN MAPPINGS (1-based indexing)
+// One row per (Process, Color) the user has manually curated away from the
+// auto-computed default (see computeColorGroupsForProcess in
+// module_process.js, and the "Colors to Produce" / Warehouse Pool breakdown
+// dialog's Delete/Add Combination actions in module_process.js's
+// excludeWarehousePoolColors/includeWarehousePoolColor). ACTION is always
+// the CURRENT state for that pair — a later save for the same (Process,
+// Color) overwrites the row rather than appending a second one (see
+// _writeProcessColorOverrides), so this stays a small set, not a growing log.
+//   EXCLUDE: this color must never appear as a known/placeholder combination
+//     for this process, even though it would otherwise show up via Color
+//     Master widening or prior INCLUDE. Rejected server-side (see
+//     excludeWarehousePoolColors) if the color is actually configured on the
+//     process's own recipe, or has real Warehouse Pool production/
+//     consumption history — this table can only hide zero-data noise, never
+//     real configuration or real data.
+//   INCLUDE: force-adds this color as known for this process even though
+//     nothing else (recipe, pool history, Color Master) would produce it —
+//     e.g. a genuinely one-off combination the operator wants to pre-seed
+//     opening stock for. Also how a prior EXCLUDE gets undone (INCLUDE
+//     simply overwrites it for that color).
+// ─────────────────────────────────────────────────────────────────────────
+const PROCESS_COLOR_OVERRIDES_COL = Object.freeze({
+  PROCESS_ID: 1,
+  COLOR: 2,
+  ACTION: 3  // 'INCLUDE' | 'EXCLUDE'
 });
 
 // ─────────────────────────────────────────────────────────────────────────

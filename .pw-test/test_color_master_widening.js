@@ -208,7 +208,7 @@ vm.runInContext(`
 
 const {
   APP_CONFIG, saveProcess, getProcessColorGroups, getAllProcessColorGroups,
-  saveProduction, saveColor
+  saveProduction, saveColor, excludeWarehousePoolColors, includeWarehousePoolColor
 } = ctx;
 
 let failures = 0;
@@ -287,11 +287,15 @@ let packingId;
 // ─────────────────────────────────────────────────────────────────────────
 console.log('\n=== Test 3: saveProduction now accepts a Color Master color the recipe never tagged ===');
 {
+  // Completed (not Pending) — recalculateWarehousePool only credits a real
+  // Warehouse Pool bucket for a Completed lot, and Test 5 below needs
+  // "Green" to have real bucket history to prove excludeWarehousePoolColors
+  // protects it.
   const goodColor = saveProduction({
     processId: framePaintingId,
     qty: 5,
     assignedTo: 'Test Contractor',
-    status: 'Pending',
+    status: 'Completed',
     colorBreakdown: JSON.stringify([{ color: 'Green', qty: 5 }]),
     componentsConsumed: JSON.stringify([
       { itemName: 'Brush', sourceType: 'ITEM', qty: 5 }
@@ -313,18 +317,100 @@ console.log('\n=== Test 3: saveProduction now accepts a Color Master color the r
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-console.log('\n=== Test 4: bulk getAllProcessColorGroups widens consistently with the single-process endpoint ===');
+// 2026-07-22 (later same day): getAllProcessColorGroups no longer widens to
+// the full Color Master the way getProcessColorGroups (singular, the
+// Production checklist's own call path) deliberately still does — the
+// Warehouse Pool breakdown dialog's placeholder rows are fed by this bulk
+// variant, and unioning in every Color Master entry there just produced one
+// zero-qty placeholder row per unused color per process (real clutter, not
+// real flexibility — see feature_axis_color_pairings_and_composite_rename_fix
+// / the Phase 3 Warehouse Pool combinations follow-up). `colors` here is now
+// just recipe/pool-detected colors plus anything explicitly INCLUDEd via
+// includeWarehousePoolColor (the "+ Add Combination" escape hatch, still
+// fully independent of this narrowing — see Test 6); `removable` is
+// therefore now just the manually-INCLUDEd subset, since baseColors itself
+// is never offered for removal (see excludeWarehousePoolColors).
+console.log('\n=== Test 4: bulk getAllProcessColorGroups stays recipe/pool-scoped, UNLIKE the single-process (checklist) endpoint ===');
 {
   const bulkRes = getAllProcessColorGroups();
   assert(bulkRes.success, 'getAllProcessColorGroups succeeds');
-  const expected = ['Blue', 'Green', 'Orange', 'Red', 'Yellow'];
+  const expectedColors = ['Blue', 'Red']; // just the 2 recipe-tagged colors - no Color Master widening
   assert(
-    JSON.stringify(bulkRes.data[framePaintingId]) === JSON.stringify(expected),
-    'bulk variant widens Frame Painting the same way the single endpoint does (got ' + JSON.stringify(bulkRes.data[framePaintingId]) + ')'
+    JSON.stringify(bulkRes.data[framePaintingId].colors.slice().sort()) === JSON.stringify(expectedColors),
+    'bulk variant stays scoped to recipe-tagged colors only, no Color Master union (got ' + JSON.stringify(bulkRes.data[framePaintingId]) + ')'
   );
   assert(
-    Array.isArray(bulkRes.data[packingId]) && bulkRes.data[packingId].length === 0,
+    bulkRes.data[framePaintingId].removable.length === 0,
+    'removable is empty - nothing beyond the protected recipe-tagged colors exists yet (got ' + JSON.stringify(bulkRes.data[framePaintingId].removable) + ')'
+  );
+  assert(
+    Array.isArray(bulkRes.data[packingId].colors) && bulkRes.data[packingId].colors.length === 0,
     'bulk variant still reports zero for the no-color-dimension process (got ' + JSON.stringify(bulkRes.data[packingId]) + ')'
+  );
+
+  // The single-process (checklist) endpoint is a completely separate call
+  // path and must be COMPLETELY UNAFFECTED by the above - still the full
+  // widened 5-color Color Master union, exactly as Test 1 already proved.
+  const singleRes = getProcessColorGroups(framePaintingId);
+  const expectedWidened = ['Blue', 'Green', 'Orange', 'Red', 'Yellow'];
+  assert(
+    JSON.stringify(singleRes.data) === JSON.stringify(expectedWidened),
+    'getProcessColorGroups (singular) still widens to the full Color Master, unaffected by the bulk variant\'s narrowing (got ' + JSON.stringify(singleRes.data) + ')'
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+console.log('\n=== Test 5: excludeWarehousePoolColors protects recipe-configured and real-history colors ===');
+{
+  const blockConfigured = excludeWarehousePoolColors(framePaintingId, ['Red']);
+  assert(blockConfigured.success === false, '"Red" (recipe-configured) is rejected (got: ' + blockConfigured.message + ')');
+
+  const blockHistory = excludeWarehousePoolColors(framePaintingId, ['Green']);
+  assert(blockHistory.success === false, '"Green" (has real production history from Test 3) is rejected (got: ' + blockHistory.message + ')');
+
+  const okRemove = excludeWarehousePoolColors(framePaintingId, ['Orange', 'Yellow']);
+  assert(okRemove.success, 'removing pure Color-Master noise ("Orange", "Yellow") succeeds: ' + okRemove.message);
+
+  const afterRemove = getProcessColorGroups(framePaintingId);
+  assert(
+    !afterRemove.data.includes('Orange') && !afterRemove.data.includes('Yellow'),
+    'checklist no longer offers the removed colors (got ' + JSON.stringify(afterRemove.data) + ')'
+  );
+  assert(
+    afterRemove.data.includes('Red') && afterRemove.data.includes('Green') && afterRemove.data.includes('Blue'),
+    'every other color is untouched (got ' + JSON.stringify(afterRemove.data) + ')'
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+console.log('\n=== Test 6: includeWarehousePoolColor adds a custom combo and undoes a prior exclusion ===');
+{
+  const addCustom = includeWarehousePoolColor(packingId, 'Midnight Purple');
+  assert(addCustom.success, 'force-adding a custom color to a plain (no-color-dimension) process succeeds: ' + addCustom.message);
+
+  const packingColors = getProcessColorGroups(packingId);
+  assert(
+    packingColors.data.length === 1 && packingColors.data[0] === 'Midnight Purple',
+    'the plain process now offers exactly its one force-included color (got ' + JSON.stringify(packingColors.data) + ')'
+  );
+
+  const undoExclude = includeWarehousePoolColor(framePaintingId, 'Orange');
+  assert(undoExclude.success, 're-including a previously-excluded color succeeds: ' + undoExclude.message);
+  const afterUndo = getProcessColorGroups(framePaintingId);
+  assert(afterUndo.data.includes('Orange'), '"Orange" is back on the checklist after re-including it (got ' + JSON.stringify(afterUndo.data) + ')');
+
+  // The narrower getAllProcessColorGroups (Test 4) must still pick up both
+  // manual includes above ("Midnight Purple" on the plain packing process,
+  // "Orange" re-included on Frame Painting) - the narrowing only drops the
+  // AUTOMATIC Color Master union, never the explicit manual escape hatch.
+  const bulkAfterIncludes = getAllProcessColorGroups();
+  assert(
+    (bulkAfterIncludes.data[packingId].colors || []).includes('Midnight Purple'),
+    'bulk variant still reflects a manually-INCLUDEd color on an otherwise-plain process (got ' + JSON.stringify(bulkAfterIncludes.data[packingId]) + ')'
+  );
+  assert(
+    (bulkAfterIncludes.data[framePaintingId].colors || []).includes('Orange'),
+    'bulk variant still reflects a manually re-INCLUDEd color (got ' + JSON.stringify(bulkAfterIncludes.data[framePaintingId]) + ')'
   );
 }
 

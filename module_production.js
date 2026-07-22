@@ -579,7 +579,14 @@ function saveProduction(formData) {
     const _colorComponents = (getProcessComponentsData(processId).data || []);
     const _colorPoolRows = typeof getWarehousePoolData === 'function' ? (getWarehousePoolData().data || []) : [];
     const _colorLinks = _getAllProcessColorLinks();
-    const availableColorGroups = computeColorGroupsForProcess(_colorComponents, _colorPoolRows, _colorLinks);
+    // Process Color Overrides (see excludeWarehousePoolColors/
+    // includeWarehousePoolColor) must apply here too, not just to the
+    // client's checklist — otherwise a color the operator just excluded via
+    // the Warehouse Pool dialog would still validate as accepted on a stale
+    // form that had it checked before the exclusion, and a color they just
+    // force-INCLUDEd wouldn't validate as accepted at all.
+    const _colorOverrides = (typeof _getAllProcessColorOverrides === 'function' ? _getAllProcessColorOverrides() : {})[String(processId || '').trim().toLowerCase()];
+    const availableColorGroups = computeColorGroupsForProcess(processId, _colorComponents, _colorPoolRows, _colorLinks, undefined, _colorOverrides);
 
     let qty;
     let color = '';
@@ -676,7 +683,7 @@ function saveProduction(formData) {
       let primaryAxisColorsLower = null;
       let primaryAxisKeyLower = null;
       if (primaryColorAxis) {
-        const axes = computeColorAxesForProcess(_colorComponents, _colorPoolRows, _colorLinks);
+        const axes = computeColorAxesForProcess(processId, _colorComponents, _colorPoolRows, _colorLinks);
         const primaryAxis = axes.find(a => a.label.toLowerCase() === primaryColorAxis.toLowerCase());
         if (primaryAxis) {
           primaryAxisColorsLower = new Set(primaryAxis.colors.map(c => c.toLowerCase()));

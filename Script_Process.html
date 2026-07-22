@@ -1433,7 +1433,12 @@
           try {
             const res = await Api.call('getProcessColorAxes', processId);
             if (res.success && res.data && Array.isArray(res.data.axes)) {
-              this._poolAxisLabels = res.data.axes.filter(a => a.source === 'pool').map(a => a.label);
+              // 'pool' and 'merged' axes both need fetching (neither is
+              // manually typed anywhere in this form, unlike a 'tag' axis's
+              // label, already covered by collectColorAxisLabels below) —
+              // exclude by name ('tag') rather than allowlist by name, so a
+              // future axis source doesn't silently need this touched again.
+              this._poolAxisLabels = res.data.axes.filter(a => a.source !== 'tag').map(a => a.label);
             }
           } catch (err) {
             // Non-fatal — the picker just falls back to whatever's typed on-form.
@@ -1733,19 +1738,29 @@
         if (hint) hint.style.display = hasProcessId ? 'none' : '';
       },
 
+      // Sentinel process-picker value meaning "pair two of THIS process's own
+      // axes" instead of linking to a different process — see
+      // PROCESS_COLOR_LINKS_COL.AXIS_A_KEY/AXIS_B_KEY (module_process.js) and
+      // the same-process self-guard relaxation in _saveProcessColorLinksForProcess.
+      COLOR_LINK_SELF_VALUE: '__self__',
+
       // Adds a new "Linked Process" card. otherProcessId/pairs pre-fill it
       // when loading an existing process's links; called with no args to add
-      // a blank card for the operator to configure.
-      addColorLinkCard(otherProcessId = '', pairs = []) {
+      // a blank card for the operator to configure. myAxisKey/theirAxisKey
+      // pre-fill the same-process axis pickers when otherProcessId ===
+      // myProcessId (a saved same-process link being restored).
+      addColorLinkCard(otherProcessId = '', pairs = [], myAxisKey = '', theirAxisKey = '') {
         const container = document.getElementById('processColorLinksContainer');
         const myProcessId = document.getElementById('processFormProcessId')?.value || '';
         if (!container || !myProcessId) return;
 
+        const isSelf = !!otherProcessId && otherProcessId === myProcessId;
         const cardId = 'proc_colorlink_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-        const processOptionsHtml = (App.State.globalProcesses || [])
-          .filter(p => p.processId !== myProcessId)
-          .map(p => `<option value="${escapeHtml(p.processId)}" ${p.processId === otherProcessId ? 'selected' : ''}>${escapeHtml(p.processName)}</option>`)
-          .join('');
+        const processOptionsHtml = `<option value="${this.COLOR_LINK_SELF_VALUE}" ${isSelf ? 'selected' : ''}>— This process (pair two of its own axes) —</option>` +
+          (App.State.globalProcesses || [])
+            .filter(p => p.processId !== myProcessId)
+            .map(p => `<option value="${escapeHtml(p.processId)}" ${!isSelf && p.processId === otherProcessId ? 'selected' : ''}>${escapeHtml(p.processName)}</option>`)
+            .join('');
 
         const html = `
       <div class="card border-secondary-subtle shadow-sm mb-3 proc-colorlink-card" id="${cardId}">
@@ -1758,6 +1773,16 @@
           <button type="button" class="btn btn-outline-danger btn-sm ms-auto" onclick="App.Process.removeColorLinkCard('${cardId}')">Remove Link</button>
         </div>
         <div class="card-body">
+          <div class="row g-2 mb-2 proc-colorlink-self-axes-wrapper" style="display:none;">
+            <div class="col-md-6">
+              <label class="small fw-bold text-secondary mb-1">My Axis</label>
+              <select class="form-select form-select-sm proc-colorlink-my-axis"><option value="">Choose an axis...</option></select>
+            </div>
+            <div class="col-md-6">
+              <label class="small fw-bold text-secondary mb-1">Pairs With This Other Axis</label>
+              <select class="form-select form-select-sm proc-colorlink-their-axis"><option value="">Choose an axis...</option></select>
+            </div>
+          </div>
           <p class="text-muted small mb-2 proc-colorlink-hint">Select a process above to map colors.</p>
           <div class="table-responsive proc-colorlink-mapping-wrapper" style="display:none;">
             <table class="table table-bordered bg-white shadow-sm mb-0">
@@ -1777,7 +1802,12 @@
         const card = document.getElementById(cardId);
         this.initColorLinkSelect2(card, myProcessId);
 
-        if (otherProcessId) this.populateColorLinkMapping(card, myProcessId, otherProcessId, pairs);
+        if (isSelf) {
+          card.querySelector('.proc-colorlink-self-axes-wrapper').style.display = '';
+          this.populateSelfAxisPickers(card, myProcessId, myAxisKey, theirAxisKey, pairs);
+        } else if (otherProcessId) {
+          this.populateColorLinkMapping(card, myProcessId, otherProcessId, pairs);
+        }
       },
 
       // Searchable Select2 for a Linked Process card's process picker.
@@ -1795,9 +1825,36 @@
           });
         }
         selectEl.addEventListener('change', () => {
-          const otherProcessId = selectEl.value;
-          if (otherProcessId) this.populateColorLinkMapping(card, myProcessId, otherProcessId, []);
+          const value = selectEl.value;
+          const selfWrapper = card.querySelector('.proc-colorlink-self-axes-wrapper');
+          if (value === this.COLOR_LINK_SELF_VALUE) {
+            if (selfWrapper) selfWrapper.style.display = '';
+            this.populateSelfAxisPickers(card, myProcessId, '', '', []);
+          } else {
+            if (selfWrapper) selfWrapper.style.display = 'none';
+            if (value) this.populateColorLinkMapping(card, myProcessId, value, []);
+          }
         });
+      },
+
+      // Renders the shared "This Process's Color -> Maps To" mapping table
+      // body from two already-resolved color lists — used by both the
+      // cross-process flow (flat getProcessColorGroups lists) and the
+      // same-process axis-pairing flow (one real axis's own colors on each
+      // side, see populateSelfAxisMapping) so the two only differ in WHERE
+      // myColors/theirColors come from, not in how the table is built.
+      _renderColorLinkMappingRows(tbody, myColors, theirColors, existingPairs) {
+        const existingByMyColor = {};
+        (existingPairs || []).forEach(p => { existingByMyColor[String(p.myColor || '').toLowerCase()] = p.theirColor; });
+
+        const theirOptionsHtml = (selected) => '<option value="">— Unmapped —</option>' +
+          theirColors.map(c => `<option value="${escapeHtml(c)}" ${App.Utils.sameText(c, selected || '') ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('');
+
+        tbody.innerHTML = myColors.map(myColor => `
+            <tr>
+              <td class="proc-colorlink-my-color" data-color="${escapeHtml(myColor)}">${escapeHtml(myColor)}</td>
+              <td><select class="form-select form-select-sm proc-colorlink-their-color">${theirOptionsHtml(existingByMyColor[myColor.toLowerCase()])}</select></td>
+            </tr>`).join('');
       },
 
       // Fetches both processes' color lists (via getProcessColorGroups, same
@@ -1833,23 +1890,96 @@
             return;
           }
 
-          const existingByMyColor = {};
-          (existingPairs || []).forEach(p => { existingByMyColor[String(p.myColor || '').toLowerCase()] = p.theirColor; });
-
-          const theirOptionsHtml = (selected) => '<option value="">— Unmapped —</option>' +
-            theirColors.map(c => `<option value="${escapeHtml(c)}" ${App.Utils.sameText(c, selected || '') ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('');
-
-          tbody.innerHTML = myColors.map(myColor => `
-            <tr>
-              <td class="proc-colorlink-my-color" data-color="${escapeHtml(myColor)}">${escapeHtml(myColor)}</td>
-              <td><select class="form-select form-select-sm proc-colorlink-their-color">${theirOptionsHtml(existingByMyColor[myColor.toLowerCase()])}</select></td>
-            </tr>`).join('');
-
+          this._renderColorLinkMappingRows(tbody, myColors, theirColors, existingPairs);
           if (hint) hint.style.display = 'none';
           if (wrapper) wrapper.style.display = '';
         } catch (err) {
           if (hint) { hint.style.display = ''; hint.textContent = 'Failed to load colors: ' + (err.message || err); }
         }
+      },
+
+      // Same-process counterpart of initColorLinkSelect2's cross-process
+      // flow: fetches THIS process's own axis breakdown (getProcessColorAxes
+      // — the same axis-scoped data the Production checklist and Primary
+      // Axis picker use) ONCE, populates both "My Axis"/"Pairs With" pickers
+      // from it, and wires their change handlers to render the color mapping
+      // table the moment two DIFFERENT axes are chosen on each side. Using
+      // axis-scoped color lists here (not the flat getProcessColorGroups
+      // union) is what lets two axes sharing a literal color name (e.g. two
+      // independent "Purple"s) be paired unambiguously.
+      async populateSelfAxisPickers(card, myProcessId, presetMyAxisKey, presetTheirAxisKey, existingPairs) {
+        const myAxisSelect = card.querySelector('.proc-colorlink-my-axis');
+        const theirAxisSelect = card.querySelector('.proc-colorlink-their-axis');
+        const hint = card.querySelector('.proc-colorlink-hint');
+        const wrapper = card.querySelector('.proc-colorlink-mapping-wrapper');
+        if (!myAxisSelect || !theirAxisSelect) return;
+
+        if (hint) { hint.style.display = ''; hint.textContent = 'Loading this process\'s axes…'; }
+        if (wrapper) wrapper.style.display = 'none';
+
+        let axes = [];
+        try {
+          const res = await Api.call('getProcessColorAxes', myProcessId);
+          axes = (res?.success && Array.isArray(res.data?.axes)) ? res.data.axes : [];
+        } catch (err) {
+          if (hint) { hint.style.display = ''; hint.textContent = 'Failed to load this process\'s axes: ' + (err.message || err); }
+          return;
+        }
+
+        if (axes.length < 2) {
+          if (hint) {
+            hint.style.display = '';
+            hint.textContent = 'This process needs at least 2 independent color axes (Color Sub-Groups with different Group labels, or 2+ multi-color pool inputs) before its own axes can be paired.';
+          }
+          return;
+        }
+
+        const optionsHtml = (selected) => '<option value="">Choose an axis...</option>' +
+          axes.map(a => `<option value="${escapeHtml(a.key)}" ${a.key === selected ? 'selected' : ''}>${escapeHtml(a.label)}</option>`).join('');
+        myAxisSelect.innerHTML = optionsHtml(presetMyAxisKey);
+        theirAxisSelect.innerHTML = optionsHtml(presetTheirAxisKey);
+
+        if (hint) { hint.style.display = ''; hint.textContent = 'Choose which two of this process\'s own axes to pair.'; }
+
+        const tryRenderMapping = () => this.populateSelfAxisMapping(card, axes, myAxisSelect.value, theirAxisSelect.value, existingPairs);
+        myAxisSelect.onchange = tryRenderMapping;
+        theirAxisSelect.onchange = tryRenderMapping;
+
+        if (presetMyAxisKey && presetTheirAxisKey) tryRenderMapping();
+      },
+
+      // Renders the mapping table for a same-process axis pair once both
+      // sides are chosen — reuses _renderColorLinkMappingRows with each
+      // axis's own `colors` (from the same getProcessColorAxes fetch
+      // populateSelfAxisPickers already made, not re-fetched).
+      populateSelfAxisMapping(card, axes, myAxisKey, theirAxisKey, existingPairs) {
+        const hint = card.querySelector('.proc-colorlink-hint');
+        const wrapper = card.querySelector('.proc-colorlink-mapping-wrapper');
+        const tbody = card.querySelector('.proc-colorlink-mapping-body');
+        if (!tbody) return;
+
+        tbody.innerHTML = '';
+        if (wrapper) wrapper.style.display = 'none';
+
+        if (!myAxisKey || !theirAxisKey) {
+          if (hint) { hint.style.display = ''; hint.textContent = 'Choose which two of this process\'s own axes to pair.'; }
+          return;
+        }
+        if (myAxisKey === theirAxisKey) {
+          if (hint) { hint.style.display = ''; hint.textContent = 'Pick two DIFFERENT axes — an axis can\'t be paired with itself.'; }
+          return;
+        }
+
+        const myAxis = axes.find(a => a.key === myAxisKey);
+        const theirAxis = axes.find(a => a.key === theirAxisKey);
+        if (!myAxis || !theirAxis || myAxis.colors.length === 0 || theirAxis.colors.length === 0) {
+          if (hint) { hint.style.display = ''; hint.textContent = 'One of the chosen axes has no known colors yet.'; }
+          return;
+        }
+
+        this._renderColorLinkMappingRows(tbody, myAxis.colors, theirAxis.colors, existingPairs);
+        if (hint) hint.style.display = 'none';
+        if (wrapper) wrapper.style.display = '';
       },
 
       removeColorLinkCard(cardId) {
@@ -1864,14 +1994,21 @@
       },
 
       // Groups a process's fetched links (flat array from getProcessColorLinksData)
-      // by otherProcessId and renders one card per linked process.
+      // into one card per distinct (otherProcessId, myAxisKey, theirAxisKey)
+      // combination — a cross-process link (both axis keys blank) still
+      // groups by otherProcessId alone exactly as before axis keys existed,
+      // but a process can now have MULTIPLE same-process links (pairing
+      // different pairs of its own axes), each of which needs its own card
+      // since they map different axis pairs' colors.
       renderColorLinksData(links) {
         this.clearColorLinks();
-        const byOtherProcess = {};
+        const groups = new Map();
         (links || []).forEach(l => {
-          (byOtherProcess[l.otherProcessId] = byOtherProcess[l.otherProcessId] || []).push(l);
+          const groupKey = l.otherProcessId + '|' + (l.myAxisKey || '') + '|' + (l.theirAxisKey || '');
+          if (!groups.has(groupKey)) groups.set(groupKey, { otherProcessId: l.otherProcessId, myAxisKey: l.myAxisKey || '', theirAxisKey: l.theirAxisKey || '', pairs: [] });
+          groups.get(groupKey).pairs.push(l);
         });
-        Object.keys(byOtherProcess).forEach(otherProcessId => this.addColorLinkCard(otherProcessId, byOtherProcess[otherProcessId]));
+        groups.forEach(g => this.addColorLinkCard(g.otherProcessId, g.pairs, g.myAxisKey, g.theirAxisKey));
       },
 
       // Destroys Select2 instances on every Linked Process card and empties the container.
@@ -1889,17 +2026,28 @@
       },
 
       // Walks every Linked Process card's mapping table into the flat
-      // {otherProcessId, myColor, theirColor} shape saveProcess expects.
-      // Rows left "— Unmapped —" are skipped.
+      // {otherProcessId, myColor, theirColor, myAxisKey, theirAxisKey} shape
+      // saveProcess expects. Rows left "— Unmapped —" are skipped. A card in
+      // "This process" mode resolves otherProcessId to THIS process's own ID
+      // and carries its two chosen axis keys on every row — see
+      // _saveProcessColorLinksForProcess's same-process self-guard, which
+      // requires both to be present and different.
       serializeColorLinks() {
+        const myProcessId = document.getElementById('processFormProcessId')?.value || '';
         const links = [];
         document.querySelectorAll('#processColorLinksContainer .proc-colorlink-card').forEach(card => {
-          const otherProcessId = card.querySelector('.proc-colorlink-process-select')?.value || '';
+          const rawValue = card.querySelector('.proc-colorlink-process-select')?.value || '';
+          if (!rawValue) return;
+          const isSelf = rawValue === this.COLOR_LINK_SELF_VALUE;
+          const otherProcessId = isSelf ? myProcessId : rawValue;
           if (!otherProcessId) return;
+          const myAxisKey = isSelf ? (card.querySelector('.proc-colorlink-my-axis')?.value || '') : '';
+          const theirAxisKey = isSelf ? (card.querySelector('.proc-colorlink-their-axis')?.value || '') : '';
+          if (isSelf && (!myAxisKey || !theirAxisKey || myAxisKey === theirAxisKey)) return;
           card.querySelectorAll('.proc-colorlink-mapping-body tr').forEach(row => {
             const myColor = row.querySelector('.proc-colorlink-my-color')?.dataset.color || '';
             const theirColor = row.querySelector('.proc-colorlink-their-color')?.value || '';
-            if (myColor && theirColor) links.push({ otherProcessId, myColor, theirColor });
+            if (myColor && theirColor) links.push({ otherProcessId, myColor, theirColor, myAxisKey, theirAxisKey });
           });
         });
         return links;

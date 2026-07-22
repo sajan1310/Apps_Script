@@ -5553,12 +5553,20 @@
       </div>
       <div class="modal-body bg-light">
         <div class="alert alert-info py-2" role="alert" style="font-size: 13px;">
-          <i class="bi bi-info-circle-fill me-2"></i>Every known Color / Product-Tag combination for this process. Click Available Qty to correct it — corrections are recorded in the audit log.
+          <i class="bi bi-info-circle-fill me-2"></i>Every known Color / Product-Tag combination for this process. Click Available Qty to correct it — corrections are recorded in the audit log. Combinations with real production/consumption history, or configured on the recipe, are protected and can't be removed here.
+        </div>
+        <input type="text" id="searchWarehousePoolCombo" class="form-control form-control-sm mb-2" placeholder="Search Color or Product Tag..." autocomplete="off" onkeyup="App.Stock.filterWarehousePoolCombos(this.value)">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <input type="text" id="warehousePoolAddComboInput" class="form-control form-control-sm" style="max-width:220px;" list="warehousePoolColorMasterList" placeholder="Color name...">
+          <datalist id="warehousePoolColorMasterList"></datalist>
+          <button type="button" class="btn btn-outline-success btn-sm" onclick="App.Stock.addWarehousePoolCombination()"><i class="bi bi-plus-lg"></i> Add Combination</button>
+          <button type="button" id="btnBulkDeleteWarehousePoolCombos" class="btn btn-outline-danger btn-sm ms-auto" style="display:none;" onclick="App.Stock.bulkDeleteWarehousePoolCombinations()"><i class="bi bi-trash"></i> Delete Selected</button>
         </div>
         <div class="table-responsive">
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
             <thead class="table-dark">
               <tr>
+                <th class="text-center" style="width: 4%;"><input type="checkbox" id="selectAllWarehousePoolCombos" class="form-check-input" onclick="App.Stock.toggleSelectAllWarehousePoolCombos(this)"></th>
                 <th>Product Tag</th>
                 <th class="text-center">Produced</th>
                 <th class="text-center">Consumed</th>
@@ -17970,7 +17978,14 @@
       // matches).
       computeLeafRowsForProcess(process, term) {
         const buckets = (App.State.globalWarehousePool || []).filter(r => r.processId === process.processId);
-        const knownColors = (App.State.warehousePoolColorsByProcess || {})[process.processId] || [];
+        // getAllProcessColorGroups (see module_process.js) returns
+        // { colors, removable } per process, not a flat array — `removable`
+        // is the subset of `colors` NOT configured on the process's own
+        // recipe, i.e. safe to offer a delete action for (see
+        // excludeWarehousePoolColors's matching server-side guard).
+        const colorInfo = (App.State.warehousePoolColorsByProcess || {})[process.processId] || {};
+        const knownColors = colorInfo.colors || [];
+        const removableLower = new Set((colorInfo.removable || []).map(c => String(c || '').trim().toLowerCase()));
         // Case-insensitive: knownColors is derived server-side from recipe/
         // pool color strings that may have been typed with different casing
         // than an existing bucket's own `color` (e.g. "Red" bucket vs a
@@ -17980,7 +17995,7 @@
         const existingColors = new Set(buckets.map(r => String(r.color || '').trim().toLowerCase()));
         const missingColorRows = knownColors
           .filter(c => !existingColors.has(String(c || '').trim().toLowerCase()))
-          .map(c => this._placeholderBucket(process, c));
+          .map(c => this._placeholderBucket(process, c, removableLower.has(String(c || '').trim().toLowerCase())));
         const rows = buckets.concat(missingColorRows)
           .sort((a, b) => a.color.localeCompare(b.color) || a.productTag.localeCompare(b.productTag));
         if (!rows.length) rows.push(this._placeholderBucket(process));
@@ -17991,7 +18006,7 @@
         return rows.filter(r => App.Utils.matchesKeywords([r.outputItemName, r.productTag, r.color].join(' '), term));
       },
 
-      _placeholderBucket(process, color) {
+      _placeholderBucket(process, color, removable) {
         return {
           outputItemName: process.outputItemName || '',
           processId: process.processId,
@@ -18000,7 +18015,11 @@
           producedQty: 0,
           consumedQty: 0,
           availableQty: 0,
-          isPlaceholder: true
+          isPlaceholder: true,
+          // A colorless fallback row (this process has nothing at all — see
+          // computeLeafRowsForProcess's `if (!rows.length)`) has nothing
+          // meaningful to remove, regardless of what the caller passed.
+          removable: !!removable && !!color
         };
       },
 
@@ -18142,13 +18161,20 @@
       // renderWarehousePoolTable() summed into the Total columns), each with
       // the same click-to-edit Available Qty cell the old flat table had.
       // Always computed with no search term so the full breakdown is visible
-      // even if the main table is currently filtered.
+      // even if the main table is currently filtered. Tracks its own
+      // selection state (_poolComboProcessId/_poolComboSelected) rather than
+      // reusing App.State.selectedWarehousePool — that array selects whole
+      // Processes on the OUTER table, a completely different granularity
+      // from selecting individual Color combinations inside one Process's
+      // breakdown here.
       openWarehousePoolProcessModal(encProcessId) {
         const processId = decodeURIComponent(encProcessId || '');
         const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
         if (!process) return;
 
-        const leafRows = this.computeLeafRowsForProcess(process, '');
+        this._poolComboProcessId = processId;
+        this._poolComboSelected = new Set();
+        this._poolComboSearchTerm = '';
 
         const titleEl = document.getElementById('warehousePoolProcessModalTitle');
         if (titleEl) {
@@ -18158,14 +18184,48 @@
           titleEl.innerHTML = `<i class="bi bi-boxes me-2"></i>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}`;
         }
 
+        const searchInput = document.getElementById('searchWarehousePoolCombo');
+        if (searchInput) searchInput.value = '';
+        const addInput = document.getElementById('warehousePoolAddComboInput');
+        if (addInput) addInput.value = '';
+        this._populateWarehousePoolComboDatalist();
+
+        this.renderWarehousePoolProcessModalBody();
+        safeModalShow('warehousePoolProcessModal');
+      },
+
+      // Filters the breakdown dialog's own rows by Color or Product Tag —
+      // independent of, and narrower than, the outer table's own search
+      // (App.Stock.filterWarehousePool): this dialog is already scoped to
+      // one Process, so there's no process-name-match "show everything"
+      // escape hatch here the way computeLeafRowsForProcess's own `term`
+      // param has for the outer table — a search inside an already-open
+      // breakdown should always narrow, never widen back out.
+      filterWarehousePoolCombos(term) {
+        this._poolComboSearchTerm = String(term || '').trim();
+        this.renderWarehousePoolProcessModalBody();
+      },
+
+      // Re-renders just the breakdown table body — shared by the initial
+      // open and every action that changes the combination list (delete/
+      // bulk delete/add/search) so the dialog refreshes in place instead of
+      // closing, matching editPoolStockCell's existing in-place pattern.
+      renderWarehousePoolProcessModalBody() {
+        const process = (App.State.globalProcesses || []).find(p => p.processId === this._poolComboProcessId);
         const body = document.getElementById('warehousePoolProcessModalBody');
-        if (body) {
-          body.innerHTML = leafRows.length
-            ? leafRows.map(r => `<tr>${this.renderWarehousePoolLeafCells(process, r)}</tr>`).join('')
-            : '<tr><td colspan="6" class="text-center text-muted p-4">No Warehouse Pool buckets found for this process.</td></tr>';
+        if (!process || !body) return;
+
+        let leafRows = this.computeLeafRowsForProcess(process, '');
+        const term = this._poolComboSearchTerm || '';
+        if (term) {
+          leafRows = leafRows.filter(r => App.Utils.matchesKeywords([r.productTag, r.color].join(' '), term));
         }
 
-        safeModalShow('warehousePoolProcessModal');
+        body.innerHTML = leafRows.length
+          ? leafRows.map(r => `<tr>${this.renderWarehousePoolLeafCells(process, r)}</tr>`).join('')
+          : `<tr><td colspan="7" class="text-center text-muted p-4">${term ? 'No combinations match your search.' : 'No Warehouse Pool buckets found for this process.'}</td></tr>`;
+
+        this.updatePoolComboBulkButton();
       },
 
       renderWarehousePoolLeafCells(process, r) {
@@ -18183,7 +18243,30 @@
               onclick="App.Stock.editPoolStockCell(this, '${encName}', '${encProcessId}', '${encTag}', '${encColor}')">${App.Production.formatQty(r.availableQty)}</span>`
           : '<span class="text-muted">—</span>';
 
+        // Only a zero-data PLACEHOLDER combination that isn't part of this
+        // process's own recipe configuration can ever be removed (see
+        // excludeWarehousePoolColors's server-side guard, mirrored here so
+        // the button/checkbox never even offers an action the server would
+        // just reject) — a real bucket (has actual Produced/Consumed
+        // history) or a recipe-configured color is protected.
+        const canRemove = !!r.isPlaceholder && !!r.removable && !!r.color;
+        const checkboxCell = canRemove
+          ? `<input type="checkbox" class="form-check-input warehousepool-combo-chk" data-color="${escapeHtml(r.color)}"
+              ${this._poolComboSelected && this._poolComboSelected.has(r.color) ? 'checked' : ''}
+              onchange="App.Stock.onPoolComboCheckChange()">`
+          : `<input type="checkbox" class="form-check-input" disabled title="${r.isPlaceholder ? 'Not removable — not a real combination for this process, or a recipe-configured color' : 'Has real production/consumption history — can\'t be removed'}">`;
+        const deleteBtn = canRemove
+          ? `<button type="button" class="btn btn-outline-danger btn-sm" title="Remove this combination"
+                  onclick="App.Stock.deleteWarehousePoolCombination('${encColor}')">
+              <i class="bi bi-x-lg"></i>
+            </button>`
+          : `<button type="button" class="btn btn-outline-secondary btn-sm" disabled
+                  title="${r.isPlaceholder ? 'Configured on this process\'s recipe — can\'t be removed here' : 'Has real production/consumption history — can\'t be removed'}">
+              <i class="bi bi-x-lg"></i>
+            </button>`;
+
         return `
+        <td class="text-center">${checkboxCell}</td>
         <td>${r.productTag ? `<span class="badge bg-dark">${escapeHtml(r.productTag)}</span>` : '<span class="text-muted">—</span>'}</td>
         <td class="text-center" data-pool-field="produced">${App.Production.formatQty(r.producedQty)}</td>
         <td class="text-center">${App.Production.formatQty(r.consumedQty)}</td>
@@ -18194,7 +18277,114 @@
                   onclick="App.Stock.openPoolLedgerModal('${encName}', '${encTag}', '${encColor}')">
             <i class="bi bi-journal-text"></i>
           </button>
+          ${deleteBtn}
         </td>`;
+      },
+
+      toggleSelectAllWarehousePoolCombos(masterChk) {
+        $$('#warehousePoolProcessModalBody .warehousepool-combo-chk').forEach(chk => {
+          chk.checked = masterChk.checked;
+          if (masterChk.checked) this._poolComboSelected.add(chk.dataset.color);
+          else this._poolComboSelected.delete(chk.dataset.color);
+        });
+        this.updatePoolComboBulkButton();
+      },
+
+      onPoolComboCheckChange() {
+        this._poolComboSelected = new Set(
+          $$('#warehousePoolProcessModalBody .warehousepool-combo-chk:checked').map(chk => chk.dataset.color)
+        );
+        const selectAllChk = document.getElementById('selectAllWarehousePoolCombos');
+        if (selectAllChk) {
+          const all = $$('#warehousePoolProcessModalBody .warehousepool-combo-chk');
+          selectAllChk.checked = all.length > 0 && all.every(chk => chk.checked);
+        }
+        this.updatePoolComboBulkButton();
+      },
+
+      updatePoolComboBulkButton() {
+        const btn = document.getElementById('btnBulkDeleteWarehousePoolCombos');
+        if (!btn) return;
+        const count = this._poolComboSelected ? this._poolComboSelected.size : 0;
+        btn.style.display = count > 0 ? '' : 'none';
+        btn.innerHTML = `<i class="bi bi-trash"></i> Delete Selected (${count})`;
+      },
+
+      // Single-row delete (the per-row "X" button) — thin wrapper around the
+      // same server call bulkDeleteWarehousePoolCombinations uses, so both
+      // paths share one confirm/refresh/toast flow.
+      deleteWarehousePoolCombination(encColor) {
+        const color = decodeURIComponent(encColor || '');
+        if (!color) return;
+        this._runWarehousePoolCombinationDelete([color]);
+      },
+
+      bulkDeleteWarehousePoolCombinations() {
+        const colors = Array.from(this._poolComboSelected || []);
+        if (colors.length === 0) return;
+        this._runWarehousePoolCombinationDelete(colors);
+      },
+
+      _runWarehousePoolCombinationDelete(colors) {
+        const processId = this._poolComboProcessId;
+        if (!processId || colors.length === 0) return;
+        const label = colors.length === 1 ? `"${colors[0]}"` : `these ${colors.length} combinations`;
+        App.Utils.confirmAction(
+          `Remove ${label} from this process's known Color/Product-Tag list? This only removes empty placeholders — anything with real production history is protected automatically.`,
+          async () => {
+            try {
+              const res = await Api.call('excludeWarehousePoolColors', processId, colors);
+              App.Utils.showToast(res?.message || 'Combination(s) removed.', !res?.success && (!res?.data || !res.data.removed || res.data.removed.length === 0));
+              // A partial success (some removed, some blocked) still needs a
+              // full refresh — re-fetch the known-colors list (removable set
+              // changes too) before repainting, same as any other Warehouse
+              // Pool-affecting save.
+              await App.Stock.loadWarehousePoolData();
+              this._poolComboSelected = new Set();
+              this.renderWarehousePoolProcessModalBody();
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to remove combination(s).', true);
+            }
+          }
+        );
+      },
+
+      // Populates the "Add Combination" input's Color Master suggestions —
+      // called once when the dialog opens (same ensureLoaded + datalist
+      // pattern as every other color-name input in the app, e.g.
+      // Production's productionCustomColorInput).
+      async _populateWarehousePoolComboDatalist() {
+        await App.Color.ensureLoaded();
+        const datalist = document.getElementById('warehousePoolColorMasterList');
+        if (!datalist) return;
+        datalist.innerHTML = (App.State.globalColors || [])
+          .map(c => `<option value="${escapeHtml(c.name)}">`).join('');
+      },
+
+      // "+ Add Combination" — force-adds a color (typically picked from the
+      // Color Master suggestions, but a one-off free-typed name works too)
+      // as known for the currently open process, even if nothing else
+      // (recipe, pool history, Color Master widening) would ever produce it
+      // on its own. Also the way to undo a prior removal (see
+      // includeWarehousePoolColor — re-adding the same name overwrites its
+      // exclusion).
+      async addWarehousePoolCombination() {
+        const processId = this._poolComboProcessId;
+        const input = document.getElementById('warehousePoolAddComboInput');
+        const color = (input?.value || '').trim();
+        if (!processId || !color) return;
+
+        try {
+          const res = await Api.call('includeWarehousePoolColor', processId, color);
+          App.Utils.showToast(res?.message || 'Combination added.', !res?.success);
+          if (res?.success) {
+            if (input) input.value = '';
+            await App.Stock.loadWarehousePoolData();
+            this.renderWarehousePoolProcessModalBody();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to add combination.', true);
+        }
       },
 
       // Click-to-edit Available Qty cell. Saves by SETTING the bucket's
@@ -19866,14 +20056,14 @@
 
       // Human-readable qualifier for an axisKey, used only to disambiguate
       // two different axes that happen to produce the exact same color name
-      // (see renderColorwiseSummary) — strips the "pool:"/"tag:" prefix
-      // computeColorAxesForProcess adds (module_process.js) and falls back
-      // to the raw key for anything else (a legacy grouping's "group_N" /
-      // "other" / "custom" bucket).
+      // (see renderColorwiseSummary) — strips the "pool:"/"tag:"/"merged:"
+      // prefix computeColorAxesForProcess adds (module_process.js) and falls
+      // back to the raw key for anything else (a legacy grouping's
+      // "group_N" / "other" / "custom" bucket).
       _axisQualifierLabel(axisKey) {
         const key = String(axisKey || '').trim();
         if (!key) return '';
-        const m = key.match(/^(pool|tag):(.+)$/i);
+        const m = key.match(/^(pool|tag|merged):(.+)$/i);
         return m ? m[2] : key;
       },
 
@@ -21579,10 +21769,17 @@
       // caller below treats '' as "no scoping, use the legacy unscoped
       // behavior", so this is always a safe, backward-compatible no-op
       // outside true 2+-axis processes.
+      // No `source` filter here — a 'pool' axis's own label is still
+      // itemNames.join(', '), and a Process Color Link can now merge that
+      // pool axis with a 'tag' axis into a 'merged' one (see
+      // computeColorAxesForProcess/_mergeLinkedAxes, module_process.js),
+      // which carries the SAME comma-joined label forward so this still
+      // resolves it; a plain 'tag' axis's own label is never a pool item
+      // name, so including it here is harmless (never matches).
       _axisKeyForPoolItemNames(itemNames) {
         const namesLower = (itemNames || []).map(n => String(n || '').trim().toLowerCase()).filter(Boolean);
         if (namesLower.length === 0) return '';
-        const opt = (this._customColorGroupOptions || []).find(o => o.source === 'pool' &&
+        const opt = (this._customColorGroupOptions || []).find(o =>
           o.label.split(',').map(s => s.trim().toLowerCase()).some(l => namesLower.includes(l)));
         return opt ? opt.key : '';
       },
@@ -25666,7 +25863,12 @@
           try {
             const res = await Api.call('getProcessColorAxes', processId);
             if (res.success && res.data && Array.isArray(res.data.axes)) {
-              this._poolAxisLabels = res.data.axes.filter(a => a.source === 'pool').map(a => a.label);
+              // 'pool' and 'merged' axes both need fetching (neither is
+              // manually typed anywhere in this form, unlike a 'tag' axis's
+              // label, already covered by collectColorAxisLabels below) —
+              // exclude by name ('tag') rather than allowlist by name, so a
+              // future axis source doesn't silently need this touched again.
+              this._poolAxisLabels = res.data.axes.filter(a => a.source !== 'tag').map(a => a.label);
             }
           } catch (err) {
             // Non-fatal — the picker just falls back to whatever's typed on-form.
@@ -25966,19 +26168,29 @@
         if (hint) hint.style.display = hasProcessId ? 'none' : '';
       },
 
+      // Sentinel process-picker value meaning "pair two of THIS process's own
+      // axes" instead of linking to a different process — see
+      // PROCESS_COLOR_LINKS_COL.AXIS_A_KEY/AXIS_B_KEY (module_process.js) and
+      // the same-process self-guard relaxation in _saveProcessColorLinksForProcess.
+      COLOR_LINK_SELF_VALUE: '__self__',
+
       // Adds a new "Linked Process" card. otherProcessId/pairs pre-fill it
       // when loading an existing process's links; called with no args to add
-      // a blank card for the operator to configure.
-      addColorLinkCard(otherProcessId = '', pairs = []) {
+      // a blank card for the operator to configure. myAxisKey/theirAxisKey
+      // pre-fill the same-process axis pickers when otherProcessId ===
+      // myProcessId (a saved same-process link being restored).
+      addColorLinkCard(otherProcessId = '', pairs = [], myAxisKey = '', theirAxisKey = '') {
         const container = document.getElementById('processColorLinksContainer');
         const myProcessId = document.getElementById('processFormProcessId')?.value || '';
         if (!container || !myProcessId) return;
 
+        const isSelf = !!otherProcessId && otherProcessId === myProcessId;
         const cardId = 'proc_colorlink_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-        const processOptionsHtml = (App.State.globalProcesses || [])
-          .filter(p => p.processId !== myProcessId)
-          .map(p => `<option value="${escapeHtml(p.processId)}" ${p.processId === otherProcessId ? 'selected' : ''}>${escapeHtml(p.processName)}</option>`)
-          .join('');
+        const processOptionsHtml = `<option value="${this.COLOR_LINK_SELF_VALUE}" ${isSelf ? 'selected' : ''}>— This process (pair two of its own axes) —</option>` +
+          (App.State.globalProcesses || [])
+            .filter(p => p.processId !== myProcessId)
+            .map(p => `<option value="${escapeHtml(p.processId)}" ${!isSelf && p.processId === otherProcessId ? 'selected' : ''}>${escapeHtml(p.processName)}</option>`)
+            .join('');
 
         const html = `
       <div class="card border-secondary-subtle shadow-sm mb-3 proc-colorlink-card" id="${cardId}">
@@ -25991,6 +26203,16 @@
           <button type="button" class="btn btn-outline-danger btn-sm ms-auto" onclick="App.Process.removeColorLinkCard('${cardId}')">Remove Link</button>
         </div>
         <div class="card-body">
+          <div class="row g-2 mb-2 proc-colorlink-self-axes-wrapper" style="display:none;">
+            <div class="col-md-6">
+              <label class="small fw-bold text-secondary mb-1">My Axis</label>
+              <select class="form-select form-select-sm proc-colorlink-my-axis"><option value="">Choose an axis...</option></select>
+            </div>
+            <div class="col-md-6">
+              <label class="small fw-bold text-secondary mb-1">Pairs With This Other Axis</label>
+              <select class="form-select form-select-sm proc-colorlink-their-axis"><option value="">Choose an axis...</option></select>
+            </div>
+          </div>
           <p class="text-muted small mb-2 proc-colorlink-hint">Select a process above to map colors.</p>
           <div class="table-responsive proc-colorlink-mapping-wrapper" style="display:none;">
             <table class="table table-bordered bg-white shadow-sm mb-0">
@@ -26010,7 +26232,12 @@
         const card = document.getElementById(cardId);
         this.initColorLinkSelect2(card, myProcessId);
 
-        if (otherProcessId) this.populateColorLinkMapping(card, myProcessId, otherProcessId, pairs);
+        if (isSelf) {
+          card.querySelector('.proc-colorlink-self-axes-wrapper').style.display = '';
+          this.populateSelfAxisPickers(card, myProcessId, myAxisKey, theirAxisKey, pairs);
+        } else if (otherProcessId) {
+          this.populateColorLinkMapping(card, myProcessId, otherProcessId, pairs);
+        }
       },
 
       // Searchable Select2 for a Linked Process card's process picker.
@@ -26028,9 +26255,36 @@
           });
         }
         selectEl.addEventListener('change', () => {
-          const otherProcessId = selectEl.value;
-          if (otherProcessId) this.populateColorLinkMapping(card, myProcessId, otherProcessId, []);
+          const value = selectEl.value;
+          const selfWrapper = card.querySelector('.proc-colorlink-self-axes-wrapper');
+          if (value === this.COLOR_LINK_SELF_VALUE) {
+            if (selfWrapper) selfWrapper.style.display = '';
+            this.populateSelfAxisPickers(card, myProcessId, '', '', []);
+          } else {
+            if (selfWrapper) selfWrapper.style.display = 'none';
+            if (value) this.populateColorLinkMapping(card, myProcessId, value, []);
+          }
         });
+      },
+
+      // Renders the shared "This Process's Color -> Maps To" mapping table
+      // body from two already-resolved color lists — used by both the
+      // cross-process flow (flat getProcessColorGroups lists) and the
+      // same-process axis-pairing flow (one real axis's own colors on each
+      // side, see populateSelfAxisMapping) so the two only differ in WHERE
+      // myColors/theirColors come from, not in how the table is built.
+      _renderColorLinkMappingRows(tbody, myColors, theirColors, existingPairs) {
+        const existingByMyColor = {};
+        (existingPairs || []).forEach(p => { existingByMyColor[String(p.myColor || '').toLowerCase()] = p.theirColor; });
+
+        const theirOptionsHtml = (selected) => '<option value="">— Unmapped —</option>' +
+          theirColors.map(c => `<option value="${escapeHtml(c)}" ${App.Utils.sameText(c, selected || '') ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('');
+
+        tbody.innerHTML = myColors.map(myColor => `
+            <tr>
+              <td class="proc-colorlink-my-color" data-color="${escapeHtml(myColor)}">${escapeHtml(myColor)}</td>
+              <td><select class="form-select form-select-sm proc-colorlink-their-color">${theirOptionsHtml(existingByMyColor[myColor.toLowerCase()])}</select></td>
+            </tr>`).join('');
       },
 
       // Fetches both processes' color lists (via getProcessColorGroups, same
@@ -26066,23 +26320,96 @@
             return;
           }
 
-          const existingByMyColor = {};
-          (existingPairs || []).forEach(p => { existingByMyColor[String(p.myColor || '').toLowerCase()] = p.theirColor; });
-
-          const theirOptionsHtml = (selected) => '<option value="">— Unmapped —</option>' +
-            theirColors.map(c => `<option value="${escapeHtml(c)}" ${App.Utils.sameText(c, selected || '') ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('');
-
-          tbody.innerHTML = myColors.map(myColor => `
-            <tr>
-              <td class="proc-colorlink-my-color" data-color="${escapeHtml(myColor)}">${escapeHtml(myColor)}</td>
-              <td><select class="form-select form-select-sm proc-colorlink-their-color">${theirOptionsHtml(existingByMyColor[myColor.toLowerCase()])}</select></td>
-            </tr>`).join('');
-
+          this._renderColorLinkMappingRows(tbody, myColors, theirColors, existingPairs);
           if (hint) hint.style.display = 'none';
           if (wrapper) wrapper.style.display = '';
         } catch (err) {
           if (hint) { hint.style.display = ''; hint.textContent = 'Failed to load colors: ' + (err.message || err); }
         }
+      },
+
+      // Same-process counterpart of initColorLinkSelect2's cross-process
+      // flow: fetches THIS process's own axis breakdown (getProcessColorAxes
+      // — the same axis-scoped data the Production checklist and Primary
+      // Axis picker use) ONCE, populates both "My Axis"/"Pairs With" pickers
+      // from it, and wires their change handlers to render the color mapping
+      // table the moment two DIFFERENT axes are chosen on each side. Using
+      // axis-scoped color lists here (not the flat getProcessColorGroups
+      // union) is what lets two axes sharing a literal color name (e.g. two
+      // independent "Purple"s) be paired unambiguously.
+      async populateSelfAxisPickers(card, myProcessId, presetMyAxisKey, presetTheirAxisKey, existingPairs) {
+        const myAxisSelect = card.querySelector('.proc-colorlink-my-axis');
+        const theirAxisSelect = card.querySelector('.proc-colorlink-their-axis');
+        const hint = card.querySelector('.proc-colorlink-hint');
+        const wrapper = card.querySelector('.proc-colorlink-mapping-wrapper');
+        if (!myAxisSelect || !theirAxisSelect) return;
+
+        if (hint) { hint.style.display = ''; hint.textContent = 'Loading this process\'s axes…'; }
+        if (wrapper) wrapper.style.display = 'none';
+
+        let axes = [];
+        try {
+          const res = await Api.call('getProcessColorAxes', myProcessId);
+          axes = (res?.success && Array.isArray(res.data?.axes)) ? res.data.axes : [];
+        } catch (err) {
+          if (hint) { hint.style.display = ''; hint.textContent = 'Failed to load this process\'s axes: ' + (err.message || err); }
+          return;
+        }
+
+        if (axes.length < 2) {
+          if (hint) {
+            hint.style.display = '';
+            hint.textContent = 'This process needs at least 2 independent color axes (Color Sub-Groups with different Group labels, or 2+ multi-color pool inputs) before its own axes can be paired.';
+          }
+          return;
+        }
+
+        const optionsHtml = (selected) => '<option value="">Choose an axis...</option>' +
+          axes.map(a => `<option value="${escapeHtml(a.key)}" ${a.key === selected ? 'selected' : ''}>${escapeHtml(a.label)}</option>`).join('');
+        myAxisSelect.innerHTML = optionsHtml(presetMyAxisKey);
+        theirAxisSelect.innerHTML = optionsHtml(presetTheirAxisKey);
+
+        if (hint) { hint.style.display = ''; hint.textContent = 'Choose which two of this process\'s own axes to pair.'; }
+
+        const tryRenderMapping = () => this.populateSelfAxisMapping(card, axes, myAxisSelect.value, theirAxisSelect.value, existingPairs);
+        myAxisSelect.onchange = tryRenderMapping;
+        theirAxisSelect.onchange = tryRenderMapping;
+
+        if (presetMyAxisKey && presetTheirAxisKey) tryRenderMapping();
+      },
+
+      // Renders the mapping table for a same-process axis pair once both
+      // sides are chosen — reuses _renderColorLinkMappingRows with each
+      // axis's own `colors` (from the same getProcessColorAxes fetch
+      // populateSelfAxisPickers already made, not re-fetched).
+      populateSelfAxisMapping(card, axes, myAxisKey, theirAxisKey, existingPairs) {
+        const hint = card.querySelector('.proc-colorlink-hint');
+        const wrapper = card.querySelector('.proc-colorlink-mapping-wrapper');
+        const tbody = card.querySelector('.proc-colorlink-mapping-body');
+        if (!tbody) return;
+
+        tbody.innerHTML = '';
+        if (wrapper) wrapper.style.display = 'none';
+
+        if (!myAxisKey || !theirAxisKey) {
+          if (hint) { hint.style.display = ''; hint.textContent = 'Choose which two of this process\'s own axes to pair.'; }
+          return;
+        }
+        if (myAxisKey === theirAxisKey) {
+          if (hint) { hint.style.display = ''; hint.textContent = 'Pick two DIFFERENT axes — an axis can\'t be paired with itself.'; }
+          return;
+        }
+
+        const myAxis = axes.find(a => a.key === myAxisKey);
+        const theirAxis = axes.find(a => a.key === theirAxisKey);
+        if (!myAxis || !theirAxis || myAxis.colors.length === 0 || theirAxis.colors.length === 0) {
+          if (hint) { hint.style.display = ''; hint.textContent = 'One of the chosen axes has no known colors yet.'; }
+          return;
+        }
+
+        this._renderColorLinkMappingRows(tbody, myAxis.colors, theirAxis.colors, existingPairs);
+        if (hint) hint.style.display = 'none';
+        if (wrapper) wrapper.style.display = '';
       },
 
       removeColorLinkCard(cardId) {
@@ -26097,14 +26424,21 @@
       },
 
       // Groups a process's fetched links (flat array from getProcessColorLinksData)
-      // by otherProcessId and renders one card per linked process.
+      // into one card per distinct (otherProcessId, myAxisKey, theirAxisKey)
+      // combination — a cross-process link (both axis keys blank) still
+      // groups by otherProcessId alone exactly as before axis keys existed,
+      // but a process can now have MULTIPLE same-process links (pairing
+      // different pairs of its own axes), each of which needs its own card
+      // since they map different axis pairs' colors.
       renderColorLinksData(links) {
         this.clearColorLinks();
-        const byOtherProcess = {};
+        const groups = new Map();
         (links || []).forEach(l => {
-          (byOtherProcess[l.otherProcessId] = byOtherProcess[l.otherProcessId] || []).push(l);
+          const groupKey = l.otherProcessId + '|' + (l.myAxisKey || '') + '|' + (l.theirAxisKey || '');
+          if (!groups.has(groupKey)) groups.set(groupKey, { otherProcessId: l.otherProcessId, myAxisKey: l.myAxisKey || '', theirAxisKey: l.theirAxisKey || '', pairs: [] });
+          groups.get(groupKey).pairs.push(l);
         });
-        Object.keys(byOtherProcess).forEach(otherProcessId => this.addColorLinkCard(otherProcessId, byOtherProcess[otherProcessId]));
+        groups.forEach(g => this.addColorLinkCard(g.otherProcessId, g.pairs, g.myAxisKey, g.theirAxisKey));
       },
 
       // Destroys Select2 instances on every Linked Process card and empties the container.
@@ -26122,17 +26456,28 @@
       },
 
       // Walks every Linked Process card's mapping table into the flat
-      // {otherProcessId, myColor, theirColor} shape saveProcess expects.
-      // Rows left "— Unmapped —" are skipped.
+      // {otherProcessId, myColor, theirColor, myAxisKey, theirAxisKey} shape
+      // saveProcess expects. Rows left "— Unmapped —" are skipped. A card in
+      // "This process" mode resolves otherProcessId to THIS process's own ID
+      // and carries its two chosen axis keys on every row — see
+      // _saveProcessColorLinksForProcess's same-process self-guard, which
+      // requires both to be present and different.
       serializeColorLinks() {
+        const myProcessId = document.getElementById('processFormProcessId')?.value || '';
         const links = [];
         document.querySelectorAll('#processColorLinksContainer .proc-colorlink-card').forEach(card => {
-          const otherProcessId = card.querySelector('.proc-colorlink-process-select')?.value || '';
+          const rawValue = card.querySelector('.proc-colorlink-process-select')?.value || '';
+          if (!rawValue) return;
+          const isSelf = rawValue === this.COLOR_LINK_SELF_VALUE;
+          const otherProcessId = isSelf ? myProcessId : rawValue;
           if (!otherProcessId) return;
+          const myAxisKey = isSelf ? (card.querySelector('.proc-colorlink-my-axis')?.value || '') : '';
+          const theirAxisKey = isSelf ? (card.querySelector('.proc-colorlink-their-axis')?.value || '') : '';
+          if (isSelf && (!myAxisKey || !theirAxisKey || myAxisKey === theirAxisKey)) return;
           card.querySelectorAll('.proc-colorlink-mapping-body tr').forEach(row => {
             const myColor = row.querySelector('.proc-colorlink-my-color')?.dataset.color || '';
             const theirColor = row.querySelector('.proc-colorlink-their-color')?.value || '';
-            if (myColor && theirColor) links.push({ otherProcessId, myColor, theirColor });
+            if (myColor && theirColor) links.push({ otherProcessId, myColor, theirColor, myAxisKey, theirAxisKey });
           });
         });
         return links;

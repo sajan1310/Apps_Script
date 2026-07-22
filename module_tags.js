@@ -290,6 +290,30 @@ function _renameColorEverywhere(oldName, newName) {
   const tNew = String(newName || '').trim();
   if (!tOld || !tNew || tOldRaw === tNew) return;
 
+  // A color cell isn't always a single literal name — computeColorAxesForProcess/
+  // _mergeLinkedAxes can produce (and an operator can hand-enter, e.g. a
+  // Color Sub-Group's colorGroup or a Warehouse Pool Opening entry matching
+  // an existing merged bucket) a COMPOSITE value joining 2+ independent
+  // axes with COLOR_COMBO_DELIMITER (e.g. "BCP / Blue-White" — see
+  // config.js). A plain whole-cell compare only ever matches a single-token
+  // cell; this renames whichever ONE token matches and rejoins, so a
+  // composite cell containing the renamed color as just one of its parts
+  // still gets updated instead of silently going stale. A plain
+  // (non-composite) value is unaffected — same exact-match behavior as
+  // before.
+  const renameColorToken = (value) => {
+    const str = String(value == null ? '' : value);
+    if (!str.includes(COLOR_COMBO_DELIMITER)) {
+      return str.trim().toLowerCase() === tOld ? tNew : str;
+    }
+    let tokenChanged = false;
+    const renamedTokens = str.split(COLOR_COMBO_DELIMITER).map(t => {
+      if (t.trim().toLowerCase() === tOld) { tokenChanged = true; return tNew; }
+      return t;
+    });
+    return tokenChanged ? renamedTokens.join(COLOR_COMBO_DELIMITER) : str;
+  };
+
   const renameInColumn = (sheetName, col, startRow) => {
     let sheet;
     try {
@@ -306,8 +330,10 @@ function _renameColorEverywhere(oldName, newName) {
     let changed = false;
 
     for (let i = 0; i < values.length; i++) {
-      if (String(values[i][0] || '').trim().toLowerCase() === tOld) {
-        values[i][0] = tNew;
+      if (!values[i][0]) continue; // blank cell (e.g. BOM's "common to every color") never matches
+      const renamed = renameColorToken(values[i][0]);
+      if (renamed !== values[i][0]) {
+        values[i][0] = renamed;
         changed = true;
       }
     }
@@ -315,8 +341,10 @@ function _renameColorEverywhere(oldName, newName) {
     if (changed) range.setValues(values);
   };
 
-  // Process Components: COLOR_GROUP is 'COMMON' or a Color Master name —
-  // this only ever matches 'COMMON' if a color is literally named that.
+  // Process Components: COLOR_GROUP is 'COMMON', a single Color Master
+  // name, or (a legacy cross-multiplied recipe row) a COLOR_COMBO_DELIMITER
+  // -joined composite of several — renameInColumn/renameColorToken handles
+  // all three; 'COMMON' only ever matches if a color is literally named that.
   renameInColumn(APP_CONFIG.SHEETS.PROCESS_COMPONENTS, PROCESS_COMPONENTS_COL.COLOR_GROUP, 2);
 
   // BOM: per-row color variant (blank cells mean "common to every color" and
@@ -343,8 +371,10 @@ function _renameColorEverywhere(oldName, newName) {
       let changed = false;
       for (let i = 0; i < values.length; i++) {
         for (let c = 0; c < values[i].length; c++) {
-          if (String(values[i][c] || '').trim().toLowerCase() === tOld) {
-            values[i][c] = tNew;
+          if (!values[i][c]) continue;
+          const renamed = renameColorToken(values[i][c]);
+          if (renamed !== values[i][c]) {
+            values[i][c] = renamed;
             changed = true;
           }
         }
@@ -373,8 +403,14 @@ function _renameColorEverywhere(oldName, newName) {
       for (let i = 0; i < values.length; i++) {
         const colorCell = String(values[i][0] || '').trim();
         if (colorCell) {
+          // Split on the comma that joins ENTRIES (one per colorBreakdown
+          // row — see saveProduction's `color = colorBreakdown.map(...).join(', ')`
+          // in module_production.js), THEN let renameColorToken handle each
+          // entry's own possible COLOR_COMBO_DELIMITER composite — a plain
+          // per-entry exact match here would miss a renamed color that's
+          // only one axis of a composite entry like "BCP / Blue-White".
           const parts = colorCell.split(',').map(p => p.trim());
-          const renamedParts = parts.map(p => p.toLowerCase() === tOld ? tNew : p);
+          const renamedParts = parts.map(p => renameColorToken(p));
           const rejoined = renamedParts.join(', ');
           if (rejoined !== colorCell) {
             values[i][0] = rejoined;
@@ -389,8 +425,10 @@ function _renameColorEverywhere(oldName, newName) {
             if (Array.isArray(parsed)) {
               let breakdownChanged = false;
               parsed.forEach(entry => {
-                if (entry && String(entry.color || '').trim().toLowerCase() === tOld) {
-                  entry.color = tNew;
+                if (!entry || !entry.color) return;
+                const renamed = renameColorToken(entry.color);
+                if (renamed !== entry.color) {
+                  entry.color = renamed;
                   breakdownChanged = true;
                 }
               });

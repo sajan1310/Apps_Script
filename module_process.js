@@ -1115,7 +1115,8 @@ function getProcessColorGroups(processId) {
       ? ((getWarehousePoolData() || {}).data || [])
       : [];
     const colorLinks = _getAllProcessColorLinks();
-    return buildResponse(true, computeColorGroupsForProcess(components, poolRows, colorLinks));
+    const overrides = _getAllProcessColorOverrides()[String(processId || '').trim().toLowerCase()];
+    return buildResponse(true, computeColorGroupsForProcess(processId, components, poolRows, colorLinks, undefined, overrides));
   } catch (error) {
     Log.error('[getProcessColorGroups] Error:', error.message);
     return buildResponse(false, null, 'Failed to load process color groups: ' + error.message);
@@ -1161,6 +1162,9 @@ function _getProcessRecordById(processId) {
  * (including tag-only colors with no colorAxis label, which
  * computeColorAxesForProcess intentionally excludes) plus any single pool
  * axis's own colors, unchanged.
+ * @param {string} processId The process these components/colors belong to
+ *   — needed so a manually-tagged axis can be a Process Color Link endpoint
+ *   (see computeColorAxesForProcess).
  * @param {Array} components Process Components rows already filtered to one process.
  * @param {Array} poolRows Full Warehouse Pool rows (shared across all processes).
  * @param {Array} colorLinks Full Process Color Links rows (shared across all processes) — see _getAllProcessColorLinks.
@@ -1169,19 +1173,43 @@ function _getProcessRecordById(processId) {
  *   cache is hit once for every process instead of once per process; a
  *   single-process caller can omit it and let this fetch its own.
  */
-function computeColorGroupsForProcess(components, poolRows, colorLinks, colorMasterNames) {
-  const baseColors = _computeConfiguredColorGroupsForProcess(components, poolRows, colorLinks);
-  // Nothing tagged/detected at all — this process has no color dimension,
-  // so it stays in plain-Qty mode exactly as before. Only once there IS a
-  // real color dimension do we widen the choices to the full Color Master
-  // (see the doc comment above and _getColorMasterNames) — a process with
-  // no color concept at all must never suddenly grow a full checklist of
-  // every known color just because Color Master is non-empty.
-  if (baseColors.length === 0) return baseColors;
+// @param {Object} [overrides] This process's own Process Color Overrides —
+//   { included: Map<colorLower,color>, excluded: Set<colorLower> } — see
+//   _getAllProcessColorOverrides. An INCLUDE entry can turn on color mode
+//   for an otherwise plain (baseColors.length === 0) process — a deliberate
+//   escape hatch for "Add Combination" (see includeWarehousePoolColor) to
+//   pre-seed a color no recipe/pool/Color Master signal would ever produce
+//   on its own. EXCLUDE always wins, applied last, after the Color Master
+//   union — see excludeWarehousePoolColors for why it can only ever remove
+//   zero-data noise, never a baseColors entry.
+function computeColorGroupsForProcess(processId, components, poolRows, colorLinks, colorMasterNames, overrides) {
+  const baseColors = _computeConfiguredColorGroupsForProcess(processId, components, poolRows, colorLinks);
+  const includedOverrides = (overrides && overrides.included) ? Array.from(overrides.included.values()) : [];
+  // Nothing tagged/detected at all, and no explicit INCLUDE override either
+  // — this process has no color dimension, so it stays in plain-Qty mode
+  // exactly as before.
+  if (baseColors.length === 0 && includedOverrides.length === 0) return baseColors;
 
   const colors = new Map();
   baseColors.forEach(c => _addUniqueCaseInsensitive(colors, c));
-  (colorMasterNames || _getColorMasterNames()).forEach(c => _addUniqueCaseInsensitive(colors, c));
+  // Widen to the full Color Master ONLY once this process is ALREADY
+  // color-enabled via its own recipe/pool detection (baseColors non-empty)
+  // — an INCLUDE override on an otherwise-plain process (baseColors empty)
+  // must force-add ONLY that one specific color, not also unlock the whole
+  // Color Master union; "there's a color to show" and "this process is
+  // color-enabled" are different questions, and only the second one gates
+  // widening (see the doc comment above and _getColorMasterNames).
+  if (baseColors.length > 0) {
+    (colorMasterNames || _getColorMasterNames()).forEach(c => _addUniqueCaseInsensitive(colors, c));
+  }
+  includedOverrides.forEach(c => _addUniqueCaseInsensitive(colors, c));
+
+  if (overrides && overrides.excluded && overrides.excluded.size > 0) {
+    Array.from(colors.keys()).forEach(key => {
+      if (overrides.excluded.has(key)) colors.delete(key);
+    });
+  }
+
   return Array.from(colors.values()).sort((a, b) => a.localeCompare(b));
 }
 
@@ -1221,8 +1249,8 @@ function computeColorGroupsForProcess(components, poolRows, colorLinks, colorMas
  * computeColorAxesForProcess intentionally excludes) plus any single pool
  * axis's own colors, unchanged.
  */
-function _computeConfiguredColorGroupsForProcess(components, poolRows, colorLinks) {
-  const axes = computeColorAxesForProcess(components, poolRows, colorLinks);
+function _computeConfiguredColorGroupsForProcess(processId, components, poolRows, colorLinks) {
+  const axes = computeColorAxesForProcess(processId, components, poolRows, colorLinks);
   if (axes.length < 2) {
     return _legacyColorGroupList(components, poolRows, colorLinks);
   }
@@ -1266,6 +1294,31 @@ function _addUniqueCaseInsensitive(map, value) {
   if (!raw) return;
   const key = raw.toLowerCase();
   if (!map.has(key)) map.set(key, raw);
+}
+
+/**
+ * @private Server-side port of Script_Production.html's App.Production._colorNamesMatch
+ * — same hyphen/slash/whitespace-segment substring heuristic ("Red" matches
+ * "Red-White"), logic unchanged. Lives separately here (not shared code)
+ * because the client version runs in the browser and this one runs in the
+ * Apps Script server runtime — there is no module boundary between them to
+ * share through, only two independent copies of the same small pure
+ * function. Used by recalculateWarehousePool (module_warehouse.js) to
+ * decide whether a lot's non-primary colorBreakdown entry (e.g. a Mudguard
+ * Color) is redundant with its primary entry (e.g. Rim Color) — same real
+ * question the client asks when deciding whether to auto-sync a checklist
+ * row, just answered again server-side from the lot's own saved data
+ * instead of from live DOM state.
+ */
+function _colorNamesMatch(a, b) {
+  const x = String(a || '').trim().toLowerCase();
+  const y = String(b || '').trim().toLowerCase();
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const shorter = x.length <= y.length ? x : y;
+  const longer = x.length <= y.length ? y : x;
+  const escaped = shorter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[-/\\s])${escaped}($|[-/\\s])`).test(longer);
 }
 
 /**
@@ -1361,13 +1414,24 @@ function _legacyColorGroupList(components, poolRows, colorLinks) {
  *      colorGroup but no colorAxis label are left out of this breakdown
  *      entirely (only the legacy flat list sees them) — see
  *      PROCESS_COMPONENTS_COL.COLOR_AXIS.
+ * Both sources are merged through ONE _mergeLinkedAxes pass (see
+ * PROCESS_COLOR_LINKS_COL) — a Process Color Link can pair two pool axes
+ * (from different upstream processes, the original use case), a pool axis
+ * with one of THIS process's own tag axes, or two of this process's own tag
+ * axes with each other (same processId, different axis keys — see
+ * _axisLinkRef). With no link touching a given axis, this is a no-op and
+ * that axis passes through unchanged, so a process with no Process Color
+ * Links configured at all behaves byte-for-byte as before this generalization.
+ * @param {string} processId This process's own ID — every tag axis belongs
+ *   to it directly (there is no separate "producing process" the way a pool
+ *   axis has one), so it's needed to make a tag axis link-eligible at all.
  * @param {Array} components
  * @param {Array} poolRows
  * @param {Array} colorLinks
- * @returns {Array<{key: string, label: string, colors: string[], source: 'pool'|'tag'}>}
+ * @returns {Array<{key: string, label: string, colors: string[], source: 'pool'|'tag'|'merged'}>}
  */
-function computeColorAxesForProcess(components, poolRows, colorLinks) {
-  const axes = [];
+function computeColorAxesForProcess(processId, components, poolRows, colorLinks) {
+  const rawAxes = [];
 
   const poolItemNames = new Set(
     components.filter(c => c.sourceType === COMPONENT_SOURCE_TYPES.POOL).map(c => c.itemName.toLowerCase())
@@ -1404,22 +1468,31 @@ function computeColorAxesForProcess(components, poolRows, colorLinks) {
       if (itemName) entry.itemNames.add(itemName);
     });
 
-    let poolAxes = Array.from(axesBySignature.values());
-    if (poolAxes.length > 1 && colorLinks && colorLinks.length > 0) {
-      poolAxes = _mergeLinkedAxes(poolAxes, colorLinks);
-    }
-
-    poolAxes.forEach((axis, idx) => {
-      const itemNames = axis.itemNames ? Array.from(axis.itemNames).sort((a, b) => a.localeCompare(b)) : [];
-      const label = itemNames.length > 0 ? itemNames.join(', ') : `Color Group ${idx + 1}`;
-      axes.push({ key: 'pool:' + label.toLowerCase(), label, colors: axis.colors, source: 'pool' });
+    Array.from(axesBySignature.values()).forEach(axis => {
+      // label mirrors the exact text the old post-merge loop computed for an
+      // UNMERGED pool axis (itemNames.join(', ')) — set here, before merge,
+      // both so a merged axis can inherit a real label from it (see
+      // _mergeLinkedAxes) instead of a generic ordinal fallback, and so
+      // _axisKeyForPoolItemNames (Script_Production.html) can still resolve
+      // a merged pool axis by its constituent item names.
+      const itemNames = Array.from(axis.itemNames).sort((a, b) => a.localeCompare(b));
+      rawAxes.push({
+        colors: axis.colors,
+        processIds: axis.processIds,
+        label: itemNames.length > 0 ? itemNames.join(', ') : undefined,
+        source: 'pool'
+      });
     });
   }
 
   // Keyed by the axis label's lowercase form so "Mudguard Color" and
   // "mudguard color" (typed on different recipe rows) collapse into one
   // real axis instead of two — same casing-drift hazard as the colors
-  // themselves, just one level up (see _addUniqueCaseInsensitive).
+  // themselves, just one level up (see _addUniqueCaseInsensitive). Each tag
+  // axis belongs to THIS process directly (processIds: [processId]) and
+  // carries its own axisKey ('tag:' + label) up front — unlike a pool axis,
+  // there's no separate "producing process" to derive an identity from, so
+  // without processId a tag axis could never be link-eligible at all.
   const rawTagGroups = new Map();
   components.forEach(c => {
     if (!c.colorGroup || c.colorGroup === COMPONENT_COLOR_GROUP_COMMON) return;
@@ -1430,15 +1503,33 @@ function computeColorAxesForProcess(components, poolRows, colorLinks) {
     _addUniqueCaseInsensitive(rawTagGroups.get(axisKey).colors, c.colorGroup);
   });
   rawTagGroups.forEach(({ label, colors: colorMap }) => {
-    axes.push({
-      key: 'tag:' + label.toLowerCase(),
-      label,
+    rawAxes.push({
       colors: Array.from(colorMap.values()).sort((a, b) => a.localeCompare(b)),
+      processIds: processId ? new Set([processId]) : new Set(),
+      axisKey: 'tag:' + label.toLowerCase(),
+      label,
       source: 'tag'
     });
   });
 
-  return axes;
+  // One merge pass covers every combination: pool<->pool (the original
+  // cross-process case), pool<->tag, and tag<->tag (same process, different
+  // axisKey) — see _mergeLinkedAxes. An axis with no link touching it passes
+  // through completely unchanged.
+  const mergedAxes = (rawAxes.length > 1 && colorLinks && colorLinks.length > 0)
+    ? _mergeLinkedAxes(rawAxes, colorLinks)
+    : rawAxes;
+
+  let poolAxisCounter = 0;
+  return mergedAxes.map(axis => {
+    if (axis.source === 'tag') {
+      return { key: 'tag:' + axis.label.toLowerCase(), label: axis.label, colors: axis.colors, source: 'tag' };
+    }
+    poolAxisCounter++;
+    const label = axis.label || `Color Group ${poolAxisCounter}`;
+    const keyPrefix = axis.source === 'merged' ? 'merged:' : 'pool:';
+    return { key: keyPrefix + label.toLowerCase(), label, colors: axis.colors, source: axis.source };
+  });
 }
 
 /**
@@ -1461,7 +1552,7 @@ function getProcessColorAxes(processId) {
     const process = _getProcessRecordById(processId);
     const primaryColorAxis = String((process && process.primaryColorAxis) || '').trim();
 
-    const axes = computeColorAxesForProcess(components, poolRows, colorLinks);
+    const axes = computeColorAxesForProcess(processId, components, poolRows, colorLinks);
     const primaryAxisKey = primaryColorAxis
       ? (axes.find(a => a.label.toLowerCase() === primaryColorAxis.toLowerCase()) || {}).key || ''
       : '';
@@ -1475,39 +1566,66 @@ function getProcessColorAxes(processId) {
 
 /**
  * @private
- * Merges axes belonging to explicitly-linked processes (see Process Color
- * Links, config.js PROCESS_COLOR_LINKS_COL) into single paired axes instead
- * of leaving them to be cross-multiplied. Only axes contributed by exactly
- * one process are link-eligible (an axis already collapsed from 2+
- * processes by identical-signature matching has no single process to key
- * the graph on, and is left untouched). Chained links (B-D, D-A) group 3+
- * processes transitively via BFS with no dedicated N-way data structure.
- * @param {Array<{colors: string[], processIds: Set<string>}>} axes
- * @param {Array<{processAId: string, colorA: string, processBId: string, colorB: string}>} colorLinks
- * @returns {Array<{colors: string[]}>}
+ * Stable node identity for one axis-linking endpoint: an axis contributed by
+ * exactly one process, optionally disambiguated by an axis key. A blank
+ * axisKey reduces to the bare processId — the ORIGINAL Process Color Links
+ * identity, before AXIS_A_KEY/AXIS_B_KEY existed — so every link saved
+ * before same-process/tag-axis pairing existed (blank axis key on both
+ * sides) keeps resolving byte-for-byte as before. A non-blank axisKey (e.g.
+ * 'tag:mudguard color') scopes the identity to one specific axis, which is
+ * what makes a SAME processId meaningful on both sides of a link (pairing
+ * two of one process's own axes) instead of colliding with itself.
+ * @returns {string} '' when processId is blank (never matches anything).
+ */
+function _axisLinkRef(processId, axisKey) {
+  const pid = String(processId || '').trim();
+  if (!pid) return '';
+  const key = String(axisKey || '').trim().toLowerCase();
+  return key ? (pid + '::' + key) : pid;
+}
+
+/**
+ * @private
+ * Merges axes belonging to explicitly-linked axis references (see Process
+ * Color Links, config.js PROCESS_COLOR_LINKS_COL, and _axisLinkRef above)
+ * into single paired axes instead of leaving them to be cross-multiplied.
+ * Only axes contributed by exactly one process are link-eligible (an axis
+ * already collapsed from 2+ processes by identical-signature matching has no
+ * single process to key the graph on, and is left untouched). Chained links
+ * (B-D, D-A) group 3+ axes transitively via BFS with no dedicated N-way data
+ * structure. Works identically whether the linked axes come from different
+ * processes (the original cross-process pool-axis case) or the very same
+ * process (same-process axis pairing, e.g. a tag-based Rim Color <-> Mudguard
+ * Color) — axisLinkRef is the only thing either case is keyed on.
+ * @param {Array<{colors: string[], processIds: Set<string>, axisKey?: string, label?: string}>} axes
+ * @param {Array<{processAId: string, colorA: string, processBId: string, colorB: string, axisAKey?: string, axisBKey?: string}>} colorLinks
+ * @returns {Array<{colors: string[], label?: string, source: string}>}
  */
 function _mergeLinkedAxes(axes, colorLinks) {
-  const adjacency = new Map(); // processId -> [{ otherProcessId, map: Map(myColorLower -> theirColor) }]
-  function addEdge(pFrom, colorFrom, pTo, colorTo) {
-    if (!pFrom || !pTo) return;
-    if (!adjacency.has(pFrom)) adjacency.set(pFrom, []);
-    let entry = adjacency.get(pFrom).find(e => e.otherProcessId === pTo);
+  const adjacency = new Map(); // axisRef -> [{ otherAxisRef, map: Map(myColorLower -> theirColor) }]
+  function addEdge(refFrom, colorFrom, refTo, colorTo) {
+    if (!refFrom || !refTo) return;
+    if (!adjacency.has(refFrom)) adjacency.set(refFrom, []);
+    let entry = adjacency.get(refFrom).find(e => e.otherAxisRef === refTo);
     if (!entry) {
-      entry = { otherProcessId: pTo, map: new Map() };
-      adjacency.get(pFrom).push(entry);
+      entry = { otherAxisRef: refTo, map: new Map() };
+      adjacency.get(refFrom).push(entry);
     }
     entry.map.set(String(colorFrom || '').trim().toLowerCase(), colorTo);
   }
   colorLinks.forEach(link => {
-    addEdge(link.processAId, link.colorA, link.processBId, link.colorB);
-    addEdge(link.processBId, link.colorB, link.processAId, link.colorA);
+    const refA = _axisLinkRef(link.processAId, link.axisAKey);
+    const refB = _axisLinkRef(link.processBId, link.axisBKey);
+    addEdge(refA, link.colorA, refB, link.colorB);
+    addEdge(refB, link.colorB, refA, link.colorA);
   });
 
   // Only axes contributed by exactly one process can be placed on the graph.
-  const axisIndexByProcessId = new Map();
+  const axisIndexByRef = new Map();
   axes.forEach((axis, idx) => {
-    if (axis.processIds.size === 1) {
-      axisIndexByProcessId.set(Array.from(axis.processIds)[0], idx);
+    if (axis.processIds && axis.processIds.size === 1) {
+      const ref = _axisLinkRef(Array.from(axis.processIds)[0], axis.axisKey);
+      if (ref) axisIndexByRef.set(ref, idx);
     }
   });
 
@@ -1515,54 +1633,69 @@ function _mergeLinkedAxes(axes, colorLinks) {
   const mergedAxes = [];
   const usedAxisIdx = new Set();
 
-  axisIndexByProcessId.forEach((idx, pid) => {
-    if (visited.has(pid)) return;
+  axisIndexByRef.forEach((idx, ref) => {
+    if (visited.has(ref)) return;
 
-    const queue = [pid];
-    visited.add(pid);
-    const componentProcessIds = [pid];
+    const queue = [ref];
+    visited.add(ref);
+    const componentRefs = [ref];
     while (queue.length > 0) {
       const cur = queue.shift();
       (adjacency.get(cur) || []).forEach(edge => {
-        if (axisIndexByProcessId.has(edge.otherProcessId) && !visited.has(edge.otherProcessId)) {
-          visited.add(edge.otherProcessId);
-          queue.push(edge.otherProcessId);
-          componentProcessIds.push(edge.otherProcessId);
+        if (axisIndexByRef.has(edge.otherAxisRef) && !visited.has(edge.otherAxisRef)) {
+          visited.add(edge.otherAxisRef);
+          queue.push(edge.otherAxisRef);
+          componentRefs.push(edge.otherAxisRef);
         }
       });
     }
 
-    if (componentProcessIds.length <= 1) return; // no link partner present in this recipe — leave axis as-is
+    if (componentRefs.length <= 1) return; // no link partner present in this recipe — leave axis as-is
 
-    let anchorPid = componentProcessIds[0];
-    componentProcessIds.forEach(p => {
-      if (axes[axisIndexByProcessId.get(p)].colors.length > axes[axisIndexByProcessId.get(anchorPid)].colors.length) {
-        anchorPid = p;
+    let anchorRef = componentRefs[0];
+    componentRefs.forEach(r => {
+      if (axes[axisIndexByRef.get(r)].colors.length > axes[axisIndexByRef.get(anchorRef)].colors.length) {
+        anchorRef = r;
       }
     });
-    const otherPids = componentProcessIds.filter(p => p !== anchorPid);
+    const otherRefs = componentRefs.filter(r => r !== anchorRef);
 
     const mergedColors = [];
-    axes[axisIndexByProcessId.get(anchorPid)].colors.forEach(anchorColor => {
+    axes[axisIndexByRef.get(anchorRef)].colors.forEach(anchorColor => {
       const parts = [anchorColor];
-      const unresolved = otherPids.some(otherPid => {
-        const resolved = _resolveLinkedColor(anchorPid, anchorColor, otherPid, adjacency);
+      const unresolved = otherRefs.some(otherRef => {
+        const resolved = _resolveLinkedColor(anchorRef, anchorColor, otherRef, adjacency);
         if (resolved == null) return true;
         parts.push(resolved);
         return false;
       });
       if (unresolved) {
-        Log.warn('[computeColorGroupsForProcess] Linked processes ' + componentProcessIds.join(', ') +
+        Log.warn('[computeColorGroupsForProcess] Linked axes ' + componentRefs.join(', ') +
           ' have no full color mapping for "' + anchorColor + '" — skipping that combination.');
         return;
       }
       mergedColors.push(parts.join(COLOR_COMBO_DELIMITER));
     });
 
+    // A descriptive label for the merge, built from whichever constituent
+    // axes carry one of their own (see computeColorAxesForProcess — every
+    // tag axis does; a plain pool axis only gets one there too now, so a
+    // pool-only merge here produces the SAME "itemA, itemB" style label a
+    // single pool axis would — unlike before this generalization, when a
+    // merged axis carried no label at all and fell back to a generic
+    // "Color Group N" ordinal downstream).
+    const labelParts = componentRefs
+      .map(r => axes[axisIndexByRef.get(r)].label)
+      .filter(Boolean);
+
     if (mergedColors.length > 0) {
-      mergedAxes.push({ colors: mergedColors });
+      mergedAxes.push({
+        colors: mergedColors,
+        label: labelParts.length > 0 ? labelParts.join(', ') : undefined,
+        source: 'merged'
+      });
     }
-    componentProcessIds.forEach(p => usedAxisIdx.add(axisIndexByProcessId.get(p)));
+    componentRefs.forEach(r => usedAxisIdx.add(axisIndexByRef.get(r)));
   });
 
   const result = axes.filter((axis, idx) => !usedAxisIdx.has(idx));
@@ -1571,37 +1704,273 @@ function _mergeLinkedAxes(axes, colorLinks) {
 
 /**
  * @private
- * Resolves the color on `toPid` that corresponds to `fromColor` on `fromPid`,
- * composing multiple Process Color Link edges when the two processes aren't
- * directly linked but are connected through an intermediate process (e.g.
- * B-D-A). Returns null if no chain of explicit mappings connects them for
- * this specific color value.
+ * Resolves the color on `toRef` that corresponds to `fromColor` on `fromRef`
+ * (both axis references — see _axisLinkRef), composing multiple Process
+ * Color Link edges when the two axes aren't directly linked but are
+ * connected through an intermediate one (e.g. B-D-A). Returns null if no
+ * chain of explicit mappings connects them for this specific color value.
  */
-function _resolveLinkedColor(fromPid, fromColor, toPid, adjacency) {
-  const visited = new Set([fromPid]);
-  const queue = [{ pid: fromPid, color: fromColor }];
+function _resolveLinkedColor(fromRef, fromColor, toRef, adjacency) {
+  const visited = new Set([fromRef]);
+  const queue = [{ ref: fromRef, color: fromColor }];
   while (queue.length > 0) {
-    const { pid, color } = queue.shift();
-    if (pid === toPid) return color;
-    (adjacency.get(pid) || []).forEach(edge => {
-      if (visited.has(edge.otherProcessId)) return;
+    const { ref, color } = queue.shift();
+    if (ref === toRef) return color;
+    (adjacency.get(ref) || []).forEach(edge => {
+      if (visited.has(edge.otherAxisRef)) return;
       const nextColor = edge.map.get(String(color || '').trim().toLowerCase());
       if (nextColor === undefined) return;
-      visited.add(edge.otherProcessId);
-      queue.push({ pid: edge.otherProcessId, color: nextColor });
+      visited.add(edge.otherAxisRef);
+      queue.push({ ref: edge.otherAxisRef, color: nextColor });
     });
   }
   return null;
 }
 
 /**
+ * @private Auto-creates the Process Color Overrides sheet (with header row)
+ * on first use — same self-healing pattern as every other small tag-style
+ * sheet in this app (see initProcessColorLinksSheet).
+ */
+function _initProcessColorOverridesSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(APP_CONFIG.SHEETS.PROCESS_COLOR_OVERRIDES);
+  if (!sheet) sheet = ss.insertSheet(APP_CONFIG.SHEETS.PROCESS_COLOR_OVERRIDES);
+  sheet.getRange(1, 1, 1, 3)
+    .setValues([['Process ID', 'Color', 'Action']])
+    .setFontWeight('bold')
+    .setBackground('#f3f3f3');
+}
+
+/** @private */
+function _getOrCreateProcessColorOverridesSheet() {
+  try {
+    return getSheet(APP_CONFIG.SHEETS.PROCESS_COLOR_OVERRIDES);
+  } catch (e) {
+    _initProcessColorOverridesSheet();
+    return getSheet(APP_CONFIG.SHEETS.PROCESS_COLOR_OVERRIDES);
+  }
+}
+
+/**
+ * @private Full read of every Process Color Overrides row, grouped by
+ * process — read once and shared across a single computation (see
+ * getAllProcessColorGroups) rather than re-reading the sheet per process,
+ * same discipline as colorLinks/poolRows.
+ * @returns {Object} processIdLower -> { included: Map<colorLower,color>, excluded: Set<colorLower> }
+ */
+function _getAllProcessColorOverrides() {
+  let sheet;
+  try {
+    sheet = getSheet(APP_CONFIG.SHEETS.PROCESS_COLOR_OVERRIDES);
+  } catch (e) {
+    return {};
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return {};
+
+  const data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  const result = {};
+  data.forEach(row => {
+    const processId = String(row[PROCESS_COLOR_OVERRIDES_COL.PROCESS_ID - 1] || '').trim();
+    const color = String(row[PROCESS_COLOR_OVERRIDES_COL.COLOR - 1] || '').trim();
+    const action = String(row[PROCESS_COLOR_OVERRIDES_COL.ACTION - 1] || '').trim().toUpperCase();
+    if (!processId || !color) return;
+    const key = processId.toLowerCase();
+    if (!result[key]) result[key] = { included: new Map(), excluded: new Set() };
+    const colorLower = color.toLowerCase();
+    if (action === 'EXCLUDE') {
+      result[key].excluded.add(colorLower);
+      result[key].included.delete(colorLower);
+    } else {
+      result[key].included.set(colorLower, color);
+      result[key].excluded.delete(colorLower);
+    }
+  });
+  return result;
+}
+
+/**
+ * @private Reads just one process's current override rows straight from the
+ * sheet — used right before an upsert (excludeWarehousePoolColors/
+ * includeWarehousePoolColor) so the merge starts from the latest saved
+ * state, not a bulk snapshot taken earlier in an unrelated request.
+ * @returns {Map<string,{color:string,action:string}>} keyed by colorLower
+ */
+function _readProcessColorOverrides(sheet, processId) {
+  const map = new Map();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return map;
+  const pidLower = String(processId || '').trim().toLowerCase();
+  const data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  data.forEach(row => {
+    const rowPid = String(row[PROCESS_COLOR_OVERRIDES_COL.PROCESS_ID - 1] || '').trim();
+    if (rowPid.toLowerCase() !== pidLower) return;
+    const color = String(row[PROCESS_COLOR_OVERRIDES_COL.COLOR - 1] || '').trim();
+    const action = String(row[PROCESS_COLOR_OVERRIDES_COL.ACTION - 1] || '').trim().toUpperCase();
+    if (!color) return;
+    map.set(color.toLowerCase(), { color, action: action === 'EXCLUDE' ? 'EXCLUDE' : 'INCLUDE' });
+  });
+  return map;
+}
+
+/**
+ * @private Upserts one process's full override set in place: deletes every
+ * existing row for this process, then re-appends its current set — same
+ * delete-then-rewrite pattern as _saveProcessColorLinksForProcess,
+ * appropriate here too since one process's override list is always tiny.
+ * @param {Sheet} sheet
+ * @param {string} processId
+ * @param {Map<string,{color:string,action:string}>} overridesMap keyed by colorLower
+ */
+function _writeProcessColorOverrides(sheet, processId, overridesMap) {
+  deleteRowsById(processId, sheet, 2, PROCESS_COLOR_OVERRIDES_COL.PROCESS_ID);
+  const rows = Array.from(overridesMap.values()).map(o => [processId, o.color, o.action]);
+  if (rows.length > 0) {
+    const startRow = sheet.getLastRow() + 1;
+    sheet.getRange(startRow, 1, rows.length, 3).setValues(rows);
+  }
+}
+
+/**
+ * Removes one or more Color/Product-Tag combinations from a process's known
+ * list (see computeColorGroupsForProcess) — the Warehouse Pool breakdown
+ * dialog's per-row and bulk "X" delete actions. Only ever removes a
+ * zero-data PLACEHOLDER combination: any color actually configured on the
+ * process's own recipe (protected — computeColorAxesForProcess/
+ * _legacyColorGroupList) or carrying real Warehouse Pool production/
+ * consumption history is rejected and reported back individually, never
+ * silently skipped. Real history can't be removed here even if we wanted
+ * to — recalculateWarehousePool rebuilds every bucket from that same
+ * history the next time it runs, so "deleting" it would look like it
+ * worked and then silently reappear. This table can only hide zero-data
+ * noise (mainly the wide-open Color Master union), never real
+ * configuration or real data.
+ * @param {string} processId
+ * @param {Array<string>|string} colors
+ */
+function excludeWarehousePoolColors(processId, colors) {
+  try {
+    const pid = String(processId || '').trim();
+    if (!pid) return buildResponse(false, null, 'Process ID is required.');
+    const colorList = (Array.isArray(colors) ? colors : [colors])
+      .map(c => sanitizeString(c || '', 'color'))
+      .filter(Boolean);
+    if (colorList.length === 0) return buildResponse(false, null, 'No colors specified.');
+
+    const componentsResp = getProcessComponentsData(pid);
+    const components = (componentsResp && componentsResp.data) || [];
+    const poolRows = typeof getWarehousePoolData === 'function' ? (getWarehousePoolData().data || []) : [];
+    const colorLinks = _getAllProcessColorLinks();
+    const baseColors = new Set(
+      _computeConfiguredColorGroupsForProcess(pid, components, poolRows, colorLinks).map(c => c.toLowerCase())
+    );
+
+    const pidLower = pid.toLowerCase();
+    const bucketHasHistory = new Set();
+    poolRows.forEach(r => {
+      if (String(r.processId || '').trim().toLowerCase() !== pidLower) return;
+      const cLower = String(r.color || '').trim().toLowerCase();
+      if (!cLower) return;
+      if ((r.producedQty || 0) !== 0 || (r.consumedQty || 0) !== 0) bucketHasHistory.add(cLower);
+    });
+
+    const removed = [];
+    const blocked = [];
+    colorList.forEach(c => {
+      const cLower = c.toLowerCase();
+      if (baseColors.has(cLower)) { blocked.push(`${c} (configured on this process's recipe)`); return; }
+      if (bucketHasHistory.has(cLower)) { blocked.push(`${c} (has real production/consumption history)`); return; }
+      removed.push(c);
+    });
+
+    if (removed.length > 0) {
+      const sheet = _getOrCreateProcessColorOverridesSheet();
+      const overrides = _readProcessColorOverrides(sheet, pid);
+      removed.forEach(c => overrides.set(c.toLowerCase(), { color: c, action: 'EXCLUDE' }));
+      _writeProcessColorOverrides(sheet, pid, overrides);
+      logAction('EXCLUDE', APP_CONFIG.SHEETS.PROCESS_COLOR_OVERRIDES, pid, `Removed combination(s): ${removed.join(', ')}`, 'SUCCESS');
+    }
+
+    const message = blocked.length === 0
+      ? `Removed ${removed.length} combination(s).`
+      : (removed.length > 0
+        ? `Removed ${removed.length} combination(s). ${blocked.length} skipped (can't be removed): ${blocked.join('; ')}.`
+        : `Nothing removed — can't be removed: ${blocked.join('; ')}.`);
+
+    return buildResponse(removed.length > 0 || blocked.length === 0, { removed, blocked }, message);
+  } catch (error) {
+    Log.error('[excludeWarehousePoolColors] Error:', error.message);
+    return buildResponse(false, null, 'Failed to remove combination(s): ' + error.message);
+  }
+}
+
+/**
+ * Force-adds one color as a known combination for a process — the
+ * Warehouse Pool breakdown dialog's "Add Combination" button. Also how a
+ * prior exclusion gets undone: re-adding the same color overwrites its
+ * EXCLUDE row with INCLUDE (see _writeProcessColorOverrides — one row per
+ * (process, color), always the current state, never a growing log).
+ * @param {string} processId
+ * @param {string} color
+ */
+function includeWarehousePoolColor(processId, color) {
+  try {
+    const pid = String(processId || '').trim();
+    const c = sanitizeString(color || '', 'color');
+    if (!pid) return buildResponse(false, null, 'Process ID is required.');
+    if (!c) return buildResponse(false, null, 'Color name is required.');
+
+    const allProcesses = typeof _getAllProcessRecords === 'function' ? _getAllProcessRecords() : [];
+    if (!allProcesses.some(p => p.processId.toLowerCase() === pid.toLowerCase())) {
+      return buildResponse(false, null, `Process "${pid}" was not found.`);
+    }
+
+    const sheet = _getOrCreateProcessColorOverridesSheet();
+    const overrides = _readProcessColorOverrides(sheet, pid);
+    const cLower = c.toLowerCase();
+    if (overrides.has(cLower) && overrides.get(cLower).action === 'INCLUDE') {
+      return buildResponse(false, null, `"${c}" is already a known combination for this process.`);
+    }
+    overrides.set(cLower, { color: c, action: 'INCLUDE' });
+    _writeProcessColorOverrides(sheet, pid, overrides);
+    logAction('INCLUDE', APP_CONFIG.SHEETS.PROCESS_COLOR_OVERRIDES, pid, `Added combination: ${c}`, 'SUCCESS');
+    return buildResponse(true, { color: c }, `"${c}" added as a known combination for this process.`);
+  } catch (error) {
+    Log.error('[includeWarehousePoolColor] Error:', error.message);
+    return buildResponse(false, null, 'Failed to add combination: ' + error.message);
+  }
+}
+
+/**
  * Bulk variant of getProcessColorGroups — returns every process's color
- * groups in one call, keyed by Process ID. Reads Process Components and
- * Warehouse Pool ONCE (not once per process — see computeColorGroupsForProcess)
- * so this stays fast regardless of process count. Used by the Warehouse Pool
- * table to list every known color variant of each process (not just the ones
- * that already have a stock bucket), so the user can add initial/opening
- * stock for a variant that hasn't produced anything yet.
+ * groups in one call, keyed by Process ID, as { colors, removable }.
+ * `colors` is the Warehouse-Pool-scoped known list (recipe/pool-detected +
+ * INCLUDE overrides, minus EXCLUDE overrides — see computeColorGroupsForProcess)
+ * — deliberately NOT widened to the full Color Master the way
+ * getProcessColorGroups (singular, the Production checklist's own call
+ * path) is. That widening is offering-side flexibility for what the
+ * operator can pick when logging a lot; this bulk variant feeds the
+ * Warehouse Pool breakdown dialog's zero-qty placeholder rows, where
+ * unioning in every Color Master entry regardless of relevance just
+ * produces one placeholder row per unused color per process — real clutter,
+ * not real flexibility (the "+ Add Combination" override, via
+ * includeWarehousePoolColor, is the correct opt-in escape hatch for a
+ * specific color on a specific process, and still works exactly the same
+ * regardless of this scoping). Passing an empty array here (instead of the
+ * real Color Master list) short-circuits computeColorGroupsForProcess's own
+ * `colorMasterNames || _getColorMasterNames()` fallback into a no-op widen.
+ * `removable` is the subset of `colors` NOT configured on the process's own
+ * recipe (i.e. safe to pass to excludeWarehousePoolColors) — the Warehouse
+ * Pool breakdown dialog uses it to decide which zero-qty placeholder rows
+ * get an enabled delete action versus a protected/disabled one; with the
+ * widening gone, this is now just the manually-INCLUDEd colors. Reads
+ * Process Components, Warehouse Pool, and both override sheets ONCE (not
+ * once per process — see computeColorGroupsForProcess) so this stays fast
+ * regardless of process count. Used by the Warehouse Pool table to list
+ * every known color variant of each process (not just the ones that
+ * already have a stock bucket), so the user can add initial/opening stock
+ * for a variant that hasn't produced anything yet.
  */
 function getAllProcessColorGroups() {
   try {
@@ -1619,12 +1988,20 @@ function getAllProcessColorGroups() {
     const poolResp = typeof getWarehousePoolData === 'function' ? getWarehousePoolData() : null;
     const poolRows = (poolResp && poolResp.data) || [];
     const colorLinks = _getAllProcessColorLinks();
-    const colorMasterNames = _getColorMasterNames();
+    const overridesByProcess = _getAllProcessColorOverrides();
 
     const result = {};
     processes.forEach(p => {
       const components = componentsByProcess.get(p.processId) || [];
-      result[p.processId] = computeColorGroupsForProcess(components, poolRows, colorLinks, colorMasterNames);
+      const overrides = overridesByProcess[p.processId.toLowerCase()];
+      const baseColors = _computeConfiguredColorGroupsForProcess(p.processId, components, poolRows, colorLinks);
+      // [] (not the real Color Master list) — see doc comment above.
+      const colors = computeColorGroupsForProcess(p.processId, components, poolRows, colorLinks, [], overrides);
+      const baseLower = new Set(baseColors.map(c => c.toLowerCase()));
+      result[p.processId] = {
+        colors,
+        removable: colors.filter(c => !baseLower.has(c.toLowerCase()))
+      };
     });
 
     return buildResponse(true, result);
@@ -1779,7 +2156,7 @@ function initProcessColorLinksSheet() {
     sheet = ss.insertSheet(APP_CONFIG.SHEETS.PROCESS_COLOR_LINKS);
   }
 
-  const headers = ['Process A ID', 'Color A', 'Process B ID', 'Color B'];
+  const headers = ['Process A ID', 'Color A', 'Process B ID', 'Color B', 'Axis A Key', 'Axis B Key'];
   sheet.getRange(1, 1, 1, headers.length)
     .setValues([headers])
     .setFontWeight('bold')
@@ -1790,11 +2167,34 @@ function initProcessColorLinksSheet() {
 
 /**
  * @private
+ * Lazily backfills the AXIS_A_KEY/AXIS_B_KEY columns onto a Process Color
+ * Links sheet saved before same-process/tag-axis pairing existed — same
+ * pattern as module_warehouse.js's ensureWarehousePoolColorColumn. No value
+ * migration is needed alongside the column insert: blank IS the correct,
+ * fully-compatible value for every pre-existing row (see
+ * PROCESS_COLOR_LINKS_COL's doc comment).
+ */
+function ensureProcessColorLinksAxisColumns(sheet) {
+  try {
+    if (sheet.getLastColumn() < PROCESS_COLOR_LINKS_COL.AXIS_B_KEY) {
+      sheet.insertColumnsAfter(sheet.getLastColumn(), PROCESS_COLOR_LINKS_COL.AXIS_B_KEY - sheet.getLastColumn());
+      sheet.getRange(1, PROCESS_COLOR_LINKS_COL.AXIS_A_KEY, 1, 2)
+        .setValues([['Axis A Key', 'Axis B Key']])
+        .setFontWeight('bold')
+        .setBackground('#f3f3f3');
+    }
+  } catch (error) {
+    Log.error('[ensureProcessColorLinksAxisColumns] Error:', error.message);
+  }
+}
+
+/**
+ * @private
  * Full read of every Process Color Links row. Read once and shared across a
  * single computation (see computeColorGroupsForProcess) rather than
  * re-reading the sheet per process — same discipline as poolRows in
  * getAllProcessColorGroups.
- * @returns {Array<{processAId: string, colorA: string, processBId: string, colorB: string}>}
+ * @returns {Array<{processAId: string, colorA: string, processBId: string, colorB: string, axisAKey: string, axisBKey: string}>}
  */
 function _getAllProcessColorLinks() {
   let sheet;
@@ -1803,17 +2203,20 @@ function _getAllProcessColorLinks() {
   } catch (e) {
     return [];
   }
+  ensureProcessColorLinksAxisColumns(sheet);
 
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  const data = sheet.getRange(2, 1, lastRow - 1, 4).getValues();
+  const data = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
   return data
     .map(row => ({
       processAId: String(row[PROCESS_COLOR_LINKS_COL.PROCESS_A_ID - 1] || '').trim(),
       colorA: String(row[PROCESS_COLOR_LINKS_COL.COLOR_A - 1] || '').trim(),
       processBId: String(row[PROCESS_COLOR_LINKS_COL.PROCESS_B_ID - 1] || '').trim(),
-      colorB: String(row[PROCESS_COLOR_LINKS_COL.COLOR_B - 1] || '').trim()
+      colorB: String(row[PROCESS_COLOR_LINKS_COL.COLOR_B - 1] || '').trim(),
+      axisAKey: String(row[PROCESS_COLOR_LINKS_COL.AXIS_A_KEY - 1] || '').trim(),
+      axisBKey: String(row[PROCESS_COLOR_LINKS_COL.AXIS_B_KEY - 1] || '').trim()
     }))
     .filter(r => r.processAId && r.colorA && r.processBId && r.colorB);
 }
@@ -1843,14 +2246,18 @@ function getProcessColorLinksData(processId) {
           otherProcessId: link.processBId,
           otherProcessName: processNameById[link.processBId.toLowerCase()] || link.processBId,
           myColor: link.colorA,
-          theirColor: link.colorB
+          theirColor: link.colorB,
+          myAxisKey: link.axisAKey,
+          theirAxisKey: link.axisBKey
         });
       } else if (link.processBId.toLowerCase() === targetId) {
         records.push({
           otherProcessId: link.processAId,
           otherProcessName: processNameById[link.processAId.toLowerCase()] || link.processAId,
           myColor: link.colorB,
-          theirColor: link.colorA
+          theirColor: link.colorA,
+          myAxisKey: link.axisBKey,
+          theirAxisKey: link.axisAKey
         });
       }
     });
@@ -1868,11 +2275,20 @@ function getProcessColorLinksData(processId) {
  * Runs under the caller's existing document lock (called from saveProcess)
  * — does not acquire its own. Mirrors _saveProcessComponentsForProcess's
  * delete-then-append replace pattern. `links` is the flat
- * {otherProcessId, myColor, theirColor} shape getProcessColorLinksData
- * returns; this process is always re-written as Process A on save regardless
- * of which side originally created the row.
+ * {otherProcessId, myColor, theirColor, myAxisKey, theirAxisKey} shape
+ * getProcessColorLinksData returns (axis keys optional/blank for a plain
+ * cross-process pool-axis link, unchanged from before they existed); this
+ * process is always re-written as Process A on save regardless of which
+ * side originally created the row.
+ *
+ * otherProcessId === processId (a same-process link, pairing two of this
+ * process's OWN axes — e.g. tag-based Rim Color <-> Mudguard Color) is only
+ * accepted when BOTH axis keys are given and differ; a same-process row with
+ * a blank/matching axis key is meaningless (there is no "this process's own
+ * pool axis, paired with itself") and is dropped exactly like before axis
+ * keys existed, when self-links were rejected unconditionally.
  * @param {string} processId
- * @param {Array<{otherProcessId: string, myColor: string, theirColor: string}>} links
+ * @param {Array<{otherProcessId: string, myColor: string, theirColor: string, myAxisKey?: string, theirAxisKey?: string}>} links
  */
 function _saveProcessColorLinksForProcess(processId, links) {
   let sheet;
@@ -1882,6 +2298,7 @@ function _saveProcessColorLinksForProcess(processId, links) {
     initProcessColorLinksSheet();
     sheet = getSheet(APP_CONFIG.SHEETS.PROCESS_COLOR_LINKS);
   }
+  ensureProcessColorLinksAxisColumns(sheet);
 
   deleteRowsById(processId, sheet, 2, PROCESS_COLOR_LINKS_COL.PROCESS_A_ID);
   deleteRowsById(processId, sheet, 2, PROCESS_COLOR_LINKS_COL.PROCESS_B_ID);
@@ -1894,17 +2311,22 @@ function _saveProcessColorLinksForProcess(processId, links) {
     .map(link => ({
       otherProcessId: sanitizeString(link.otherProcessId || '', 'otherProcessId'),
       myColor: sanitizeString(link.myColor || '', 'myColor'),
-      theirColor: sanitizeString(link.theirColor || '', 'theirColor')
+      theirColor: sanitizeString(link.theirColor || '', 'theirColor'),
+      myAxisKey: sanitizeString(link.myAxisKey || '', 'myAxisKey'),
+      theirAxisKey: sanitizeString(link.theirAxisKey || '', 'theirAxisKey')
     }))
-    .filter(link =>
-      link.otherProcessId && link.myColor && link.theirColor &&
-      link.otherProcessId.toLowerCase() !== selfLower &&
-      validProcessIds.has(link.otherProcessId.toLowerCase())
-    )
-    .map(link => [processId, link.myColor, link.otherProcessId, link.theirColor]);
+    .filter(link => {
+      if (!link.otherProcessId || !link.myColor || !link.theirColor) return false;
+      const isSelf = link.otherProcessId.toLowerCase() === selfLower;
+      if (isSelf) {
+        return !!link.myAxisKey && !!link.theirAxisKey && link.myAxisKey.toLowerCase() !== link.theirAxisKey.toLowerCase();
+      }
+      return validProcessIds.has(link.otherProcessId.toLowerCase());
+    })
+    .map(link => [processId, link.myColor, link.otherProcessId, link.theirColor, link.myAxisKey, link.theirAxisKey]);
 
   if (rowsToWrite.length > 0) {
     const startRow = sheet.getLastRow() + 1;
-    sheet.getRange(startRow, 1, rowsToWrite.length, 4).setValues(rowsToWrite);
+    sheet.getRange(startRow, 1, rowsToWrite.length, 6).setValues(rowsToWrite);
   }
 }
