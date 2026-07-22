@@ -1,12 +1,21 @@
 """
-Repro script: does the "Colors to Produce" checklist in the Production
-form show every Color Master entry, instead of just the process's own
-configured color sub-groups, when the process DOES have color sub-groups?
+Verifies the 2026-07-22 "always show every Color Master color" change: the
+"Colors to Produce" checklist on the Production form must offer the FULL
+Color Master list once a process has any color sub-group at all, not just
+the colors this specific process's own recipe/pool history happens to have
+touched so far (see computeColorGroupsForProcess in module_process.js).
+
+Supersedes the old repro_color_checklist_full_list.py, which asserted the
+OPPOSITE (that the checklist must stay scoped to just the process's own 2
+colors) — that was the deliberate pre-2026-07-22 behavior; the user asked
+for it to be relaxed specifically because a not-yet-produced/not-yet-tagged
+Color Master color was invisible on the form. This script mocks
+getProcessColorGroups as the real (now-widened) backend would answer: the
+process's own 2 tag-based colors plus the rest of a 5-color Color Master.
 
 App.State.globalColors is seeded with 5 colors; getProcessColorGroups is
-mocked to return only 2 of them ("Blue", "Orange-White") for the selected
-process. If the checklist is correctly scoped, exactly 2 rows should
-render. If the bug is real, 5 (or more) rows will render.
+mocked to return all 5 (simulating the widened backend response) for a
+process whose recipe only explicitly tags 2 of them. All 5 must render.
 """
 import sys
 import io
@@ -37,7 +46,10 @@ MOCK_ITEMS = [
     {"name": "Frame---Orange-White", "size": "General"},
 ]
 
-# Color Master has 5 colors total; the process only uses 2 of them.
+# Color Master has 5 colors total; the process's recipe only explicitly
+# tags 2 of them ("Blue", "Orange-White") — the other 3 must still show up
+# on the checklist now that the backend always widens to the full master
+# list once a process is color-enabled at all.
 MOCK_GLOBAL_COLORS = [
     {"name": "Blue", "remarks": ""},
     {"name": "Orange-White", "remarks": ""},
@@ -45,9 +57,12 @@ MOCK_GLOBAL_COLORS = [
     {"name": "Green", "remarks": ""},
     {"name": "Black", "remarks": ""},
 ]
+ALL_COLOR_NAMES = {c["name"] for c in MOCK_GLOBAL_COLORS}
 
 MOCK_API_RESPONSES = {
-    "getProcessColorGroups": {"success": True, "data": ["Blue", "Orange-White"]},
+    # Simulates the real (post-2026-07-22) computeColorGroupsForProcess:
+    # the 2 recipe-tagged colors unioned with the full Color Master list.
+    "getProcessColorGroups": {"success": True, "data": sorted(ALL_COLOR_NAMES)},
     "getProcessComponentsData": {"success": True, "data": MOCK_COMPONENTS},
     "getWarehousePoolData": {"success": True, "data": []},
     "getProcessWipData": {"success": True, "data": []},
@@ -91,7 +106,7 @@ def run():
             }};
         """)
 
-        print("[Step 1] Open Create modal, select the process (which HAS 2 color sub-groups)...")
+        print("[Step 1] Open Create modal, select the process (recipe tags 2 of 5 Color Master colors)...")
         page.evaluate("App.Production.openCreateModal()")
         page.locator("#editProductionModal").wait_for(state="visible", timeout=TIMEOUT)
 
@@ -110,16 +125,17 @@ def run():
         print(f"  Colors shown: {colors_shown}")
         print(f"  Color Master total size: {len(MOCK_GLOBAL_COLORS)}")
 
-        bug = rows.count() != 2 or set(colors_shown) != {"Blue", "Orange-White"}
-        if bug:
-            print("  ❌ BUG REPRODUCED: checklist does not match the process's own 2 color sub-groups.")
+        ok = rows.count() == len(ALL_COLOR_NAMES) and set(colors_shown) == ALL_COLOR_NAMES
+        if ok:
+            print("  ✅ Checklist shows the full Color Master list, not just this process's 2 tagged colors.")
         else:
-            print("  ✅ Checklist correctly scoped to just this process's 2 color sub-groups.")
+            print("  ❌ Checklist did not widen to the full Color Master list as expected.")
 
         addColorsBtnVisible = page.evaluate("""
             (() => { const el = document.getElementById('productionAddColorsBtn'); return el && el.style.display !== 'none'; })()
         """)
         print(f"  '+ Add Colors to this Lot' button visible: {addColorsBtnVisible} (should be False when process already has color sub-groups)")
+        ok = ok and not addColorsBtnVisible
 
         if console_errors:
             print("\n⚠️  Console/page errors:")
@@ -127,7 +143,7 @@ def run():
                 print(f"    {e}")
 
         browser.close()
-        return not bug
+        return ok
 
 
 if __name__ == "__main__":

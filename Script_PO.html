@@ -372,15 +372,12 @@
               if ($el.data('select2')) {
                 $el.select2('destroy');
               }
-              const parentModal = $el.closest('.modal');
               const select2Options = {
                 tags: true,
                 placeholder: 'Select or type new vendor…',
-                width: '100%'
+                width: '100%',
+                dropdownParent: App.Utils.select2DropdownParent($el)
               };
-              if (parentModal.length) {
-                select2Options.dropdownParent = parentModal;
-              }
               $el.select2(select2Options)
                 .off('change.vendorSelect')
                 .on('change.vendorSelect', function () {
@@ -423,8 +420,7 @@
           if (formTitle)
             formTitle.innerText = `Create New Purchase Order (Draft #${this.getNextPoNumber()})`;
 
-          const submitBtn = document.getElementById('poSubmitBtn');
-          if (submitBtn) submitBtn.innerText = 'Generate Purchase Order';
+          App.Utils.setFormButtonsForMode('poCancelBtn', 'poExitBtn', 'poSubmitBtn', false, 'Generate Purchase Order');
 
           const poDateInput = document.querySelector(
             'input[type="date"][name="poDate"]'
@@ -538,8 +534,7 @@
           if (formTitle)
             formTitle.innerText = `Edit Purchase Order #${po.poNumber}`;
 
-          const submitBtn = document.getElementById('poSubmitBtn');
-          if (submitBtn) submitBtn.innerText = 'Update Database';
+          App.Utils.setFormButtonsForMode('poCancelBtn', 'poExitBtn', 'poSubmitBtn', true, 'Save');
 
           const poDateInput = document.querySelector(
             'input[type="date"][name="poDate"]'
@@ -586,6 +581,14 @@
 
           this.refreshRowSizeLists();
           this.refreshRowNarrationLists();
+
+          App.Nav.register(
+            'editPoModal',
+            App.State.filteredPOs.map(p => App.State.globalPOs.indexOf(p)),
+            index,
+            (i) => this.openEditModal(i)
+          );
+
           safeModalShow('editPoModal');
         },
 

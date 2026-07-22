@@ -482,8 +482,7 @@
           const modalTitle = document.getElementById('billModalTitle');
           if (modalTitle) modalTitle.innerText = 'Log Incoming Invoice / Bill';
 
-          const submitBtn = document.getElementById('billSubmitBtn');
-          if (submitBtn) submitBtn.innerText = 'Record Itemized Bill';
+          App.Utils.setFormButtonsForMode('billCancelBtn', 'billExitBtn', 'billSubmitBtn', false, 'Record Itemized Bill');
 
           const billDateInput = document.getElementById('billDateInput');
           if (billDateInput) billDateInput.value = todayIso();
@@ -550,8 +549,7 @@
           const modalTitle = document.getElementById('billModalTitle');
           if (modalTitle) modalTitle.innerText = `Edit Invoice / Bill #${bill.billNumber}`;
 
-          const submitBtn = document.getElementById('billSubmitBtn');
-          if (submitBtn) submitBtn.innerText = 'Update Bill';
+          App.Utils.setFormButtonsForMode('billCancelBtn', 'billExitBtn', 'billSubmitBtn', true, 'Save');
 
           const vendorSelect = document.getElementById('billVendor');
           if (vendorSelect) {
@@ -598,6 +596,14 @@
 
           this.refreshRowSizeLists();
           this.refreshRowNarrationLists();
+
+          App.Nav.register(
+            'receiveBillModal',
+            App.State.filteredBills.map(b => App.State.globalBills.indexOf(b)),
+            index,
+            (i) => this.openEditModal(i)
+          );
+
           safeModalShow('receiveBillModal');
         },
 

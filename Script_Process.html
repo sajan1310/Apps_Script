@@ -596,7 +596,7 @@
         }
 
         document.getElementById('processFormTitle').innerText = 'Add Process';
-        document.getElementById('processSubmitBtn').innerText = 'Save Process';
+        App.Utils.setFormButtonsForMode('processCancelBtn', 'processExitBtn', 'processSubmitBtn', false, 'Save Process');
         this.toggleImportBar(true);
 
         const modalEl = document.getElementById('editProcessModal');
@@ -664,8 +664,15 @@
         }
 
         document.getElementById('processFormTitle').innerText = `Edit Process: ${p.processName}`;
-        document.getElementById('processSubmitBtn').innerText = 'Update Process';
+        App.Utils.setFormButtonsForMode('processCancelBtn', 'processExitBtn', 'processSubmitBtn', true, 'Save');
         this.toggleImportBar(false);
+
+        App.Nav.register(
+          'editProcessModal',
+          App.State.filteredProcesses.map(proc => App.State.globalProcesses.indexOf(proc)),
+          Number(idx),
+          (i) => this.openEditModal(i)
+        );
 
         const modalEl = document.getElementById('editProcessModal');
         if (modalEl && typeof bootstrap !== 'undefined') {
@@ -751,7 +758,7 @@
         if (primaryPicker) primaryPicker.value = p.primaryColorAxis && this.collectColorAxisLabels().includes(p.primaryColorAxis) ? p.primaryColorAxis : '';
 
         document.getElementById('processFormTitle').innerText = `Duplicate Process (from ${p.processId})`;
-        document.getElementById('processSubmitBtn').innerText = 'Save Process';
+        App.Utils.setFormButtonsForMode('processCancelBtn', 'processExitBtn', 'processSubmitBtn', false, 'Save Process');
         this.toggleImportBar(true);
       },
 
@@ -891,15 +898,13 @@
         selectEl.innerHTML = '';
         if (currentValue) selectEl.add(new Option(currentValue, currentValue, true, true));
 
-        const $parentModal = $select.closest('.modal');
-
         $select.select2({
           placeholder: 'Search or type contractor...',
           width: '100%',
           tags: true,
           allowClear: true,
           matcher: App.Utils.select2Matcher,
-          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+          dropdownParent: App.Utils.select2DropdownParent($select),
           data: (App.State.globalContractors || []).map(c => ({ id: c.name, text: c.name })),
           createTag(params) {
             const term = (params.term || '').trim();
@@ -1212,13 +1217,12 @@
 
         const $select = window.jQuery(selectEl);
         const PAGE_SIZE = 40;
-        const $parentModal = $select.closest('.modal');
 
         $select.select2({
           placeholder: 'Search or type a new item...',
           width: '100%',
           tags: true,
-          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+          dropdownParent: App.Utils.select2DropdownParent($select),
           ajax: {
             delay: 150,
             data(params) {
@@ -1585,13 +1589,12 @@
         if (!selectEl || !window.jQuery?.fn?.select2) return;
 
         const $select = window.jQuery(selectEl);
-        const $parentModal = $select.closest('.modal');
         $select.select2({
           placeholder: 'Choose or type a name...',
           width: '100%',
           tags: true,
           matcher: App.Utils.select2Matcher,
-          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+          dropdownParent: App.Utils.select2DropdownParent($select),
           createTag(params) {
             const term = (params.term || '').trim();
             if (!term) return null;
@@ -1784,12 +1787,11 @@
 
         if (window.jQuery?.fn?.select2) {
           const $select = window.jQuery(selectEl);
-          const $parentModal = $select.closest('.modal');
           $select.select2({
             placeholder: 'Choose a process...',
             width: '100%',
             matcher: App.Utils.select2Matcher,
-            dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body)
+            dropdownParent: App.Utils.select2DropdownParent($select)
           });
         }
         selectEl.addEventListener('change', () => {
@@ -1968,8 +1970,19 @@
               }
 
               if (isEdit) {
-                const modalEl = document.getElementById('editProcessModal');
-                if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+                // Save (edit mode): stay open on the SAME process instead of
+                // closing — Exit (App.Nav.exit) is the only way to close
+                // from here now. processId is server-assigned and never
+                // user-editable (duplicateProcess explicitly clears it to
+                // signal "this is really a create"), so it's a safe stable
+                // key to re-find this record by after the reload.
+                const freshIdx = App.State.globalProcesses.findIndex(p => p.processId === formData.processId);
+                if (freshIdx !== -1) {
+                  App.Process.openEditModal(freshIdx);
+                } else {
+                  const modalEl = document.getElementById('editProcessModal');
+                  if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+                }
               } else {
                 await App.Process.openCreateModal();
               }

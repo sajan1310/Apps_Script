@@ -568,12 +568,11 @@
 
         if (window.jQuery?.fn?.select2) {
           const $s = window.jQuery(select);
-          const $modal = $s.closest('.modal');
           $s.select2({
             placeholder: 'Choose a Product...',
             width: '100%',
             matcher: App.Utils.select2Matcher,
-            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+            dropdownParent: App.Utils.select2DropdownParent($s)
           });
         }
       },
@@ -617,12 +616,11 @@
           window.jQuery(dispatchClientEl).select2('destroy');
         App.Client.populateClientSelect(dispatchClientEl);
         if (dispatchClientEl && window.jQuery?.fn?.select2) {
-          const $modal = window.jQuery(dispatchClientEl).closest('.modal');
           window.jQuery(dispatchClientEl).select2({
             placeholder: 'Choose a Client...',
             width: '100%',
             matcher: App.Utils.select2Matcher,
-            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+            dropdownParent: App.Utils.select2DropdownParent(window.jQuery(dispatchClientEl))
           });
         }
 
@@ -645,7 +643,7 @@
         document.getElementById('dispatchLogisticsCostHint').innerText = '';
 
         document.getElementById('dispatchFormTitle').innerText = 'New Dispatch';
-        document.getElementById('dispatchSubmitBtn').innerText = 'Save Dispatch';
+        App.Utils.setFormButtonsForMode('dispatchCancelBtn', 'dispatchExitBtn', 'dispatchSubmitBtn', false, 'Save Dispatch');
 
         safeModalShow('dispatchModal');
       },
@@ -661,15 +659,13 @@
         selectEl.innerHTML = '';
         if (currentValue) selectEl.add(new Option(currentValue, currentValue, true, true));
 
-        const $parentModal = $select.closest('.modal');
-
         $select.select2({
           placeholder: 'Search or type a logistics contractor...',
           width: '100%',
           tags: true,
           allowClear: true,
           matcher: App.Utils.select2Matcher,
-          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+          dropdownParent: App.Utils.select2DropdownParent($select),
           data: (App.State.globalContractors || []).map(c => ({ id: c.name, text: c.name })),
           createTag(params) {
             const term = (params.term || '').trim();
@@ -759,12 +755,11 @@
         App.Client.populateClientSelect(editDispatchClientEl);
         if (editDispatchClientEl) editDispatchClientEl.value = d.clientName || '';
         if (editDispatchClientEl && window.jQuery?.fn?.select2) {
-          const $modal = window.jQuery(editDispatchClientEl).closest('.modal');
           window.jQuery(editDispatchClientEl).select2({
             placeholder: 'Choose a Client...',
             width: '100%',
             matcher: App.Utils.select2Matcher,
-            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+            dropdownParent: App.Utils.select2DropdownParent(window.jQuery(editDispatchClientEl))
           });
           window.jQuery(editDispatchClientEl).trigger('change.select2');
         }
@@ -779,7 +774,14 @@
         this.refreshLogisticsCostHint();
 
         document.getElementById('dispatchFormTitle').innerText = `Edit Dispatch: ${d.dispatchNumber}`;
-        document.getElementById('dispatchSubmitBtn').innerText = 'Update Dispatch';
+        App.Utils.setFormButtonsForMode('dispatchCancelBtn', 'dispatchExitBtn', 'dispatchSubmitBtn', true, 'Save');
+
+        App.Nav.register(
+          'dispatchModal',
+          App.State.filteredDispatch.map(disp => App.State.globalDispatch.indexOf(disp)),
+          Number(idx),
+          (i) => this.openEditDispatchModal(i)
+        );
 
         safeModalShow('dispatchModal');
       }
@@ -803,7 +805,16 @@
               await App.Dispatch.loadDispatchData();
               await App.Dispatch.loadReadyData();
               if (isEdit) {
-                safeModalHide('dispatchModal');
+                // Save (edit mode): stay open on the SAME dispatch instead
+                // of closing — Exit (App.Nav.exit) is the only way to close
+                // from here now. rowIdx is the sheet row number, stable
+                // across a reload for an in-place edit.
+                const freshIdx = App.State.globalDispatch.findIndex(d => String(d.rowIdx) === String(formData.dispatchRowIdx));
+                if (freshIdx !== -1) {
+                  App.Dispatch.openEditDispatchModal(freshIdx);
+                } else {
+                  safeModalHide('dispatchModal');
+                }
               } else {
                 App.Dispatch.openCreateDispatchModal('');
               }

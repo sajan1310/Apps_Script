@@ -133,9 +133,15 @@ def run():
         assert "Premium variant" in remarks, f"Remarks mismatch: {remarks}"
         print("  ✅ Remarks pre-filled correctly")
 
+        # 2026-07-22: edit-mode footer switched from a single "Update Product
+        # BOM" button to Save (stays open) + Exit (App.Nav.exit) — see
+        # verify_item_bom_process_save_exit.py for that behavior's coverage.
         submit_text = page.locator("#bomSubmitBtn").inner_text()
-        assert "Update" in submit_text, f"Expected 'Update' in button text, got: {submit_text}"
-        print("  ✅ Submit button says 'Update Product BOM'")
+        assert submit_text.strip() == "Save", f"Expected 'Save' button text in edit mode, got: {submit_text}"
+        print("  ✅ Submit button says 'Save'")
+        exit_visible = page.locator("#bomExitBtn").is_visible()
+        assert exit_visible, "Expected Exit button visible in edit mode"
+        print("  ✅ Exit button visible")
 
         # ─────────────────────────────────────────────────────────────
         # SCENARIO 2: Multi-group rendering

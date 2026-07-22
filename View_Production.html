@@ -337,7 +337,8 @@
         </fieldset>
 
           <div class="text-end mt-4">
-            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="productionCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="productionExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('editProductionModal')">Exit</button>
             <button type="submit" id="productionSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save Production Record</button>
           </div>
         </form>

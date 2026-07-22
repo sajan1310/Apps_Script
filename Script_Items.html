@@ -1144,8 +1144,7 @@
           const title = document.getElementById('itemFormTitle');
           if (title) title.innerText = 'Register New Master Item';
 
-          const submitBtn = document.getElementById('itemSubmitBtn');
-          if (submitBtn) submitBtn.innerText = 'Save Item Record';
+          App.Utils.setFormButtonsForMode('itemCancelBtn', 'itemExitBtn', 'itemSubmitBtn', false, 'Save Item Record');
 
           const stockRow = document.getElementById('initialStockRow');
           if (stockRow) stockRow.style.display = '';
@@ -1184,8 +1183,7 @@
           const title = document.getElementById('itemFormTitle');
           if (title) title.innerText = 'Edit Master Item';
 
-          const submitBtn = document.getElementById('itemSubmitBtn');
-          if (submitBtn) submitBtn.innerText = 'Update Item Record';
+          App.Utils.setFormButtonsForMode('itemCancelBtn', 'itemExitBtn', 'itemSubmitBtn', true, 'Save');
 
           const stockRow = document.getElementById('initialStockRow');
           if (stockRow) stockRow.style.display = '';
@@ -1217,6 +1215,13 @@
               ? item.vendors.map(v => this.getVendorRowHtml(v)).join('')
               : this.getVendorRowHtml();
           }
+
+          App.Nav.register(
+            'itemModal',
+            App.State.filteredItems.map(i => [i.name || '', i.size || '']),
+            [item.name || '', item.size || ''],
+            ([n, s]) => this.openEditModal(n, s)
+          );
 
           safeModalShow('itemModal');
         },
@@ -1486,13 +1491,13 @@
           if (!window.jQuery?.fn?.select2) return;
           const PAGE_SIZE = 40;
           const items = this._driftTargetItems || [];
-          const $modal = window.jQuery('#itemDriftModal');
 
           document.querySelectorAll('.drift-target-select').forEach(el => {
-            window.jQuery(el).select2({
+            const $el = window.jQuery(el);
+            $el.select2({
               placeholder: 'Repoint to…',
               width: '100%',
-              dropdownParent: $modal.length ? $modal : window.jQuery(document.body),
+              dropdownParent: App.Utils.select2DropdownParent($el),
               ajax: {
                 delay: 150,
                 data(params) {
@@ -2377,12 +2382,11 @@
 
         if (window.jQuery?.fn?.select2) {
           const $s = window.jQuery(select);
-          const $modal = $s.closest('.modal');
           $s.select2({
             placeholder: 'Import from Process...',
             width: '100%',
             matcher: App.Utils.select2Matcher,
-            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+            dropdownParent: App.Utils.select2DropdownParent($s)
           });
         }
       },
@@ -2566,7 +2570,7 @@
         document.getElementById('bomProductId').value = '';
         document.getElementById('bomVisibleProductId').value = 'Generating...';
         document.getElementById('bomFormTitle').innerText = 'Create Product BOM';
-        document.getElementById('bomSubmitBtn').innerText = 'Save Product BOM';
+        App.Utils.setFormButtonsForMode('bomCancelBtn', 'bomExitBtn', 'bomSubmitBtn', false, 'Save Product BOM');
 
         this.clearGroupsContainer();
         this.addGroup('General'); // Add first default process group with an empty row
@@ -2600,7 +2604,7 @@
         document.getElementById('bomProductName').value = bom.productName;
         document.getElementById('bomRemarks').value = bom.remarks || '';
         document.getElementById('bomFormTitle').innerText = `Edit Product BOM: ${bom.productId}`;
-        document.getElementById('bomSubmitBtn').innerText = 'Update Product BOM';
+        App.Utils.setFormButtonsForMode('bomCancelBtn', 'bomExitBtn', 'bomSubmitBtn', true, 'Save');
 
         this.clearGroupsContainer();
         this.renderGroupedComponents(bom.components);
@@ -2608,6 +2612,13 @@
         this.populateCostRows(bom.additionalCosts);
         this.populateImportProcessSelect();
         this.calculateCost();
+
+        App.Nav.register(
+          'editBomModal',
+          App.State.filteredBOMs.map(b => App.State.globalBOMs.indexOf(b)),
+          Number(idx),
+          (i) => this.openEditModal(i)
+        );
 
         const modalEl = document.getElementById('editBomModal');
         if (modalEl && typeof bootstrap !== 'undefined') {
@@ -2629,7 +2640,7 @@
         document.getElementById('bomProductName').value = bom.productName;
         document.getElementById('bomRemarks').value = bom.remarks || '';
         document.getElementById('bomFormTitle').innerText = `Duplicate Product BOM (from ${bom.productId})`;
-        document.getElementById('bomSubmitBtn').innerText = 'Save Product BOM';
+        App.Utils.setFormButtonsForMode('bomCancelBtn', 'bomExitBtn', 'bomSubmitBtn', false, 'Save Product BOM');
 
         this.clearGroupsContainer();
         this.renderGroupedComponents(bom.components);
@@ -2752,13 +2763,12 @@
 
         const $select = window.jQuery(selectEl);
         const PAGE_SIZE = 40;
-        const $parentModal = $select.closest('.modal');
 
         $select.select2({
           placeholder: 'Search or type a new item...',
           width: '100%',
           tags: true,
-          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+          dropdownParent: App.Utils.select2DropdownParent($select),
           ajax: {
             delay: 150,
             data(params) {
@@ -2855,7 +2865,6 @@
         const $select = window.jQuery(selectEl);
         if ($select.data('select2')) $select.select2('destroy');
 
-        const $parentModal = $select.closest('.modal');
         const PAGE_SIZE = 30;
 
         $select.select2({
@@ -2863,7 +2872,7 @@
           width: '100%',
           tags: true,
           allowClear: true,
-          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+          dropdownParent: App.Utils.select2DropdownParent($select),
           ajax: {
             delay: 100,
             data(params) {
@@ -3099,15 +3108,13 @@
         selectEl.innerHTML = '';
         if (currentValue) selectEl.add(new Option(currentValue, currentValue, true, true));
 
-        const $parentModal = $select.closest('.modal');
-
         $select.select2({
           placeholder: 'Search or type contractor...',
           width: '100%',
           tags: true,
           allowClear: true,
           matcher: App.Utils.select2Matcher,
-          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+          dropdownParent: App.Utils.select2DropdownParent($select),
           data: (App.State.globalContractors || []).map(c => ({ id: c.name, text: c.name })),
           createTag(params) {
             const term = (params.term || '').trim();
@@ -3309,9 +3316,18 @@
             if (response.success) {
               await App.BOM.loadData();
               if (isEdit) {
-                const modalEl = document.getElementById('editBomModal');
-                if (modalEl) {
-                  bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+                // Save (edit mode): stay open on the SAME BOM instead of
+                // closing — Exit (App.Nav.exit) is the only way to close
+                // from here now. productId is server-assigned and never
+                // user-editable (no visible input for it, only the hidden
+                // bomProductId + a readonly display field), so it's a safe
+                // stable key to re-find this record by after the reload.
+                const freshIdx = App.State.globalBOMs.findIndex(b => b.productId === formData.productId);
+                if (freshIdx !== -1) {
+                  App.BOM.openEditModal(freshIdx);
+                } else {
+                  const modalEl = document.getElementById('editBomModal');
+                  if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
                 }
               } else {
                 await App.BOM.openCreateModal();

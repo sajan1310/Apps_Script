@@ -1,9 +1,14 @@
 """
-Repro script #2: same question as repro_color_checklist_full_list.py, but
-for a process whose color sub-groups come from the Warehouse Pool (a
-multi-color upstream item), not from explicit per-color recipe rows —
-this path goes through renderGroupedColorChecklist / getPoolColorAwareItemNames
-instead of the simpler direct-colorGroup path, and hasn't been verified yet.
+Same as verify_color_checklist_full_list.py but for a process whose color
+sub-groups come from the Warehouse Pool (a multi-color upstream item), not
+from explicit per-color recipe rows — this path goes through
+renderGroupedColorChecklist's pool-item-grouping fallback (see
+getPoolColorAwareItemNames), not the simpler flat-list path.
+
+Supersedes the old repro_color_checklist_pool_sourced.py, which asserted
+the checklist must stay scoped to just this pool item's 2 stocked colors —
+that was the deliberate pre-2026-07-22 behavior; see
+verify_color_checklist_full_list.py's docstring for why it was relaxed.
 """
 import sys
 import io
@@ -31,8 +36,9 @@ MOCK_ITEMS = [
     {"name": "Screw", "size": ""},
 ]
 
-# Warehouse Pool has stock of "Painted Frame" in 2 colors (Blue, Orange-White) — this
-# is where the process's color sub-groups are actually derived from.
+# Warehouse Pool has stock of "Painted Frame" in 2 colors (Blue, Orange-White) —
+# these 2 are still expected to render (grouped under "Painted Frame"), but
+# the rest of Color Master must also render now, in a trailing "Other" bucket.
 MOCK_POOL = [
     {"outputItemName": "Painted Frame", "color": "Blue", "processId": "PRC-1", "qty": 10},
     {"outputItemName": "Painted Frame", "color": "Orange-White", "processId": "PRC-1", "qty": 10},
@@ -46,9 +52,12 @@ MOCK_GLOBAL_COLORS = [
     {"name": "Green", "remarks": ""},
     {"name": "Black", "remarks": ""},
 ]
+ALL_COLOR_NAMES = {c["name"] for c in MOCK_GLOBAL_COLORS}
 
 MOCK_API_RESPONSES = {
-    "getProcessColorGroups": {"success": True, "data": ["Blue", "Orange-White"]},
+    # Simulates the real (post-2026-07-22) computeColorGroupsForProcess:
+    # the 2 pool-detected colors unioned with the full Color Master list.
+    "getProcessColorGroups": {"success": True, "data": sorted(ALL_COLOR_NAMES)},
     "getProcessComponentsData": {"success": True, "data": MOCK_COMPONENTS},
     "getWarehousePoolData": {"success": True, "data": MOCK_POOL},
     "getProcessWipData": {"success": True, "data": []},
@@ -111,11 +120,11 @@ def run():
         print(f"  Colors shown: {colors_shown}")
         print(f"  Color Master total size: {len(MOCK_GLOBAL_COLORS)}")
 
-        bug = rows.count() != 2 or set(colors_shown) != {"Blue", "Orange-White"}
-        if bug:
-            print("  ❌ BUG REPRODUCED: checklist does not match this pool item's own 2 stocked colors.")
+        ok = rows.count() == len(ALL_COLOR_NAMES) and set(colors_shown) == ALL_COLOR_NAMES
+        if ok:
+            print("  ✅ Checklist shows the full Color Master list, not just this pool item's 2 stocked colors.")
         else:
-            print("  ✅ Checklist correctly scoped to just this pool item's 2 stocked colors.")
+            print("  ❌ Checklist did not widen to the full Color Master list as expected.")
 
         if console_errors:
             print("\n⚠️  Console/page errors:")
@@ -123,7 +132,7 @@ def run():
                 print(f"    {e}")
 
         browser.close()
-        return not bug
+        return ok
 
 
 if __name__ == "__main__":

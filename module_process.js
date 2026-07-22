@@ -1095,20 +1095,15 @@ function getProcessComponentsData(processId) {
 
 /**
  * Returns the distinct color sub-group names a process should offer on the
- * Production Lot form, sorted alphabetically. Two independent sources feed
- * this, unioned together:
- *   1. Colors explicitly configured on the process's own recipe (a
- *      component row scoped to a Color Master name instead of COMMON) —
- *      the original mechanism, still useful for color-specific raw
- *      materials (e.g. a specific paint).
- *   2. Colors that currently exist in the Warehouse Pool for any
- *      POOL-sourced component this recipe consumes — so a downstream
- *      process (e.g. Frame Fitting consuming Painted Frame) automatically
- *      becomes color-selectable the moment its upstream process has
- *      actually produced more than one color, with no manual recipe setup
- *      required. This reflects live pool state, not configuration, so it
- *      can change as upstream production happens.
- * An empty result means neither source found a color variant, and
+ * Production Lot form, sorted alphabetically. Once a process is
+ * color-enabled at all (see computeColorGroupsForProcess), the FULL Color
+ * Master list is always offered too — not just colors this process's own
+ * history happens to have touched — so the checklist never silently hides
+ * a legitimate color just because it hasn't been produced through this
+ * exact recipe/pool item yet. See computeColorGroupsForProcess for the
+ * full breakdown of what "color-enabled" means and where the base list
+ * comes from before Color Master is unioned in.
+ * An empty result means the process has no color dimension at all, and
  * Production logging proceeds with just the COMMON components as before.
  * @param {string} processId
  */
@@ -1169,8 +1164,64 @@ function _getProcessRecordById(processId) {
  * @param {Array} components Process Components rows already filtered to one process.
  * @param {Array} poolRows Full Warehouse Pool rows (shared across all processes).
  * @param {Array} colorLinks Full Process Color Links rows (shared across all processes) — see _getAllProcessColorLinks.
+ * @param {Array<string>} [colorMasterNames] Optional pre-fetched Color Master
+ *   name list — pass this in a loop (see getAllProcessColorGroups) so the
+ *   cache is hit once for every process instead of once per process; a
+ *   single-process caller can omit it and let this fetch its own.
  */
-function computeColorGroupsForProcess(components, poolRows, colorLinks) {
+function computeColorGroupsForProcess(components, poolRows, colorLinks, colorMasterNames) {
+  const baseColors = _computeConfiguredColorGroupsForProcess(components, poolRows, colorLinks);
+  // Nothing tagged/detected at all — this process has no color dimension,
+  // so it stays in plain-Qty mode exactly as before. Only once there IS a
+  // real color dimension do we widen the choices to the full Color Master
+  // (see the doc comment above and _getColorMasterNames) — a process with
+  // no color concept at all must never suddenly grow a full checklist of
+  // every known color just because Color Master is non-empty.
+  if (baseColors.length === 0) return baseColors;
+
+  const colors = new Map();
+  baseColors.forEach(c => _addUniqueCaseInsensitive(colors, c));
+  (colorMasterNames || _getColorMasterNames()).forEach(c => _addUniqueCaseInsensitive(colors, c));
+  return Array.from(colors.values()).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * @private The pre-Color-Master-widening result — two independent sources,
+ * unioned together, exactly as computeColorGroupsForProcess always worked
+ * before Color Master was folded in:
+ *   1. Colors explicitly configured on the process's own recipe (a
+ *      component row scoped to a Color Master name instead of COMMON) —
+ *      still useful for color-specific raw materials (e.g. a specific
+ *      paint).
+ *   2. Colors that currently exist in the Warehouse Pool for any
+ *      POOL-sourced component this recipe consumes — so a downstream
+ *      process (e.g. Frame Fitting consuming Painted Frame) automatically
+ *      becomes color-selectable the moment its upstream process has
+ *      actually produced more than one color, with no manual recipe setup
+ *      required.
+ * Branches on whether 2+ independent color axes actually exist (via
+ * computeColorAxesForProcess) — NOT on whether primaryColorAxis has been
+ * saved onto the process yet. This must match Script.html's
+ * renderGroupedColorChecklist, which renders one independent checkbox
+ * group per axis (individual colors, e.g. "Blue", "Blue-White") the moment
+ * 2+ axes are detected, regardless of whether a Primary Axis has been
+ * configured — the picker for choosing Primary only appears once that split
+ * view is already showing. Branching on primaryColorAxis instead (the
+ * original design) meant any process with 2+ auto-detected pool axes but no
+ * saved Primary Axis yet would render individual-color checkboxes on the
+ * form but validate against the OLD cross-multiplied composite list (e.g.
+ * "Blue / BCP / Blue-White") here — rejecting every real color on every
+ * submission until someone visited the Process editor to save a Primary
+ * Axis (symptom: "Color X is not a configured color sub-group" firing on
+ * every save for a freshly multi-axis process, unfixable by refreshing).
+ *
+ * A process with fewer than 2 axes (0 or 1) still gets the exact original
+ * _legacyColorGroupList behavior — colors explicitly tagged on recipe rows
+ * (including tag-only colors with no colorAxis label, which
+ * computeColorAxesForProcess intentionally excludes) plus any single pool
+ * axis's own colors, unchanged.
+ */
+function _computeConfiguredColorGroupsForProcess(components, poolRows, colorLinks) {
   const axes = computeColorAxesForProcess(components, poolRows, colorLinks);
   if (axes.length < 2) {
     return _legacyColorGroupList(components, poolRows, colorLinks);
@@ -1181,6 +1232,23 @@ function computeColorGroupsForProcess(components, poolRows, colorLinks) {
     axis.colors.forEach(c => colors.add(c));
   });
   return Array.from(colors).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * @private Every Color Master name, for widening a color-enabled process's
+ * checklist (see computeColorGroupsForProcess) beyond whatever this
+ * specific recipe/pool history has actually touched. Swallows a load
+ * failure to an empty list rather than throwing — Color Master is a
+ * convenience widen, not a required input, so a transient read error here
+ * must not block the base (recipe/pool-derived) color list from loading.
+ */
+function _getColorMasterNames() {
+  try {
+    const res = typeof getColors === 'function' ? getColors() : null;
+    return (res && res.success && Array.isArray(res.data)) ? res.data.map(c => c.name).filter(Boolean) : [];
+  } catch (e) {
+    return [];
+  }
 }
 
 /**
@@ -1551,11 +1619,12 @@ function getAllProcessColorGroups() {
     const poolResp = typeof getWarehousePoolData === 'function' ? getWarehousePoolData() : null;
     const poolRows = (poolResp && poolResp.data) || [];
     const colorLinks = _getAllProcessColorLinks();
+    const colorMasterNames = _getColorMasterNames();
 
     const result = {};
     processes.forEach(p => {
       const components = componentsByProcess.get(p.processId) || [];
-      result[p.processId] = computeColorGroupsForProcess(components, poolRows, colorLinks);
+      result[p.processId] = computeColorGroupsForProcess(components, poolRows, colorLinks, colorMasterNames);
     });
 
     return buildResponse(true, result);

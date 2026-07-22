@@ -120,7 +120,8 @@
           <div class="alert alert-info py-2 shadow-sm" id="rateComparison" style="display: none;"></div>
           
           <div class="text-end mt-2">
-            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="poCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="poExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('editPoModal')">Exit</button>
             <button type="button" id="poModalPrintBtn" class="btn btn-outline-dark me-2" style="display:none;" onclick="App.PO.printCurrent()"><i class="bi bi-printer"></i> Print</button>
             <button type="submit" id="poSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save Purchase Order</button>
           </div>
@@ -218,7 +219,8 @@
           <button type="button" class="btn btn-outline-primary btn-sm mb-3 fw-bold" onclick="App.Bill.addRow()">+ Add Bill Item</button>
 
           <div class="text-end mt-2">
-            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="billCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="billExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('receiveBillModal')">Exit</button>
             <button type="button" id="billModalPrintBtn" class="btn btn-outline-dark me-2" style="display:none;" onclick="App.Bill.printCurrent()"><i class="bi bi-printer"></i> Print</button>
             <button type="submit" id="billSubmitBtn" class="btn btn-dark px-5 fw-bold shadow-sm">Record Itemized Bill</button>
           </div>
@@ -274,7 +276,8 @@
           <button type="button" class="btn btn-outline-primary btn-sm mb-3 fw-bold" onclick="App.Return.addRow()">+ Add Returned Item</button>
 
           <div class="text-end mt-2">
-            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="returnCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="returnExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('returnGoodsModal')">Exit</button>
             <button type="button" id="returnModalPrintBtn" class="btn btn-outline-dark me-2" style="display:none;" onclick="App.Return.printCurrent()"><i class="bi bi-printer"></i> Print</button>
             <button type="submit" id="returnSubmitBtn" class="btn btn-dark px-5 fw-bold shadow-sm">Return Goods</button>
           </div>
@@ -480,7 +483,8 @@
           <button type="button" class="btn btn-outline-info text-dark btn-sm mb-3 fw-bold border-2" onclick="App.Item.addVendorRow()">+ Add Vendor & Rate</button>
           
           <div class="text-end mt-2">
-            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="itemCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="itemExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('itemModal')">Exit</button>
             <button type="submit" id="itemSubmitBtn" class="btn btn-info fw-bold px-5 shadow-sm text-dark">Save Item Record</button>
           </div>
         </form>

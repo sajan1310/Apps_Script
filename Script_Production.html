@@ -302,26 +302,24 @@
           select.value = current;
           if (window.jQuery?.fn?.select2) {
             const $s = window.jQuery(select);
-            const $modal = $s.closest('.modal');
             $s.select2({
               placeholder: 'All Processes',
               width: '100%',
               allowClear: true,
               matcher: App.Utils.select2Matcher,
-              dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+              dropdownParent: App.Utils.select2DropdownParent($s)
             });
           }
         }
         const statusSelect = document.getElementById('colorwiseSummaryStatusFilter');
         if (statusSelect && window.jQuery?.fn?.select2 && !window.jQuery(statusSelect).data('select2')) {
           const $ss = window.jQuery(statusSelect);
-          const $modal = $ss.closest('.modal');
           $ss.select2({
             placeholder: 'All Statuses',
             width: '100%',
             allowClear: true,
             matcher: App.Utils.select2Matcher,
-            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+            dropdownParent: App.Utils.select2DropdownParent($ss)
           });
         }
         this.renderColorwiseSummary();
@@ -685,12 +683,11 @@
 
         if (window.jQuery?.fn?.select2) {
           const $s = window.jQuery(select);
-          const $modal = $s.closest('.modal');
           $s.select2({
             placeholder: 'Choose a Size...',
             width: '100%',
             matcher: App.Utils.select2Matcher,
-            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+            dropdownParent: App.Utils.select2DropdownParent($s)
           });
         }
       },
@@ -767,12 +764,11 @@
 
         if (window.jQuery?.fn?.select2) {
           const $s = window.jQuery(select);
-          const $modal = $s.closest('.modal');
           $s.select2({
             placeholder: sizeFilter ? 'Choose a Model...' : 'Choose a Size first...',
             width: '100%',
             matcher: App.Utils.select2Matcher,
-            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+            dropdownParent: App.Utils.select2DropdownParent($s)
           });
         }
       },
@@ -842,12 +838,11 @@
 
         if (window.jQuery?.fn?.select2) {
           const $s = window.jQuery(select);
-          const $modal = $s.closest('.modal');
           $s.select2({
             placeholder: modelFilter ? 'Choose a Process Type...' : 'Choose a Model first...',
             width: '100%',
             matcher: App.Utils.select2Matcher,
-            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+            dropdownParent: App.Utils.select2DropdownParent($s)
           });
         }
       },
@@ -954,13 +949,11 @@
         const $select = window.jQuery(selectEl);
         if ($select.data('select2')) $select.select2('destroy');
 
-        const $parentModal = $select.closest('.modal');
-
         $select.select2({
           placeholder: 'Choose a Process...',
           width: '100%',
           matcher: App.Utils.select2Matcher,
-          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body)
+          dropdownParent: App.Utils.select2DropdownParent($select)
         });
       },
 
@@ -1446,6 +1439,27 @@
               this.renderColorChecklistRows(axis.colors, axis.key, false, isPrimary);
               this._customColorGroupOptions.push({ key: axis.key, label: axis.label, isPrimary, source: axis.source });
             });
+
+            // `colors` (this function's own param) is the widened list from
+            // getProcessColorGroups — every real axis color PLUS the full
+            // Color Master (see computeColorGroupsForProcess) — so anything
+            // left over here is a Color Master color that isn't part of any
+            // real axis yet. Offered as its own non-primary "Other" bucket,
+            // same catch-all role/semantics as the pool-item-grouping
+            // fallback's own "Other" bucket below: getCheckedColorQtys only
+            // counts a checked "other" row toward the lot total when it
+            // ISN'T currently segment-matching a checked primary row (see
+            // _matchingPrimaryColorQty), so picking one of these never
+            // double-counts against a real axis color that means the same
+            // physical batch.
+            const axisColorsLower = new Set();
+            axes.forEach(axis => axis.colors.forEach(c => axisColorsLower.add(c.toLowerCase())));
+            const extraColors = (colors || []).filter(c => !axisColorsLower.has(c.toLowerCase()));
+            if (extraColors.length > 0) {
+              checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader('other', 'Other Colors (Color Master)'));
+              this.renderColorChecklistRows(extraColors, 'other', false, false);
+            }
+
             if (!primaryAxisKey) {
               checklistEl.insertAdjacentHTML('afterbegin',
                 '<div class="alert alert-warning py-1 px-2 small mb-2" style="flex: 1 0 100%;" id="productionPrimaryAxisWarning">' +
@@ -2433,6 +2447,19 @@
         this._applyQtyPerUnit('#productionComponentsBody tr', lotQty);
       },
 
+      // The lot-total multiplier currently in effect — the plain Qty field
+      // in single-color mode, or the running total across checked colors
+      // (see _currentLotTotalQty) once the multi-color checklist is active.
+      // Used to give a freshly added manual component row (see
+      // addComponentRow) an immediate, correctly-scaled starting qty instead
+      // of leaving it blank until the next unrelated qty/color edit happens
+      // to trigger a recompute.
+      _currentComponentQtyMultiplier() {
+        const wrapper = document.getElementById('productionColorWrapper');
+        const isMultiColor = !!wrapper && wrapper.style.display !== 'none';
+        return isMultiColor ? this._currentLotTotalQty() : (toNumber(document.getElementById('productionQty')?.value) || 0);
+      },
+
       // Destroys Select2 instances on all component rows and empties the table.
       clearComponentsTable() {
         const tbody = document.getElementById('productionComponentsBody');
@@ -2478,8 +2505,22 @@
         const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
         const color = (comp && comp.color) || '';
         const colorScope = (comp && comp.colorScope) || '';
-        const qty = comp && comp.qty !== undefined ? this.formatQty(comp.qty) : '';
-        const qtyPerUnitAttr = (comp && comp.qtyPerUnit !== undefined) ? `data-qty-per-unit="${comp.qtyPerUnit}"` : '';
+        // comp === null means a brand-new row from "+ Add Component" — no
+        // recipe or saved data behind it. Assume it consumes 1 unit of
+        // itself per unit of lot output (same shape as a qtyPerUnit=1
+        // recipe row) so it starts pre-filled at the current lot qty/color
+        // total instead of blank, and keeps auto-tracking that total
+        // afterward via _applyQtyPerUnit — same as every recipe-derived row.
+        // Any other caller passing a comp object (even with qtyPerUnit
+        // undefined, e.g. a saved lot's recorded consumption) keeps its
+        // exact prior blank/fixed-qty behavior; that data is real and must
+        // not be silently overwritten by a recompute.
+        const qtyPerUnit = comp === null ? 1 : (comp && comp.qtyPerUnit);
+        const manualMultiplier = comp === null ? this._currentComponentQtyMultiplier() : 0;
+        const qty = comp === null
+          ? this.formatQty(manualMultiplier > 0 ? manualMultiplier * qtyPerUnit : qtyPerUnit)
+          : (comp && comp.qty !== undefined ? this.formatQty(comp.qty) : '');
+        const qtyPerUnitAttr = (qtyPerUnit !== undefined) ? `data-qty-per-unit="${qtyPerUnit}"` : '';
         // Blank/undefined means "already in the item's own Base Unit" — see
         // _readProdComponentRow and module_stock.js#_getBilledAndConsumedQtyMaps.
         const unitAttr = (comp && comp.unit) ? ` data-unit="${escapeHtml(comp.unit)}"` : '';
@@ -3389,13 +3430,12 @@
 
         const $select = window.jQuery(selectEl);
         const PAGE_SIZE = 40;
-        const $parentModal = $select.closest('.modal');
 
         $select.select2({
           placeholder: 'Search or type an item/pool name...',
           width: '100%',
           tags: true,
-          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+          dropdownParent: App.Utils.select2DropdownParent($select),
           ajax: {
             delay: 150,
             data(params) {
@@ -3590,15 +3630,13 @@
           selectEl.add(new Option(currentValue, currentValue, true, true));
         }
 
-        const $parentModal = $select.closest('.modal');
-
         $select.select2({
           placeholder: 'Search or type a contractor/staff name...',
           width: '100%',
           tags: true,
           allowClear: true,
           matcher: App.Utils.select2Matcher,
-          dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+          dropdownParent: App.Utils.select2DropdownParent($select),
           data: (App.State.globalContractors || []).map(c => ({ id: c.name, text: c.name })),
           createTag(params) {
             const term = (params.term || '').trim();
@@ -3751,7 +3789,7 @@
         document.getElementById('productionLotNumber').value = '';
 
         document.getElementById('productionFormTitle').innerText = 'Log Production Lot';
-        document.getElementById('productionSubmitBtn').innerText = 'Record Production Run';
+        App.Utils.setFormButtonsForMode('productionCancelBtn', 'productionExitBtn', 'productionSubmitBtn', false, 'Record Production Run');
       },
 
       async openCreateModal() {
@@ -4001,7 +4039,14 @@
         if (seq !== this._compLoadSeq) return;
 
         document.getElementById('productionFormTitle').innerText = `Edit Production Lot: Row #${p.rowIdx}`;
-        document.getElementById('productionSubmitBtn').innerText = 'Update Production Lot';
+        App.Utils.setFormButtonsForMode('productionCancelBtn', 'productionExitBtn', 'productionSubmitBtn', true, 'Save');
+
+        App.Nav.register(
+          'editProductionModal',
+          App.State.filteredProduction.map(row => App.State.globalProduction.indexOf(row)),
+          Number(idx),
+          (i) => this.openEditModal(i)
+        );
 
         const modalEl = document.getElementById('editProductionModal');
         if (modalEl && typeof bootstrap !== 'undefined') {
@@ -4655,10 +4700,18 @@
           const submitBtn = document.getElementById('productionSubmitBtn');
           if (submitBtn) submitBtn.disabled = true;
 
+          const isNewLot = !document.getElementById('productionRowIdx')?.value;
+          const savedRowIdx = document.getElementById('productionRowIdx')?.value || '';
+
           try {
             const response = await Api.call('saveProduction', formData);
             if (response.success) {
-              const isNewLot = !document.getElementById('productionRowIdx')?.value;
+              // Reload the underlying list BEFORE branching — both the
+              // "stay open, re-arm for next" and "stay open, same record"
+              // paths below read fresh App.State.globalProduction, and
+              // openEditModal indexes into it directly.
+              await App.Production.loadData();
+
               if (isNewLot) {
                 // Stay open and re-arm for the next lot instead of closing —
                 // operators log many lots back-to-back. The fieldset is
@@ -4675,12 +4728,40 @@
                 }
                 document.getElementById('productionSize')?.focus();
               } else {
-                const modalEl = document.getElementById('editProductionModal');
-                if (modalEl) {
-                  bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+                // Edit mode "Save": stay open (Exit — App.Nav.exit — is the
+                // only way to close from here now) and re-run this SAME
+                // record through openEditModal instead of just leaving the
+                // form as-is — that's the one path already proven to
+                // correctly repaint every derived/computed bit of state
+                // (Lot Number, color matrix, Nav's dirty-snapshot and N-of-M
+                // position) from a saved record, so it reflects what was
+                // just saved instead of staying frozen at pre-save values.
+                // Re-derived by rowIdx (stable) rather than reusing the old
+                // positional `idx` — loadData() just rebuilt the array, and
+                // nothing guarantees this row landed at the same index.
+                const freshIdx = App.State.globalProduction.findIndex(r => String(r.rowIdx) === savedRowIdx);
+                if (freshIdx !== -1) {
+                  await App.Production.openEditModal(freshIdx);
+                } else {
+                  // This row is gone from the reloaded list (e.g. deleted
+                  // elsewhere between load and save) — nothing left to keep
+                  // editing, so fall back to closing.
+                  const modalEl = document.getElementById('editProductionModal');
+                  if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
                 }
               }
-              await App.Production.loadData();
+
+              // A saved Production lot debits/credits Warehouse Pool color
+              // combinations (components consumed and/or the lot's own
+              // pool-tagged output) — refresh the Pool sub-tab now instead of
+              // leaning solely on App.Stock.loadData()'s own "if the pool
+              // sub-tab is still showing" refresh, which only fires on the
+              // NEXT Stock-tab visit. Same pattern as Script_Process.html's
+              // saveProcess handler.
+              const poolTab = document.getElementById('warehousePoolSubTab');
+              if (poolTab && poolTab.style.display !== 'none' && typeof App.Stock !== 'undefined') {
+                App.Stock.loadWarehousePoolData();
+              }
             }
             App.Utils.showToast(response.message, !response.success);
           } catch (err) {

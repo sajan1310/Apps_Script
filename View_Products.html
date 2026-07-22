@@ -245,7 +245,8 @@
           <button type="button" class="btn btn-outline-primary btn-sm fw-bold mb-3" onclick="App.Process.addContractorRateRow()">+ Add Contractor Rate</button>
 
           <div class="text-end mt-3">
-            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="processCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="processExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('editProcessModal')">Exit</button>
             <button type="submit" id="processSubmitBtn" class="btn btn-info fw-bold px-5 text-dark shadow-sm">Save Process</button>
           </div>
         </form>
@@ -359,7 +360,8 @@
           </div>
 
           <div class="text-end mt-4">
-            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="bomCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="bomExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('editBomModal')">Exit</button>
             <button type="submit" id="bomSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save Product</button>
           </div>
         </form>

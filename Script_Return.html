@@ -317,8 +317,7 @@
           const modalTitle = document.getElementById('returnModalTitle');
           if (modalTitle) modalTitle.innerText = 'Log Goods Returned to Vendor';
 
-          const submitBtn = document.getElementById('returnSubmitBtn');
-          if (submitBtn) submitBtn.innerText = 'Return Goods';
+          App.Utils.setFormButtonsForMode('returnCancelBtn', 'returnExitBtn', 'returnSubmitBtn', false, 'Return Goods');
 
           const returnDateInput = document.getElementById('returnDateInput');
           if (returnDateInput) returnDateInput.value = todayIso();
@@ -372,8 +371,7 @@
           const modalTitle = document.getElementById('returnModalTitle');
           if (modalTitle) modalTitle.innerText = `Edit Return #${ret.returnNumber}`;
 
-          const submitBtn = document.getElementById('returnSubmitBtn');
-          if (submitBtn) submitBtn.innerText = 'Update Return';
+          App.Utils.setFormButtonsForMode('returnCancelBtn', 'returnExitBtn', 'returnSubmitBtn', true, 'Save');
 
           const vendorSelect = document.getElementById('returnVendor');
           if (vendorSelect) {
@@ -419,6 +417,13 @@
 
           const printBtn = document.getElementById('returnModalPrintBtn');
           if (printBtn) printBtn.style.display = '';
+
+          App.Nav.register(
+            'returnGoodsModal',
+            App.State.filteredReturns.map(r => App.State.globalReturns.indexOf(r)),
+            index,
+            (i) => this.openEditModal(i)
+          );
 
           safeModalShow('returnGoodsModal');
         },

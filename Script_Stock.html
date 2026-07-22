@@ -487,13 +487,12 @@
         if (window.jQuery?.fn?.select2) {
           const $el = window.jQuery(el);
           if ($el.data('select2')) $el.select2('destroy');
-          const $modal = $el.closest('.modal');
           $el.select2({
             placeholder: 'General (none)',
             width: '100%',
             allowClear: true,
             matcher: App.Utils.select2Matcher,
-            dropdownParent: $modal.length ? $modal : window.jQuery(document.body)
+            dropdownParent: App.Utils.select2DropdownParent($el)
           });
         }
       },

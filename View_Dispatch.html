@@ -196,7 +196,8 @@
           </div>
 
           <div class="text-end mt-4">
-            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="dispatchCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="dispatchExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('dispatchModal')">Exit</button>
             <button type="submit" id="dispatchSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save Dispatch</button>
           </div>
         </form>

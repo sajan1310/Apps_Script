@@ -1033,7 +1033,7 @@
     // with a fast re-open. Re-sync the lock to reality every time any
     // modal finishes hiding, instead of trusting Bootstrap's per-instance
     // bookkeeping.
-    document.addEventListener('hidden.bs.modal', () => {
+    document.addEventListener('hidden.bs.modal', (e) => {
       const stillOpen = document.querySelectorAll('.modal.show').length;
       if (stillOpen === 0) {
         document.body.classList.remove('modal-open');
@@ -1043,6 +1043,37 @@
       } else {
         document.body.classList.add('modal-open');
       }
+      // Prev/Next context (App.Nav) is only meaningful while the modal it
+      // was opened for is still showing — drop it as soon as that modal
+      // closes so a later unrelated open of the same modal (e.g. "Add New")
+      // never inherits a stale record list or nav bar.
+      if (e.target?.id) App.Nav.clear(e.target.id);
+    });
+
+    // Keyboard shortcut for App.Nav: N/P or the Left/Right arrows step to the
+    // next/previous record in whichever edit modal currently has focus.
+    // Deliberately ignores every text-entry control (input/textarea/select,
+    // incl. Select2's hidden search input) — "N"/"P" are ordinary letters
+    // that appear constantly in Narration/Remarks/Item Name fields, and the
+    // arrows already have a native job there (move the cursor, change a
+    // <select>'s value), so firing on those would hijack normal typing
+    // instead of navigating.
+    document.addEventListener('keydown', (e) => {
+      const key = e.key.toLowerCase();
+      const delta = (key === 'n' || key === 'arrowright') ? 1
+        : (key === 'p' || key === 'arrowleft') ? -1
+        : null;
+      if (delta === null) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+
+      const target = e.target;
+      if (target.matches?.('input, textarea, select') || target.isContentEditable) return;
+
+      const modalEl = target.closest?.('.modal.show');
+      if (!modalEl || !App.Nav._ctx[modalEl.id]) return;
+
+      e.preventDefault();
+      App.Nav.go(modalEl.id, delta);
     });
 
     function setDisabled(id, state) {
@@ -1209,6 +1240,137 @@
           } else {
             btn.classList.add('d-none');
           }
+        }
+      },
+
+      // ── Modal Record Navigation (Prev/Next) ─────────────────────
+      // Lets an edit modal step through the same record list its table is
+      // currently showing (filtered/sorted, not paginated) without closing
+      // and reopening. Each module's openEditModal calls register() with
+      // the ordered id list + its own id + itself as reopen callback, right
+      // before showing the modal; register() is the only place ids/snapshot
+      // refresh, so Prev/Next simply re-invoke that same open function.
+      Nav: {
+        _ctx: {},
+
+        register(modalId, ids, currentId, openFn) {
+          this._ctx[modalId] = { ids: ids.slice(), currentId, openFn };
+          this._ensureBar(modalId);
+          this._snapshot(modalId);
+          this._updateBar(modalId);
+        },
+
+        clear(modalId) {
+          delete this._ctx[modalId];
+          const bar = document.getElementById(modalId)?.querySelector('.app-modal-nav');
+          if (bar) bar.style.display = 'none';
+        },
+
+        go(modalId, delta) {
+          const ctx = this._ctx[modalId];
+          if (!ctx) return;
+          const idx = this._indexOf(ctx.ids, ctx.currentId);
+          const targetIdx = idx + delta;
+          if (targetIdx < 0 || targetIdx >= ctx.ids.length) return;
+          const targetId = ctx.ids[targetIdx];
+          const proceed = () => ctx.openFn(targetId);
+
+          if (this.isDirty(modalId)) {
+            App.Utils.confirmAction('You have unsaved changes in this form. Discard them and continue?', proceed);
+          } else {
+            proceed();
+          }
+        },
+
+        isDirty(modalId) {
+          const ctx = this._ctx[modalId];
+          const modalEl = document.getElementById(modalId);
+          if (!ctx || !modalEl) return false;
+          return this._serialize(modalEl) !== ctx.snapshot;
+        },
+
+        // The Exit button (edit-mode-only — see each module's openEditModal,
+        // which swaps Cancel for Exit) closes the modal WITHOUT saving,
+        // exactly like Cancel always has, but first warns if the form has
+        // unsaved edits — same dirty-check/confirm this module already uses
+        // for Prev/Next, so a click meant for "close" can never silently
+        // throw away typed-but-unsaved work the way a bare Cancel does.
+        // Saving-and-staying-open is the Save button's job (the form's own
+        // submit handler, per module — see each module's "stay open on
+        // success, edit mode" branch); Exit never touches the server.
+        exit(modalId) {
+          const modalEl = document.getElementById(modalId);
+          const proceed = () => {
+            if (modalEl && typeof bootstrap !== 'undefined') {
+              bootstrap.Modal.getInstance(modalEl)?.hide();
+            }
+          };
+          if (this.isDirty(modalId)) {
+            App.Utils.confirmAction('You have unsaved changes in this form. Discard them and continue?', proceed);
+          } else {
+            proceed();
+          }
+        },
+
+        _indexOf(ids, id) {
+          const key = JSON.stringify(id);
+          return ids.findIndex(x => JSON.stringify(x) === key);
+        },
+
+        _serialize(modalEl) {
+          const data = {};
+          modalEl.querySelectorAll('input, select, textarea').forEach(el => {
+            const key = el.id || el.name;
+            if (!key) return;
+            data[key] = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+          });
+          return JSON.stringify(data);
+        },
+
+        _snapshot(modalId) {
+          const ctx = this._ctx[modalId];
+          const modalEl = document.getElementById(modalId);
+          if (ctx && modalEl) ctx.snapshot = this._serialize(modalEl);
+        },
+
+        _ensureBar(modalId) {
+          const modalEl = document.getElementById(modalId);
+          if (!modalEl) return;
+
+          // These forms put Cancel/Save inside .modal-body (in a "text-end"
+          // div), not a real Bootstrap .modal-footer — anchor off the submit
+          // button's own parent instead so this works for every edit modal
+          // without depending on a footer element none of them actually have.
+          let bar = modalEl.querySelector('.app-modal-nav');
+          if (!bar) {
+            const submitBtn = modalEl.querySelector('button[type="submit"]');
+            const container = modalEl.querySelector('.modal-footer') || submitBtn?.parentElement;
+            if (!container) return;
+
+            bar = document.createElement('div');
+            bar.className = 'app-modal-nav d-flex align-items-center mb-2';
+            bar.innerHTML =
+              '<button type="button" class="btn btn-sm btn-outline-secondary app-modal-nav-prev" title="Previous record (P or ←)"><i class="bi bi-chevron-left"></i> Prev</button>' +
+              '<span class="mx-2 small text-muted app-modal-nav-pos"></span>' +
+              '<button type="button" class="btn btn-sm btn-outline-secondary app-modal-nav-next" title="Next record (N or →)">Next <i class="bi bi-chevron-right"></i></button>';
+            container.insertBefore(bar, container.firstChild);
+            bar.querySelector('.app-modal-nav-prev').addEventListener('click', () => App.Nav.go(modalId, -1));
+            bar.querySelector('.app-modal-nav-next').addEventListener('click', () => App.Nav.go(modalId, 1));
+          }
+          bar.style.display = '';
+        },
+
+        _updateBar(modalId) {
+          const ctx = this._ctx[modalId];
+          const modalEl = document.getElementById(modalId);
+          const bar = modalEl?.querySelector('.app-modal-nav');
+          if (!ctx || !bar) return;
+
+          const idx = this._indexOf(ctx.ids, ctx.currentId);
+          const pos = bar.querySelector('.app-modal-nav-pos');
+          if (pos) pos.textContent = idx >= 0 ? `${idx + 1} of ${ctx.ids.length}` : '';
+          bar.querySelector('.app-modal-nav-prev').disabled = idx <= 0;
+          bar.querySelector('.app-modal-nav-next').disabled = idx < 0 || idx >= ctx.ids.length - 1;
         }
       },
 
@@ -1394,6 +1556,46 @@
           return App.Utils.matchesKeywords(data.text, params.term) ? data : null;
         },
 
+        // The right `dropdownParent` for ANY Select2 in this app — pass as
+        // `dropdownParent:` in any Select2 config instead of hand-rolling
+        // `$el.closest('.modal')` (the original, buggy pattern this
+        // replaces) or `$el.closest('.modal-body')` (a first attempt at
+        // fixing it that turned out to be only half right — both left real,
+        // reproduced bugs; see .pw-test/verify_drift_dropdown_scroll_tracking.py
+        // for the regression coverage this comment summarizes).
+        //
+        // Every modal's real scroll container is `.modal-body`
+        // (`max-height: 82vh; overflow-y: auto` in Styles.html), a
+        // DESCENDANT of `.modal`, not an ancestor Select2's own position
+        // tracking would ever see:
+        //   - dropdownParent = `.modal` (the original bug): the dropdown's
+        //     position is computed once against an element that never
+        //     itself scrolls, then never updates as the real scrollable
+        //     content underneath it moves — opening a dropdown, scrolling,
+        //     then trying to click an option hits nothing, reading as "the
+        //     dropdown stopped working."
+        //   - dropdownParent = `.modal-body` (the tempting "just fix the
+        //     ancestor" answer): correctly repositions a dropdown that was
+        //     ALREADY open while `.modal-body` scrolls (Select2 has its own
+        //     internal tracking for a scrollable dropdownParent) — but
+        //     opening a dropdown FRESH on a row that only became visible
+        //     BY scrolling computes a badly wrong position (observed
+        //     rendering ~234px off-screen above the modal in one real
+        //     report) — a documented Select2 limitation with scrollable
+        //     dropdownParents, not a one-line misconfiguration.
+        // `document.body` sidesteps both: it never scrolls while a
+        // Bootstrap modal is open (Bootstrap locks body scroll), so
+        // Select2's position math against it is always correct on open,
+        // scrolled-into-view or not. The trade-off this accepts: a
+        // dropdown that WAS already open no longer visually tracks
+        // `.modal-body` scrolling either — closeOpenSelect2OnScroll
+        // (registered once, below) covers that by closing it instead of
+        // leaving it detached, matching the click-outside-closes-it
+        // behavior users already expect elsewhere.
+        select2DropdownParent($el) {
+          return window.jQuery(document.body);
+        },
+
         // Sizes that actually exist for a given item name in Item Master, so PO/Bill
         // size pickers can be filtered to valid sizes for the item just entered
         // (e.g. a "Handle" used only in 14"/16" cycles shouldn't offer every size
@@ -1452,6 +1654,30 @@
           const models = [...(App.State.globalModels || [])].sort((a, b) => String(b.name || '').length - String(a.name || '').length);
           const match = models.find(m => m.name && lower.includes(String(m.name).toLowerCase()));
           return match ? match.name : 'General';
+        },
+
+        // Toggles an edit modal's footer between its two states, shared by
+        // every module's openCreateModal/resetCreateForm (isEditMode=false)
+        // and openEditModal (isEditMode=true) pair:
+        //   - Add New: Cancel (discard, close — data-bs-dismiss="modal",
+        //     unchanged) + a Save/Create-labeled submit button that closes
+        //     on success (each module's own submit handler still owns that).
+        //   - Edit: Exit (App.Nav.exit — warns before discarding unsaved
+        //     edits, see its own comment) + a submit button labeled "Save"
+        //     that on success stays open and reloads the SAME record (see
+        //     each module's submit handler's edit-mode branch) instead of
+        //     closing — Exit is the only way to close from here, so the
+        //     operator can keep saving and using Prev/Next without the
+        //     modal round-tripping shut on every save.
+        // Centralized so this 3-line toggle doesn't drift into slightly
+        // different shapes across 10 modals.
+        setFormButtonsForMode(cancelBtnId, exitBtnId, submitBtnId, isEditMode, submitLabel) {
+          const cancelBtn = document.getElementById(cancelBtnId);
+          const exitBtn = document.getElementById(exitBtnId);
+          const submitBtn = document.getElementById(submitBtnId);
+          if (cancelBtn) cancelBtn.style.display = isEditMode ? 'none' : '';
+          if (exitBtn) exitBtn.style.display = isEditMode ? '' : 'none';
+          if (submitBtn && submitLabel !== undefined) submitBtn.innerText = submitLabel;
         },
 
         // Auto-selects a <select>'s only remaining real option (any option
@@ -1847,6 +2073,25 @@
         }, 0);
       });
 
+      // Closes an open Select2 dropdown the moment ITS OWN scrollable
+      // container (see select2DropdownParent — almost always a `.modal-body`
+      // in this app) scrolls. See select2DropdownParent's comment for why:
+      // Select2 computes an open dropdown's screen position once and cannot
+      // live-reposition it as the real scroll container moves, so without
+      // this it's left floating in stale coordinates, detached from its
+      // trigger. Tracked via select2:open/select2:close (not read back off
+      // the DOM at scroll time) since Select2 v4 only ever keeps one
+      // dropdown open at once, so a single tracked element is always
+      // correct. `scroll` doesn't bubble, so this listens in the capture
+      // phase to catch it from any scrollable ancestor, not just document.
+      let _openSelect2El = null;
+      window.jQuery?.(document).on('select2:open', (e) => { _openSelect2El = e.target; });
+      window.jQuery?.(document).on('select2:close', () => { _openSelect2El = null; });
+      document.addEventListener('scroll', (e) => {
+        if (!_openSelect2El || !(e.target instanceof Element) || !e.target.contains(_openSelect2El)) return;
+        window.jQuery(_openSelect2El).select2('close');
+      }, true);
+
       // Select2 tagging for vendor dropdowns
       if (
         typeof window.jQuery !== 'undefined' &&
@@ -1854,7 +2099,7 @@
       ) {
         window.jQuery('.select2-vendor').each(function () {
           const $el = window.jQuery(this);
-          const parentModal = $el.closest('.modal');
+          const parentModal = App.Utils.select2DropdownParent($el);
           const select2Options = {
             tags: true,
             placeholder: 'Select or type new vendor…',
@@ -2183,6 +2428,19 @@
           if (res?.success) await App.PO.loadData();
           if (res?.success && !isEdit) {
             App.PO.openCreateModal();
+          } else if (res?.success && isEdit) {
+            // Save (edit mode): stay open on the SAME PO instead of closing
+            // — Exit (App.Nav.exit) is the only way to close from here now.
+            // poNumber is server-assigned and never user-editable (no
+            // `name="poNumber"` field exists on this form — only the hidden
+            // pre-edit existingPoNumber), so it's a safe stable key to
+            // re-find this record by after the reload.
+            const freshIndex = App.State.globalPOs.findIndex(p => p.poNumber === formData.existingPoNumber);
+            if (freshIndex !== -1) {
+              App.PO.openEditModal(freshIndex);
+            } else {
+              safeModalHide('editPoModal');
+            }
           } else {
             safeModalHide('editPoModal');
           }
@@ -2256,6 +2514,27 @@
                 }
                 if (res?.success && !isEdit) {
                   App.Bill.openReceiveModal();
+                } else if (res?.success && isEdit) {
+                  // Save (edit mode): stay open on the SAME bill instead of
+                  // closing — Exit (App.Nav.exit) is the only way to close
+                  // from here now. Re-derive the fresh index by (vendor,
+                  // billNumber) — the NEW values just saved, not the
+                  // pre-edit "existing*" hidden fields — since billKey (see
+                  // App.Bill) is a bill's only stable identity (no single-
+                  // column key) and either half of it may have just changed.
+                  // billNumber comes back from the server (res.data), which
+                  // ran it through _validateBillNumber server-side — trusting
+                  // that over the raw formData value in case validation
+                  // normalized it; vendor gets the same trim saveBill's own
+                  // sanitizeString applies, so the key matches what was
+                  // actually written to the sheet.
+                  const key = App.Bill.billKey({ vendor: String(formData.vendor || '').trim(), billNumber: res.data?.billNumber || formData.billNumber });
+                  const freshIndex = App.State.globalBills.findIndex(b => App.Bill.billKey(b) === key);
+                  if (freshIndex !== -1) {
+                    App.Bill.openEditModal(freshIndex);
+                  } else {
+                    safeModalHide('receiveBillModal');
+                  }
                 } else {
                   safeModalHide('receiveBillModal');
                 }
@@ -2298,6 +2577,21 @@
                 }
                 if (res?.success && !isEdit) {
                   App.Return.openReturnModal();
+                } else if (res?.success && isEdit) {
+                  // Save (edit mode): stay open on the SAME return instead
+                  // of closing — Exit (App.Nav.exit) is the only way to
+                  // close from here now. returnNumber is user-editable (and
+                  // optional — saveReturn auto-generates one when blank), so
+                  // trust the server's own returned value (res.data), not
+                  // the raw formData one, to re-find this record after
+                  // reload — saveReturn also enforces it's unique.
+                  const returnNumber = res.data?.returnNumber;
+                  const freshIndex = App.State.globalReturns.findIndex(r => String(r.returnNumber) === String(returnNumber));
+                  if (freshIndex !== -1) {
+                    App.Return.openEditModal(freshIndex);
+                  } else {
+                    safeModalHide('returnGoodsModal');
+                  }
                 } else {
                   safeModalHide('returnGoodsModal');
                 }
@@ -2371,6 +2665,15 @@
             }
             if (res?.success && !isEdit) {
               App.Item.openCreateModal();
+            } else if (res?.success && isEdit) {
+              // Save (edit mode): stay open on the SAME item instead of
+              // closing — Exit (App.Nav.exit) is the only way to close from
+              // here now. Item identity is (name, size) — both editable —
+              // so re-open with the NEW values just saved (formData.itemName/
+              // itemSize), not the pre-edit originalName/originalSize.
+              const savedName = formData.itemName?.trim() || '';
+              const savedSize = formData.itemSize?.trim() || '';
+              App.Item.openEditModal(savedName, savedSize);
             } else {
               safeModalHide('itemModal');
             }

@@ -168,7 +168,7 @@
 
         document.getElementById('originalClientName').value = '';
         document.getElementById('clientModalTitle').innerText = 'Register New Client';
-        document.getElementById('clientSubmitBtn').innerText = 'Register Client';
+        App.Utils.setFormButtonsForMode('clientCancelBtn', 'clientExitBtn', 'clientSubmitBtn', false, 'Register Client');
 
         safeModalShow('clientModal');
       },
@@ -188,7 +188,14 @@
         document.getElementById('cFormRemarks').value = client.remarks || '';
 
         document.getElementById('clientModalTitle').innerText = `Edit Client: ${client.name}`;
-        document.getElementById('clientSubmitBtn').innerText = 'Update Client';
+        App.Utils.setFormButtonsForMode('clientCancelBtn', 'clientExitBtn', 'clientSubmitBtn', true, 'Save');
+
+        App.Nav.register(
+          'clientModal',
+          App.State.filteredClients.map(c => c.name),
+          client.name,
+          (name) => this.openEditClientModal(name)
+        );
 
         safeModalShow('clientModal');
       },
@@ -650,7 +657,7 @@
         this.addOrderLineRow();
 
         document.getElementById('clientOrderFormTitle').innerText = 'New PI / Estimate';
-        document.getElementById('clientOrderSubmitBtn').innerText = 'Save PI / Estimate';
+        App.Utils.setFormButtonsForMode('clientOrderCancelBtn', 'clientOrderExitBtn', 'clientOrderSubmitBtn', false, 'Save PI / Estimate');
         const printBtn = document.getElementById('clientOrderPrintBtn');
         if (printBtn) printBtn.style.display = 'none';
 
@@ -687,9 +694,16 @@
         if (!order.lines || !order.lines.length) this.addOrderLineRow();
 
         document.getElementById('clientOrderFormTitle').innerText = `Edit PI / Estimate: ${order.orderNumber}`;
-        document.getElementById('clientOrderSubmitBtn').innerText = 'Update PI / Estimate';
+        App.Utils.setFormButtonsForMode('clientOrderCancelBtn', 'clientOrderExitBtn', 'clientOrderSubmitBtn', true, 'Save');
         const printBtn = document.getElementById('clientOrderPrintBtn');
         if (printBtn) printBtn.style.display = '';
+
+        App.Nav.register(
+          'clientOrderModal',
+          App.State.filteredOrders.map(o => App.State.globalOrders.indexOf(o)),
+          Number(idx),
+          (i) => this.openEditOrderModal(i)
+        );
 
         safeModalShow('clientOrderModal');
       },
@@ -918,7 +932,12 @@
             if (res.success) {
               await App.Client.loadClientsData();
               if (isEdit) {
-                safeModalHide('clientModal');
+                // Save (edit mode): stay open on the SAME client instead of
+                // closing — Exit (App.Nav.exit) is the only way to close
+                // from here now. Client name is editable (rename cascades
+                // server-side), so re-open with the NEW value just saved,
+                // not the pre-edit originalClientName.
+                App.Client.openEditClientModal(formData.clientName);
               } else {
                 App.Client.openCreateClientModal();
               }
@@ -949,7 +968,18 @@
               await App.Client.loadOrdersData();
               if (typeof App.Dispatch !== 'undefined') await App.Dispatch.loadReadyData();
               if (isEdit) {
-                safeModalHide('clientOrderModal');
+                // Save (edit mode): stay open on the SAME order instead of
+                // closing — Exit (App.Nav.exit) is the only way to close
+                // from here now. orderNumber is server-assigned and never
+                // user-editable (blank until the server generates one on
+                // first create), so it's a safe stable key to re-find this
+                // record by after the reload.
+                const freshIdx = App.State.globalOrders.findIndex(o => String(o.orderNumber) === String(formData.orderNumber));
+                if (freshIdx !== -1) {
+                  App.Client.openEditOrderModal(freshIdx);
+                } else {
+                  safeModalHide('clientOrderModal');
+                }
               } else {
                 App.Client.openCreateOrderModal();
               }
