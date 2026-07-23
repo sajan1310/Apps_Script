@@ -3267,6 +3267,18 @@
             </div>
           </div>
 
+          <!-- Item-side view of the Process Components rows the Process tab
+               edits. Read-only for now; edit/bulk-qty land in a later phase.
+               Hidden entirely in Create mode (a brand-new item is in no
+               recipe yet) — see App.Item.openCreateModal. -->
+          <div id="itemProcessesSection" style="display:none;">
+            <h6 class="text-secondary border-bottom pb-1 fw-bold">
+              Used in Processes
+              <a href="#" class="float-end small" onclick="App.Item.goToProcesses(); return false;">Manage in Process tab &#8599;</a>
+            </h6>
+            <div id="itemProcessesBody" class="mb-4"></div>
+          </div>
+
           <h6 class="text-secondary border-bottom pb-1 fw-bold">Approved Vendors & Rates</h6>
           <div class="table-responsive">
             <table class="table table-bordered bg-white shadow-sm">
@@ -9753,8 +9765,16 @@
       Nav: {
         _ctx: {},
 
-        register(modalId, ids, currentId, openFn) {
-          this._ctx[modalId] = { ids: ids.slice(), currentId, openFn };
+        // `extraDirtyFn` (optional) lets a module report unsaved state that
+        // _serialize can't see. _serialize only reads inputs that have an
+        // id or name, and only as of snapshot time — so anything rendered
+        // asynchronously into the modal, or built from class-keyed inputs,
+        // is invisible to it. Item Master's "Used in Processes" table is
+        // both (see App.Item._collectProcessRows), and without this its
+        // unsaved recipe edits would be discarded by Exit/Prev/Next with no
+        // warning at all.
+        register(modalId, ids, currentId, openFn, extraDirtyFn) {
+          this._ctx[modalId] = { ids: ids.slice(), currentId, openFn, extraDirtyFn };
           this._ensureBar(modalId);
           this._snapshot(modalId);
           this._updateBar(modalId);
@@ -9786,7 +9806,13 @@
           const ctx = this._ctx[modalId];
           const modalEl = document.getElementById(modalId);
           if (!ctx || !modalEl) return false;
-          return this._serialize(modalEl) !== ctx.snapshot;
+          if (this._serialize(modalEl) !== ctx.snapshot) return true;
+          try {
+            return !!(ctx.extraDirtyFn && ctx.extraDirtyFn());
+          } catch (e) {
+            // A broken hook must never wedge Exit/Prev/Next.
+            return false;
+          }
         },
 
         // The Exit button (edit-mode-only — see each module's openEditModal,
@@ -15343,6 +15369,17 @@
           const thresholdInput = document.getElementById('formItemThreshold');
           if (thresholdInput) thresholdInput.value = '';
 
+          // A brand-new item is in no recipe yet, and an in-flight load
+          // from a previously-edited item must not paint into this form.
+          this._processesSeq++;
+          this._processesItem = null;
+          this._processesBaseline = {};
+          this._processesMeta = {};
+          const processSection = document.getElementById('itemProcessesSection');
+          if (processSection) processSection.style.display = 'none';
+          const processBody = document.getElementById('itemProcessesBody');
+          if (processBody) processBody.innerHTML = '';
+
           safeModalShow('itemModal');
         },
 
@@ -15405,10 +15442,412 @@
             'itemModal',
             App.State.filteredItems.map(i => [i.name || '', i.size || '']),
             [item.name || '', item.size || ''],
-            ([n, s]) => this.openEditModal(n, s)
+            ([n, s]) => this.openEditModal(n, s),
+            // The recipe table is rendered async from class-keyed inputs, so
+            // Nav's own snapshot can't see it — report its unsaved state here
+            // or Exit/Prev/Next would silently discard it.
+            () => this._collectProcessRows().length > 0
           );
 
           safeModalShow('itemModal');
+
+          // Fire-and-forget — the modal opens immediately and the section
+          // fills in when the recipe read returns.
+          this.loadProcessesForItem(item.name || '', item.size || '');
+        },
+
+        // ── Used in Processes ────────────────────────────────────────
+        // The item-side view of the same Process Components rows the
+        // Products & Processes tab edits. There is no separate mapping
+        // store — see getProcessesForItem in module_process.js.
+        //
+        // Scope: only each process's COMMON (process-wide) entry for this
+        // item. Color sub-group rows are shown read-only and are editable
+        // only on the process side, where the color-axis UI lives.
+        //
+        // This section saves independently of the item form's own Save —
+        // its inputs deliberately carry NO name attribute, so serializeForm's
+        // `new FormData(form)` can't pick them up as item fields.
+
+        // Guards against a stale response painting over a newer item. The
+        // item modal is reusable in place via App.Nav prev/next, so two
+        // loads can easily overlap.
+        _processesSeq: 0,
+
+        // Identity the loaded section belongs to. Captured at load time so
+        // a mapping save can't be misdirected by an unsaved edit to the
+        // Item Name / Size fields above it.
+        _processesItem: null,
+
+        // Server state as last loaded, keyed by processId — the baseline the
+        // save diffs against, so only genuinely changed processes are sent.
+        _processesBaseline: {},
+
+        // Per-process display data that isn't in the rendered inputs
+        // (name, sequence, active, colour variants), keyed by processId.
+        _processesMeta: {},
+
+        _showInactiveProcesses: false,
+
+        async loadProcessesForItem(name, size) {
+          const section = document.getElementById('itemProcessesSection');
+          const body = document.getElementById('itemProcessesBody');
+          if (!section || !body) return;
+
+          section.style.display = '';
+          this._processesItem = { name: name || '', size: size || '' };
+          this._showInactiveProcesses = false;
+          body.innerHTML =
+            '<div class="text-muted small py-2">' +
+            '<span class="spinner-border spinner-border-sm me-2"></span>Loading process recipes…</div>';
+
+          const seq = ++this._processesSeq;
+          try {
+            const res = await Api.call('getProcessesForItem', name, size);
+            if (seq !== this._processesSeq) return;
+            if (!res?.success) {
+              body.innerHTML =
+                `<div class="alert alert-warning py-2 mb-0 small">${escapeHtml(res?.message || 'Failed to load process recipes.')}</div>`;
+              return;
+            }
+            this.renderProcessesSection(res.data || []);
+          } catch (err) {
+            if (seq !== this._processesSeq) return;
+            body.innerHTML =
+              `<div class="alert alert-warning py-2 mb-0 small">${escapeHtml(err.message || 'Failed to load process recipes.')}</div>`;
+          }
+        },
+
+        renderProcessesSection(records) {
+          const body = document.getElementById('itemProcessesBody');
+          if (!body) return;
+
+          this._processesBaseline = {};
+          this._processesMeta = {};
+          (records || []).forEach(r => {
+            this._processesBaseline[r.processId] = {
+              inRecipe: !!r.inRecipe,
+              qtyPerUnit: r.inRecipe ? r.qtyPerUnit : '',
+              unit: r.unit || '',
+              remarks: r.remarks || ''
+            };
+            // Everything the inactive-filter re-render needs that isn't in
+            // the rendered inputs.
+            this._processesMeta[r.processId] = {
+              processName: r.processName,
+              sequence: r.sequence,
+              active: r.active,
+              processType: r.processType,
+              colorVariants: r.colorVariants || []
+            };
+          });
+
+          if (!records.length) {
+            body.innerHTML =
+              '<div class="text-muted small py-2">No processes are defined yet. ' +
+              '<a href="#" onclick="App.Item.goToProcesses(); return false;">Create one in the Products &amp; Processes tab &#8599;</a></div>';
+            return;
+          }
+
+          const usedCount = records.filter(r => r.inRecipe).length;
+
+          // An inactive process is only worth a row when the item is
+          // actually in it (or the user asked to see the rest) — otherwise
+          // retired processes bury the live ones.
+          const visible = records.filter(r =>
+            r.active || r.inRecipe || (r.colorVariants || []).length || this._showInactiveProcesses);
+          const hiddenCount = records.length - visible.length;
+
+          const rows = visible.map(r => {
+            const inactiveBadge = r.active
+              ? ''
+              : ' <span class="badge bg-secondary ms-1" title="This process is marked inactive in Process Master">Inactive</span>';
+
+            const qty = r.inRecipe ? String(r.qtyPerUnit) : '';
+            const disabled = r.inRecipe ? '' : ' disabled';
+
+            const variantRow = (r.colorVariants || []).length
+              ? `<tr class="table-light">
+                   <td></td>
+                   <td colspan="4" class="small text-muted py-1">
+                     <i class="bi bi-palette me-1"></i>Colour-specific (edit in the Process tab):
+                     ${r.colorVariants.map(v =>
+                       `${escapeHtml(v.colorGroup)}${v.colorAxis ? ` <span class="opacity-75">(${escapeHtml(v.colorAxis)})</span>` : ''} &rarr; ${escapeHtml(String(v.qtyPerUnit))}${v.unit ? ' ' + escapeHtml(v.unit) : ''}`
+                     ).join(' &nbsp;·&nbsp; ')}
+                   </td>
+                 </tr>`
+              : '';
+
+            return `<tr data-process-id="${escapeHtml(r.processId)}">
+                <td class="text-center align-middle">
+                  <input type="checkbox" class="form-check-input item-proc-check"${r.inRecipe ? ' checked' : ''}
+                         onchange="App.Item.onProcessToggle(this)"
+                         aria-label="Use this item in ${escapeHtml(r.processName)}">
+                </td>
+                <td class="align-middle">
+                  ${escapeHtml(r.processName)}${inactiveBadge}
+                  <div class="small text-muted">${escapeHtml(r.processId)}${r.processType ? ' · ' + escapeHtml(r.processType) : ''}</div>
+                </td>
+                <td>
+                  <input type="number" class="form-control form-control-sm item-proc-qty" step="any" min="0.0001"
+                         value="${escapeHtml(qty)}" placeholder="0"${disabled}
+                         onchange="App.Item.markProcessesDirty()"
+                         aria-label="Qty per unit for ${escapeHtml(r.processName)}">
+                </td>
+                <td>
+                  <input type="text" class="form-control form-control-sm item-proc-unit" list="unitList"
+                         value="${escapeHtml(r.unit || '')}" placeholder="Base Unit"${disabled}
+                         onchange="App.Item.markProcessesDirty()"
+                         title="Leave blank to use the item's own Base Unit"
+                         aria-label="Unit for ${escapeHtml(r.processName)}">
+                </td>
+                <td>
+                  <input type="text" class="form-control form-control-sm item-proc-remarks" maxlength="500"
+                         value="${escapeHtml(r.remarks || '')}"${disabled}
+                         onchange="App.Item.markProcessesDirty()"
+                         aria-label="Remarks for ${escapeHtml(r.processName)}">
+                </td>
+              </tr>${variantRow}`;
+          }).join('');
+
+          const inactiveToggle = (hiddenCount > 0 || this._showInactiveProcesses)
+            ? `<button type="button" class="btn btn-link btn-sm p-0 mt-2" onclick="App.Item.toggleInactiveProcesses()">
+                 ${this._showInactiveProcesses
+                   ? 'Hide inactive processes'
+                   : `Show ${hiddenCount} inactive process${hiddenCount === 1 ? '' : 'es'}`}
+               </button>`
+            : '';
+
+          body.innerHTML = `
+            <div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-2">
+              <div class="small text-muted">
+                Currently in <strong id="itemProcUsedCount">${usedCount}</strong> of ${records.length} process${records.length === 1 ? '' : 'es'}.
+                Qty is per unit of process output. Changes apply to <strong>new lots only</strong> —
+                completed lots keep the components they recorded.
+              </div>
+              <div class="d-flex align-items-end gap-2">
+                <div>
+                  <label class="form-label small mb-1">Set qty for all ticked</label>
+                  <!-- Class, not id, deliberately: App.Nav._serialize keys
+                       its dirty snapshot off id/name, and this input is
+                       rendered AFTER Nav.register() snapshots the modal, so
+                       an id here would make every item modal look dirty. -->
+                  <input type="number" class="form-control form-control-sm item-proc-bulk-qty" step="any" min="0.0001"
+                         style="width:110px;" placeholder="e.g. 0.3">
+                </div>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="App.Item.applyBulkProcessQty()">Apply</button>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered bg-white shadow-sm mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width:5%;" class="text-center"><i class="bi bi-check2" title="In this process's recipe"></i></th>
+                    <th>Process</th>
+                    <th style="width:16%;">Qty / Unit</th>
+                    <th style="width:16%;">Unit</th>
+                    <th style="width:24%;">Remarks</th>
+                  </tr>
+                </thead>
+                <tbody id="itemProcessesTableBody">${rows}</tbody>
+              </table>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-2">
+              <div>${inactiveToggle}</div>
+              <div>
+                <span id="itemProcDirtyHint" class="small text-warning fw-bold me-2" style="display:none;">Unsaved recipe changes</span>
+                <button type="button" id="itemProcSaveBtn" class="btn btn-outline-info text-dark btn-sm fw-bold border-2"
+                        onclick="App.Item.saveProcessMappings()" disabled>Save Process Recipes</button>
+              </div>
+            </div>`;
+        },
+
+        toggleInactiveProcesses() {
+          // Re-render from the baseline rather than the server: an unsaved
+          // edit in a visible row must survive showing/hiding the inactive
+          // ones. Collect the live form state first, then repaint from it.
+          const current = this._collectProcessRows({ includeUnchanged: true });
+          const byId = {};
+          current.forEach(r => { byId[r.processId] = r; });
+
+          this._showInactiveProcesses = !this._showInactiveProcesses;
+
+          const merged = Object.keys(this._processesBaseline).map(pid => {
+            const base = this._processesBaseline[pid];
+            const live = byId[pid];
+            const meta = this._processesMeta?.[pid] || {};
+            return {
+              processId: pid,
+              processName: meta.processName || pid,
+              sequence: meta.sequence || 0,
+              active: meta.active !== false,
+              processType: meta.processType || '',
+              colorVariants: meta.colorVariants || [],
+              inRecipe: live ? live.inRecipe : base.inRecipe,
+              qtyPerUnit: live ? live.qtyPerUnit : base.qtyPerUnit,
+              unit: live ? live.unit : base.unit,
+              remarks: live ? live.remarks : base.remarks
+            };
+          }).sort((a, b) => (a.sequence - b.sequence) || a.processName.localeCompare(b.processName));
+
+          const savedBaseline = this._processesBaseline;
+          this.renderProcessesSection(merged);
+          // renderProcessesSection resets the baseline from what it drew —
+          // restore the real server baseline so the dirty diff stays honest.
+          this._processesBaseline = savedBaseline;
+          if (current.some(r => this._processRowChanged(r))) this.markProcessesDirty();
+        },
+
+        onProcessToggle(checkbox) {
+          const row = checkbox.closest('tr');
+          if (!row) return;
+          const on = checkbox.checked;
+
+          ['.item-proc-qty', '.item-proc-unit', '.item-proc-remarks'].forEach(sel => {
+            const input = $(sel, row);
+            if (!input) return;
+            input.disabled = !on;
+            if (!on) input.value = '';
+          });
+
+          // Ticking a process with no qty yet: 1 per unit is the same
+          // default _saveProcessComponentsForProcess falls back to, and is
+          // right far more often than a blank the user must then fill in.
+          if (on) {
+            const qty = $('.item-proc-qty', row);
+            if (qty && !qty.value) qty.value = '1';
+            qty?.focus();
+          }
+
+          this.markProcessesDirty();
+        },
+
+        applyBulkProcessQty() {
+          const input = $('#itemProcessesBody .item-proc-bulk-qty');
+          const raw = input?.value?.trim();
+          const qty = toNumber(raw);
+          if (!raw || !(qty > 0)) {
+            App.Utils.showToast('Enter a qty greater than 0 to apply.', true);
+            input?.focus();
+            return;
+          }
+
+          let applied = 0;
+          $$('#itemProcessesTableBody tr[data-process-id]').forEach(row => {
+            if (!$('.item-proc-check', row)?.checked) return;
+            const qtyInput = $('.item-proc-qty', row);
+            if (!qtyInput) return;
+            qtyInput.value = raw;
+            applied++;
+          });
+
+          if (!applied) {
+            App.Utils.showToast('No processes are ticked.', true);
+            return;
+          }
+          if (input) input.value = '';
+          this.markProcessesDirty();
+          App.Utils.showToast(`Qty ${raw} applied to ${applied} process${applied === 1 ? '' : 'es'}. Not saved yet.`);
+        },
+
+        markProcessesDirty() {
+          const btn = document.getElementById('itemProcSaveBtn');
+          if (btn) btn.disabled = false;
+          const hint = document.getElementById('itemProcDirtyHint');
+          if (hint) hint.style.display = '';
+
+          const count = $$('#itemProcessesTableBody .item-proc-check:checked').length;
+          const label = document.getElementById('itemProcUsedCount');
+          if (label) label.textContent = count;
+        },
+
+        // Reads the rendered rows back into mapping objects. Rows for
+        // processes hidden by the inactive filter are simply absent, which
+        // is exactly right — saveItemProcessMappings leaves any process not
+        // in the list untouched.
+        _collectProcessRows({ includeUnchanged = false } = {}) {
+          const out = [];
+          $$('#itemProcessesTableBody tr[data-process-id]').forEach(row => {
+            const processId = row.dataset.processId;
+            const inRecipe = !!$('.item-proc-check', row)?.checked;
+            const entry = {
+              processId,
+              inRecipe,
+              qtyPerUnit: inRecipe ? toNumber($('.item-proc-qty', row)?.value) : '',
+              unit: inRecipe ? ($('.item-proc-unit', row)?.value?.trim() || '') : '',
+              remarks: inRecipe ? ($('.item-proc-remarks', row)?.value?.trim() || '') : ''
+            };
+            if (includeUnchanged || this._processRowChanged(entry)) out.push(entry);
+          });
+          return out;
+        },
+
+        _processRowChanged(entry) {
+          const base = this._processesBaseline[entry.processId];
+          if (!base) return entry.inRecipe;
+          if (base.inRecipe !== entry.inRecipe) return true;
+          if (!entry.inRecipe) return false;   // both off — nothing else matters
+          return toNumber(base.qtyPerUnit) !== toNumber(entry.qtyPerUnit) ||
+                 (base.unit || '') !== (entry.unit || '') ||
+                 (base.remarks || '') !== (entry.remarks || '');
+        },
+
+        async saveProcessMappings() {
+          const item = this._processesItem;
+          if (!item) return;
+
+          const changed = this._collectProcessRows();
+          if (!changed.length) {
+            App.Utils.showToast('No recipe changes to save.');
+            return;
+          }
+
+          const invalid = changed.find(r => r.inRecipe && !(toNumber(r.qtyPerUnit) > 0));
+          if (invalid) {
+            App.Utils.showToast('Every ticked process needs a Qty per Unit greater than 0. Untick a process to remove the item from it.', true);
+            return;
+          }
+
+          const removals = changed.filter(r => !r.inRecipe);
+          const apply = async () => {
+            const btn = document.getElementById('itemProcSaveBtn');
+            const originalHtml = btn?.innerHTML;
+            if (btn) { btn.disabled = true; btn.innerHTML = 'Saving…'; }
+            try {
+              const res = await Api.call('saveItemProcessMappings', item.name, item.size, JSON.stringify(changed));
+              if (!res?.success) {
+                App.Utils.showToast(res?.message || 'Failed to update process recipes.', true);
+                if (btn) { btn.disabled = false; btn.innerHTML = originalHtml; }
+                return;
+              }
+
+              // Repaint from the server's fresh state, not from what we
+              // assumed we wrote.
+              this.renderProcessesSection(res.data?.processes || []);
+              App.Utils.showToast(res.message || 'Process recipes updated.');
+              (res.data?.warnings || []).forEach(w => App.Utils.showToast(w, true));
+            } catch (err) {
+              App.Utils.showToast(err.message || 'Failed to update process recipes.', true);
+              if (btn) { btn.disabled = false; btn.innerHTML = originalHtml; }
+            }
+          };
+
+          if (removals.length) {
+            const names = removals.map(r => this._processesMeta?.[r.processId]?.processName || r.processId);
+            App.Utils.confirmAction(
+              `Remove "${item.name}" from ${names.length} process recipe${names.length === 1 ? '' : 's'} (${names.join(', ')})? ` +
+              `Completed lots keep the components they already recorded — only new lots change.`,
+              apply
+            );
+            return;
+          }
+
+          await apply();
+        },
+
+        goToProcesses() {
+          safeModalHide('itemModal');
+          App.Navigation.showTab('productsTab');
         },
 
         async delete(name, size) {

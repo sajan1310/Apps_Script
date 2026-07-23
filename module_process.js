@@ -1118,6 +1118,428 @@ function getProcessComponentsData(processId) {
 }
 
 /**
+ * The inverse view of getProcessComponentsData: given ONE Items Master item
+ * (name + size), returns every process in the Process Master alongside
+ * whether that item is in the process's recipe and at what qty.
+ *
+ * Powers Item Master's "Used in Processes" section — the item-side view of
+ * the very same Process Components rows the Process/Products tab edits.
+ * There is deliberately no separate item->process mapping store: Process
+ * Components IS the mapping, this just indexes it by item instead of by
+ * process, so the two views can never drift.
+ *
+ * Two identity rules this must not get wrong:
+ *
+ *  1. SOURCE_TYPE 'POOL' rows are skipped entirely. A POOL row's ITEM_NAME
+ *     is an upstream process's Output Item Name (a Warehouse Pool identity),
+ *     NOT an Items Master item — see PROCESS_COMPONENTS_COL.ITEM_NAME. An
+ *     item that happens to share a name with a pool output (e.g. a literal
+ *     "Painted Frame" item) must never show that pool recipe as its own.
+ *  2. COMMON vs color rows are reported separately. Only the COMMON row is
+ *     the process-wide recipe entry; color sub-group rows (COLOR_GROUP set
+ *     to a Color Master name) are per-color overrides that the item-side
+ *     view surfaces read-only, since editing them needs the axis/color-group
+ *     UI that lives on the process side.
+ *
+ * @param {string} itemName - Items Master item name.
+ * @param {string} [size] - Items Master size; '' matches rows with no size.
+ * @returns {Object} buildResponse with data = array of
+ *   {processId, processName, sequence, active, processType, inRecipe,
+ *    qtyPerUnit, unit, remarks, colorVariants: [{colorGroup, colorAxis,
+ *    qtyPerUnit, unit}]}, sorted by process Sequence ascending.
+ */
+function getProcessesForItem(itemName, size) {
+  try {
+    const targetName = String(itemName || '').trim().toLowerCase();
+    if (!targetName) {
+      return buildResponse(false, null, 'Item name is required.');
+    }
+    const targetSize = String(size || '').trim().toLowerCase();
+
+    const processResp = getProcessData(false);
+    if (!processResp || !processResp.success) {
+      return buildResponse(false, null, (processResp && processResp.message) || 'Failed to load processes.');
+    }
+
+    const componentsResp = getProcessComponentsData('');
+    if (!componentsResp || !componentsResp.success) {
+      return buildResponse(false, null, (componentsResp && componentsResp.message) || 'Failed to load process components.');
+    }
+
+    // Bucket this item's recipe rows by process, splitting the process-wide
+    // COMMON row from any per-color override rows.
+    const commonByProcess = {};
+    const colorsByProcess = {};
+
+    (componentsResp.data || []).forEach(comp => {
+      // Rule 1 — pool outputs live in a different identity space.
+      if (comp.sourceType === COMPONENT_SOURCE_TYPES.POOL) return;
+      if (String(comp.itemName || '').trim().toLowerCase() !== targetName) return;
+      if (String(comp.size || '').trim().toLowerCase() !== targetSize) return;
+
+      const pid = String(comp.processId || '').trim().toLowerCase();
+      if (!pid) return;
+
+      const colorGroup = String(comp.colorGroup || '').trim() || COMPONENT_COLOR_GROUP_COMMON;
+      if (colorGroup.toLowerCase() === COMPONENT_COLOR_GROUP_COMMON.toLowerCase()) {
+        // A process can only hold one COMMON row per item+size — that is
+        // the uniqueness key _findDuplicateComponent enforces on save — so
+        // last-wins here is only a defence against pre-existing bad data.
+        commonByProcess[pid] = comp;
+      } else {
+        if (!colorsByProcess[pid]) colorsByProcess[pid] = [];
+        colorsByProcess[pid].push({
+          colorGroup: colorGroup,
+          colorAxis: String(comp.colorAxis || '').trim(),
+          qtyPerUnit: comp.qtyPerUnit,
+          unit: String(comp.unit || '').trim()
+        });
+      }
+    });
+
+    const records = (processResp.data || []).map(proc => {
+      const pid = String(proc.processId || '').trim().toLowerCase();
+      const common = commonByProcess[pid] || null;
+      const colorVariants = (colorsByProcess[pid] || [])
+        .sort((a, b) => a.colorGroup.localeCompare(b.colorGroup));
+
+      return {
+        processId: proc.processId,
+        processName: proc.processName,
+        sequence: proc.sequence,
+        active: proc.active,
+        processType: proc.processType,
+        inRecipe: !!common,
+        qtyPerUnit: common ? common.qtyPerUnit : null,
+        // Blank unit = "already in the item's Base Unit", the default for
+        // every pre-existing row — see PROCESS_COMPONENTS_COL.UNIT.
+        unit: common ? String(common.unit || '').trim() : '',
+        remarks: common ? String(common.remarks || '').trim() : '',
+        colorVariants: colorVariants
+      };
+    });
+
+    records.sort((a, b) => (a.sequence - b.sequence) || a.processName.localeCompare(b.processName));
+
+    return buildResponse(true, records);
+  } catch (error) {
+    Log.error('[getProcessesForItem] Error:', error.message);
+    return buildResponse(false, null, 'Failed to load processes for item: ' + error.message);
+  }
+}
+
+/**
+ * @private
+ * Returns the subset of the given process IDs (lower-cased) that already
+ * have at least one Production lot logged against them. Used to warn — not
+ * block — when Item Master removes an item from a process's recipe: past
+ * lots keep their own snapshotted Components Consumed list (see
+ * module_stock.js's consumed-qty map), so the removal only ever changes
+ * FUTURE lots, but the operator should still be told the process is live.
+ * @param {string[]} processIds
+ * @returns {Set<string>}
+ */
+function _getProcessIdsWithProductionLots(processIds) {
+  const requested = new Set((processIds || []).map(id => String(id || '').trim().toLowerCase()).filter(Boolean));
+  const found = new Set();
+  if (requested.size === 0) return found;
+
+  let prodSheet;
+  try {
+    prodSheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+  } catch (e) {
+    return found;
+  }
+  const lastRow = prodSheet.getLastRow();
+  if (lastRow < 2) return found;
+
+  prodSheet.getRange(2, PRODUCTION_COL.PROCESS_ID, lastRow - 1, 1).getValues().forEach(row => {
+    const id = String(row[0] || '').trim().toLowerCase();
+    if (requested.has(id)) found.add(id);
+  });
+  return found;
+}
+
+/**
+ * @private
+ * True when the given name+size is a real Items Master row. Guards against
+ * Item Master writing a recipe row that points at nothing — the exact drift
+ * getItemIdentityDriftReport exists to report. Returns true (permissive)
+ * when the Items sheet can't be read, so a missing/renamed sheet degrades
+ * to today's behavior instead of blocking every save.
+ */
+function _itemExistsInMaster(name, size) {
+  try {
+    const sheet = getSheet(APP_CONFIG.SHEETS.ITEMS);
+    const lastRow = sheet.getLastRow();
+    if (lastRow < APP_CONFIG.ITEMS_SETTINGS.DATA_START_ROW) return false;
+
+    const targetName = String(name || '').trim().toLowerCase();
+    const targetSize = String(size || '').trim().toLowerCase();
+    const rows = sheet.getRange(
+      APP_CONFIG.ITEMS_SETTINGS.DATA_START_ROW,
+      ITEMS_COL.ITEM_NAME,
+      lastRow - APP_CONFIG.ITEMS_SETTINGS.DATA_START_ROW + 1,
+      ITEMS_COL.SIZE
+    ).getValues();
+
+    return rows.some(row =>
+      String(row[ITEMS_COL.ITEM_NAME - 1] || '').trim().toLowerCase() === targetName &&
+      String(row[ITEMS_COL.SIZE - 1] || '').trim().toLowerCase() === targetSize
+    );
+  } catch (e) {
+    return true;
+  }
+}
+
+/**
+ * The write half of Item Master's "Used in Processes" section: adds, updates
+ * and removes ONE item's process-wide recipe entries across many processes
+ * in a single pass — the bulk update the item-side view exists for.
+ *
+ * Deliberately patches individual Process Components rows rather than
+ * reusing _saveProcessComponentsForProcess, which delete-and-rewrites a
+ * process's ENTIRE component list; driving that per-process from the item
+ * side would destroy every other item's rows in each process it touched.
+ *
+ * Scope is strictly the COMMON, SOURCE_TYPE 'ITEM' row for this item+size in
+ * each process. Never reads or writes:
+ *   - color sub-group rows (COLOR_GROUP set to a Color Master name) — those
+ *     stay editable only on the process side, where the axis UI lives;
+ *   - SOURCE_TYPE 'POOL' rows — a different identity space entirely (see
+ *     getProcessesForItem).
+ *
+ * @param {string} itemName - Items Master item name.
+ * @param {string} [size] - Items Master size.
+ * @param {Array<Object>|string} mappings - [{processId, inRecipe, qtyPerUnit,
+ *   unit, remarks}], or a JSON string of the same. Processes absent from the
+ *   list are left completely untouched.
+ * @returns {Object} buildResponse with data =
+ *   {added, updated, removed, warnings: string[], processes: <getProcessesForItem shape>}
+ */
+function saveItemProcessMappings(itemName, size, mappings) {
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(PROCESS_LOCK_TIMEOUT_MS)) {
+    return buildResponse(false, null, 'System is busy. Please try again.');
+  }
+
+  try {
+    const cleanName = sanitizeString(itemName || '', 'itemName');
+    if (!cleanName) return buildResponse(false, null, 'Item name is required.');
+    const cleanSize = sanitizeString(size || '', 'size');
+
+    if (!_itemExistsInMaster(cleanName, cleanSize)) {
+      return buildResponse(false, null,
+        `"${cleanName}"${cleanSize ? ' (' + cleanSize + ')' : ''} is not in the Items Master.`);
+    }
+
+    let list;
+    try {
+      list = typeof mappings === 'string' ? JSON.parse(mappings) : (mappings || []);
+    } catch (e) {
+      return buildResponse(false, null, 'Invalid process mapping data format.');
+    }
+    if (!Array.isArray(list)) list = [];
+    if (list.length === 0) {
+      return buildResponse(false, null, 'No process changes were submitted.');
+    }
+
+    // ── Validate EVERYTHING before writing anything ──────────────────
+    // A half-applied bulk update across N processes is far worse than a
+    // rejected one, so every mapping is checked up front.
+    const processResp = getProcessData(false);
+    if (!processResp || !processResp.success) {
+      return buildResponse(false, null, (processResp && processResp.message) || 'Failed to load processes.');
+    }
+    const processById = {};
+    (processResp.data || []).forEach(p => {
+      processById[String(p.processId || '').trim().toLowerCase()] = p;
+    });
+
+    const cleaned = [];
+    const seenProcessIds = new Set();
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i] || {};
+      const pid = String(m.processId || '').trim();
+      const pidKey = pid.toLowerCase();
+      if (!pid) return buildResponse(false, null, 'A submitted row is missing its Process ID.');
+
+      const proc = processById[pidKey];
+      if (!proc) return buildResponse(false, null, `Process "${pid}" no longer exists. Reopen the item and try again.`);
+      if (seenProcessIds.has(pidKey)) {
+        return buildResponse(false, null, `Process "${proc.processName}" was submitted twice.`);
+      }
+      seenProcessIds.add(pidKey);
+
+      const inRecipe = !!m.inRecipe;
+      let qtyPerUnit = 0;
+      if (inRecipe) {
+        // Same bounds _saveProcessComponentsForProcess enforces. Note 0 is
+        // NOT a valid qty — unticking the process is how you remove an
+        // item, so a 0 here is a mistake worth surfacing, not a removal.
+        qtyPerUnit = validateNumber(m.qtyPerUnit, 0.0001, 1000000);
+        if (!qtyPerUnit) {
+          return buildResponse(false, null,
+            `Qty per Unit for "${proc.processName}" must be a number greater than 0 (untick the process to remove the item).`);
+        }
+      }
+
+      cleaned.push({
+        processId: pid,
+        processIdKey: pidKey,
+        processName: proc.processName,
+        inRecipe: inRecipe,
+        qtyPerUnit: qtyPerUnit,
+        unit: sanitizeString(m.unit || '', 'unit'),
+        remarks: sanitizeString(m.remarks || '', 'remarks').slice(0, APP_CONFIG.VALIDATION.MAX_REMARKS_LENGTH)
+      });
+    }
+
+    // ── Index the existing rows for this item ────────────────────────
+    let sheet;
+    try {
+      sheet = getSheet(APP_CONFIG.SHEETS.PROCESS_COMPONENTS);
+    } catch (e) {
+      initProcessComponentsSheet();
+      sheet = getSheet(APP_CONFIG.SHEETS.PROCESS_COMPONENTS);
+    }
+    ensureProcessComponentsQtyColumn(sheet);
+    ensureProcessComponentsSourceTypeColumn(sheet);
+    ensureProcessComponentsColorGroupColumn(sheet);
+    ensureProcessComponentsColorAxisColumn(sheet);
+    ensureProcessComponentsUnitColumn(sheet);
+
+    const targetName = cleanName.toLowerCase();
+    const targetSize = cleanSize.toLowerCase();
+    const lastRow = sheet.getLastRow();
+    const existingRowByProcess = {};   // our COMMON ITEM row, by process
+    const poolRowByProcess = {};       // a COMMON POOL row that blocks adding
+
+    if (lastRow >= 2) {
+      const data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
+      for (let i = 0; i < data.length; i++) {
+        const row = data[i];
+        if (String(row[PROCESS_COMPONENTS_COL.ITEM_NAME - 1] || '').trim().toLowerCase() !== targetName) continue;
+        if (String(row[PROCESS_COMPONENTS_COL.SIZE - 1] || '').trim().toLowerCase() !== targetSize) continue;
+
+        const colorGroup = String(row[PROCESS_COMPONENTS_COL.COLOR_GROUP - 1] || '').trim() || COMPONENT_COLOR_GROUP_COMMON;
+        if (colorGroup.toLowerCase() !== COMPONENT_COLOR_GROUP_COMMON.toLowerCase()) continue;
+
+        const pidKey = String(row[PROCESS_COMPONENTS_COL.PROCESS_ID - 1] || '').trim().toLowerCase();
+        if (!pidKey) continue;
+
+        const isPool = String(row[PROCESS_COMPONENTS_COL.SOURCE_TYPE - 1] || '').trim().toUpperCase() === COMPONENT_SOURCE_TYPES.POOL;
+        if (isPool) {
+          poolRowByProcess[pidKey] = true;
+        } else {
+          existingRowByProcess[pidKey] = i + 2;  // sheet row number
+        }
+      }
+    }
+
+    // Adding an ITEM row where a POOL row already holds the same
+    // name+size+COMMON would produce a process the process-side editor can
+    // no longer save: _findDuplicateComponent keys on item+size+colorGroup
+    // WITHOUT sourceType, so it would reject the pair as a duplicate.
+    for (let i = 0; i < cleaned.length; i++) {
+      const m = cleaned[i];
+      if (m.inRecipe && !existingRowByProcess[m.processIdKey] && poolRowByProcess[m.processIdKey]) {
+        return buildResponse(false, null,
+          `"${cleanName}" already exists in "${m.processName}" as a Warehouse Pool component. ` +
+          `Add it from the Products & Processes tab instead, so the pool/item choice stays explicit.`);
+      }
+    }
+
+    // ── Apply ────────────────────────────────────────────────────────
+    let added = 0, updated = 0, removed = 0;
+    const rowsToDelete = [];
+    const rowsToAppend = [];
+    const removedProcessIds = [];
+
+    cleaned.forEach(m => {
+      const existingRow = existingRowByProcess[m.processIdKey];
+
+      if (m.inRecipe && existingRow) {
+        // Patch only the three fields this view owns — the row's Narration,
+        // Color Axis and Source Type stay exactly as the process side left
+        // them.
+        sheet.getRange(existingRow, PROCESS_COMPONENTS_COL.QTY_PER_UNIT, 1, 1).setValue(m.qtyPerUnit);
+        sheet.getRange(existingRow, PROCESS_COMPONENTS_COL.REMARKS, 1, 1).setValue(m.remarks);
+        sheet.getRange(existingRow, PROCESS_COMPONENTS_COL.UNIT, 1, 1).setValue(m.unit);
+        updated++;
+      } else if (m.inRecipe && !existingRow) {
+        rowsToAppend.push([
+          m.processId, cleanName, cleanSize, '', m.qtyPerUnit, m.remarks,
+          COMPONENT_SOURCE_TYPES.ITEM, COMPONENT_COLOR_GROUP_COMMON, '', m.unit
+        ]);
+        added++;
+      } else if (!m.inRecipe && existingRow) {
+        rowsToDelete.push(existingRow);
+        removedProcessIds.push(m.processId);
+        removed++;
+      }
+    });
+
+    // Bottom-up, so each deletion can't shift a row still queued behind it.
+    rowsToDelete.sort((a, b) => b - a).forEach(r => sheet.deleteRow(r));
+
+    if (rowsToAppend.length > 0) {
+      const startRow = sheet.getLastRow() + 1;
+      sheet.getRange(startRow, 1, rowsToAppend.length, 10).setValues(rowsToAppend);
+    }
+
+    if (added === 0 && updated === 0 && removed === 0) {
+      return buildResponse(true, { added: 0, updated: 0, removed: 0, warnings: [], processes: (getProcessesForItem(cleanName, cleanSize).data || []) },
+        'No changes to save.');
+    }
+
+    SpreadsheetApp.flush();
+    invalidateListCache(MASTER_DATA_CACHE_KEYS.PROCESS_ALL, MASTER_DATA_CACHE_KEYS.PROCESS_ACTIVE);
+
+    // Removing an item from a process that has already produced lots is
+    // allowed — those lots keep their own snapshotted consumption — but the
+    // operator should know the recipe they just changed is live.
+    const warnings = [];
+    if (removedProcessIds.length > 0) {
+      const live = _getProcessIdsWithProductionLots(removedProcessIds);
+      const liveNames = cleaned
+        .filter(m => live.has(m.processIdKey))
+        .map(m => m.processName);
+      if (liveNames.length > 0) {
+        warnings.push(
+          `Removed from ${liveNames.join(', ')}, which already ${liveNames.length === 1 ? 'has' : 'have'} production lots. ` +
+          `Existing lots keep the components they recorded; only new lots change.`
+        );
+      }
+    }
+
+    logAction('UPDATE', APP_CONFIG.SHEETS.PROCESS_COMPONENTS, cleanName,
+      `Item process map updated: +${added} ~${updated} -${removed}`, 'SUCCESS');
+
+    const parts = [];
+    if (added) parts.push(`${added} added`);
+    if (updated) parts.push(`${updated} updated`);
+    if (removed) parts.push(`${removed} removed`);
+
+    return buildResponse(true, {
+      added: added,
+      updated: updated,
+      removed: removed,
+      warnings: warnings,
+      // Fresh state, so the client repaints from the truth rather than
+      // from what it assumed it just wrote.
+      processes: (getProcessesForItem(cleanName, cleanSize).data || [])
+    }, `Process recipes updated (${parts.join(', ')}).`);
+  } catch (error) {
+    Log.error('[saveItemProcessMappings] Error:', error.message);
+    logAction('ERROR', 'saveItemProcessMappings', itemName || '', error.message, 'ERROR');
+    return buildResponse(false, null, 'Failed to update process recipes: ' + error.message);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
  * Returns the distinct color sub-group names a process should offer on the
  * Production Lot form, sorted alphabetically. Scoped to THIS process only
  * — recipe-tagged colors, pool-detected colors (from Warehouse Pool items

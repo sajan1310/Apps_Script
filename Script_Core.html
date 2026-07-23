@@ -1253,8 +1253,16 @@
       Nav: {
         _ctx: {},
 
-        register(modalId, ids, currentId, openFn) {
-          this._ctx[modalId] = { ids: ids.slice(), currentId, openFn };
+        // `extraDirtyFn` (optional) lets a module report unsaved state that
+        // _serialize can't see. _serialize only reads inputs that have an
+        // id or name, and only as of snapshot time — so anything rendered
+        // asynchronously into the modal, or built from class-keyed inputs,
+        // is invisible to it. Item Master's "Used in Processes" table is
+        // both (see App.Item._collectProcessRows), and without this its
+        // unsaved recipe edits would be discarded by Exit/Prev/Next with no
+        // warning at all.
+        register(modalId, ids, currentId, openFn, extraDirtyFn) {
+          this._ctx[modalId] = { ids: ids.slice(), currentId, openFn, extraDirtyFn };
           this._ensureBar(modalId);
           this._snapshot(modalId);
           this._updateBar(modalId);
@@ -1286,7 +1294,13 @@
           const ctx = this._ctx[modalId];
           const modalEl = document.getElementById(modalId);
           if (!ctx || !modalEl) return false;
-          return this._serialize(modalEl) !== ctx.snapshot;
+          if (this._serialize(modalEl) !== ctx.snapshot) return true;
+          try {
+            return !!(ctx.extraDirtyFn && ctx.extraDirtyFn());
+          } catch (e) {
+            // A broken hook must never wedge Exit/Prev/Next.
+            return false;
+          }
         },
 
         // The Exit button (edit-mode-only — see each module's openEditModal,

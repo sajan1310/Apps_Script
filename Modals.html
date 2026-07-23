@@ -490,6 +490,18 @@
             </div>
           </div>
 
+          <!-- Item-side view of the Process Components rows the Process tab
+               edits. Read-only for now; edit/bulk-qty land in a later phase.
+               Hidden entirely in Create mode (a brand-new item is in no
+               recipe yet) — see App.Item.openCreateModal. -->
+          <div id="itemProcessesSection" style="display:none;">
+            <h6 class="text-secondary border-bottom pb-1 fw-bold">
+              Used in Processes
+              <a href="#" class="float-end small" onclick="App.Item.goToProcesses(); return false;">Manage in Process tab &#8599;</a>
+            </h6>
+            <div id="itemProcessesBody" class="mb-4"></div>
+          </div>
+
           <h6 class="text-secondary border-bottom pb-1 fw-bold">Approved Vendors & Rates</h6>
           <div class="table-responsive">
             <table class="table table-bordered bg-white shadow-sm">
