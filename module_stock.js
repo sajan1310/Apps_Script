@@ -283,8 +283,7 @@ function recalculateStock() {
 
     const stockLastRow = stockSheet.getLastRow();
     if (stockLastRow < 2) {
-      lock.releaseLock();
-      return;
+      return; // the finally below releases the lock on this early return too
     }
 
     const { billQtyMap, consumedQtyMap } = _getBilledAndConsumedQtyMaps(ss);

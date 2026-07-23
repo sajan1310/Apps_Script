@@ -1099,7 +1099,16 @@ function suggestPoAllocations(vendor, items, billDate) {
     if (billDateObj) {
       vendorPOs = vendorPOs.filter(function(po) {
         if (!po.poDateRaw) return true; // no PO date on record — don't exclude on a guess
-        return new Date(po.poDateRaw).getTime() <= billDateObj.getTime();
+        // Parse poDateRaw the SAME way as billDate (toSafeDateObject → local
+        // midnight). A bare `new Date("2026-05-23")` parses an ISO date-only
+        // string as UTC midnight, which under this app's Asia/Kolkata (UTC+5:30)
+        // timezone lands 5.5h AFTER billDate's local midnight — so a PO dated
+        // the SAME day as the bill computed poTime > billTime and was wrongly
+        // excluded from auto-match. Comparing both at local midnight makes the
+        // filter genuinely date-granular. Fail open if poDateRaw won't parse,
+        // matching the no-date branch above.
+        const poDateObj = toSafeDateObject(po.poDateRaw);
+        return !poDateObj || poDateObj.getTime() <= billDateObj.getTime();
       });
     }
     if (vendorPOs.length === 0) {
