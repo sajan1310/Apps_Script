@@ -1098,7 +1098,15 @@
         this.showColorMatrix();
 
         await this.renderGroupedColorChecklist(processId, colors, seq);
-        if (seq === undefined || seq === this._compLoadSeq) this._refreshCustomColorGroupSelect();
+        if (seq === undefined || seq === this._compLoadSeq) {
+          this._refreshCustomColorGroupSelect();
+          // Paint the per-color "avail." hints as soon as the rows exist,
+          // rather than waiting for the components tables further down to
+          // finish loading — this reads only already-cached data (see
+          // refreshColorChecklistAvailability), and refreshPoolAvailability
+          // re-runs it afterward once Stock has landed too.
+          await this.refreshColorChecklistAvailability(processId, seq);
+        }
 
         return colors;
       },
@@ -1154,6 +1162,7 @@
           <input class="form-check-input production-color-check" type="checkbox" onchange="App.Production.handleColorCheckToggle(this)">
           <label class="form-check-label fw-bold mb-0">${escapeHtml(color)}</label>
           <input type="number" class="form-control form-control-sm production-color-qty" style="width:100px;" step="any" placeholder="Qty" disabled oninput="App.Production.onColorQtyChanged(this.closest('.production-color-row'))">
+          <span class="small text-muted production-color-avail"></span>
         </div>`;
       },
 
@@ -1162,6 +1171,200 @@
         if (!checklistEl) return;
         colors.forEach(color => {
           checklistEl.insertAdjacentHTML('beforeend', this._colorRowHtml(color, groupKey, isCustom, isPrimary));
+        });
+      },
+
+      // Live Warehouse Pool availability, keyed the same way the server's
+      // own getPoolAvailableQtyMap keys it (module_warehouse.js): untagged
+      // (intermediate WIP) rows only — a tagged bucket is already committed
+      // to a packed product and can't be drawn on by a new lot — summed per
+      // item name, then per color bucket within it.
+      // Map<itemNameLower, Map<colorLower, qty>>.
+      _poolAvailByItemColor(poolRows) {
+        const byItem = new Map();
+        (poolRows || []).forEach(r => {
+          if (r.productTag) return;
+          const item = String(r.outputItemName || '').trim().toLowerCase();
+          if (!item) return;
+          if (!byItem.has(item)) byItem.set(item, new Map());
+          const colors = byItem.get(item);
+          const color = String(r.color || '').trim().toLowerCase();
+          colors.set(color, (colors.get(color) || 0) + (Number(r.availableQty) || 0));
+        });
+        return byItem;
+      },
+
+      // One item's available qty in one color. Exact bucket first; failing
+      // that, every COMPOSITE bucket this color is one token of (see
+      // COLOR_COMBO_DELIMITER in config.js — a process drawing on 2+
+      // independent pool inputs at once keys its buckets by the joined
+      // combination, e.g. "BCP / Blue-White"), mirroring the same
+      // single-token -> composite-bucket resolution getPoolAvailableQtyMap
+      // does server-side so this hint agrees with what a save would actually
+      // find. Unlike the server's "exactly one source" rule, every matching
+      // composite is summed here: those buckets are disjoint physical stock,
+      // so their total really is how much of this color exists. Returns 0
+      // (not null) for an item that has pool history but no bucket for this
+      // color at all — that's a real "none available", not an unknown.
+      _poolAvailForColor(colorMap, color) {
+        if (!colorMap) return null;
+        const key = String(color || '').trim().toLowerCase();
+        if (!key) return null;
+        if (colorMap.has(key)) return colorMap.get(key);
+        let total = 0;
+        colorMap.forEach((qty, bucket) => {
+          // ' / ' literal, not the server-side COLOR_COMBO_DELIMITER constant
+          // (config.js is not shipped to the client) — same literal
+          // _checkedColorTokensLower already splits composite colors on.
+          if (bucket.split(' / ').map(t => t.trim()).includes(key)) total += qty;
+        });
+        return total;
+      },
+
+      // Which real inputs feed one checklist group — i.e. what actually
+      // limits how much of that group's colors this lot can produce.
+      // Two shapes, matching the two ways a group is built in
+      // renderGroupedColorChecklist:
+      //   - a 'pool'/'merged' axis (and every legacy pool-item group) is
+      //     labeled with its own pool item name(s), joined by ', ' — so the
+      //     label resolves straight back to this recipe's POOL-sourced
+      //     components (same matching direction _axisKeyForPoolItemNames
+      //     uses in reverse).
+      //   - a 'tag' axis is labeled with its COLOR_AXIS name instead, and is
+      //     fed by whichever recipe rows carry that axis label; those rows
+      //     name their own color in colorGroup, so each color's inputs are
+      //     found per-color rather than per-group.
+      // The 'other'/'custom' buckets have no configured source at all and
+      // resolve to nothing — deliberately blank rather than a misleading
+      // "0 avail." (see _colorRowAvailability).
+      _groupInputSources(groupKey, comps) {
+        const opt = (this._customColorGroupOptions || []).find(o => o.key === groupKey);
+        if (!opt) return { poolItems: [], tagComps: [] };
+
+        const labelParts = opt.label.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        const poolItems = comps.filter(c =>
+          c.sourceType === 'POOL' && labelParts.includes(String(c.itemName || '').trim().toLowerCase()));
+
+        const axisLabel = opt.label.trim().toLowerCase();
+        const tagComps = comps.filter(c =>
+          String(c.colorAxis || '').trim().toLowerCase() === axisLabel && axisLabel);
+
+        return { poolItems, tagComps };
+      },
+
+      // The availability hint for ONE checklist row: the smallest available
+      // quantity across every input that color needs, since the scarcest one
+      // is the real ceiling. Returns null when this row's group has no
+      // resolvable input (Other/Custom, or a tag axis whose recipe rows
+      // don't name this color) so the caller can leave the row blank instead
+      // of asserting a zero it can't back up.
+      // `parts` carries the per-input breakdown for the tooltip, which is
+      // what makes a multi-input group's single min number interpretable.
+      _colorRowAvailability(color, groupKey, ctx) {
+        const { poolItems, tagComps } = this._groupInputSources(groupKey, ctx.comps);
+        const parts = [];
+
+        const addPool = (itemName) => {
+          const colorMap = ctx.poolAvail.get(String(itemName || '').trim().toLowerCase());
+          const qty = this._poolAvailForColor(colorMap, color);
+          if (qty !== null) parts.push({ label: itemName, qty });
+        };
+
+        poolItems.forEach(c => addPool(c.itemName));
+
+        tagComps
+          .filter(c => App.Utils.sameText(c.colorGroup, color))
+          .forEach(c => {
+            if (c.sourceType === 'POOL') {
+              addPool(c.itemName);
+              return;
+            }
+            const name = String(c.itemName || '').trim().toLowerCase();
+            const size = String(c.size || '').trim().toLowerCase();
+            const entry = (ctx.stock || []).find(s =>
+              String(s.name || '').trim().toLowerCase() === name
+              && (!size || String(s.size || '').trim().toLowerCase() === size));
+            if (entry) parts.push({ label: c.itemName, qty: Number(entry.currentStock) || 0 });
+          });
+
+        if (parts.length === 0) return null;
+        return {
+          qty: parts.reduce((min, p) => Math.min(min, p.qty), Infinity),
+          parts
+        };
+      },
+
+      // Shows, next to every color in the Colors to Produce checklist, how
+      // much of that color is actually available to build from right now —
+      // the Warehouse Pool balance of the upstream item(s) that group is
+      // driven by (see _groupInputSources), or plain Stock for an
+      // ITEM-sourced tag-axis input. This is the producible ceiling for that
+      // color, the same question the per-row "avail." hints in the
+      // Components tables answer for their own rows (see
+      // refreshPoolAvailability) — just surfaced at the point the operator
+      // actually decides which colors and how many to put in the lot,
+      // instead of only after scrolling down to the component tables.
+      //
+      // Purely client-side over the two per-load cached reads the checklist
+      // already made (_fetchProcessComponents/_fetchWarehousePoolData) plus
+      // whatever Stock refreshPoolAvailability last loaded, so this costs no
+      // extra server round trip and is safe to call after any re-render.
+      async refreshColorChecklistAvailability(processId, seq) {
+        const rows = $$('#productionColorChecklist .production-color-row');
+        if (rows.length === 0) return;
+
+        let comps = [];
+        let poolRows = [];
+        try {
+          const [compRes, poolRes] = await Promise.all([
+            this._fetchProcessComponents(processId),
+            this._fetchWarehousePoolData()
+          ]);
+          if (seq !== undefined && seq !== this._compLoadSeq) return;
+          comps = compRes.success ? (compRes.data || []) : [];
+          poolRows = poolRes.success ? (poolRes.data || []) : [];
+        } catch (err) {
+          // Ignored — availability hints are advisory, not blocking (same
+          // stance as refreshPoolAvailability).
+          return;
+        }
+
+        const ctx = {
+          comps,
+          poolAvail: this._poolAvailByItemColor(poolRows),
+          stock: App.State.globalStock || []
+        };
+
+        // Re-read the rows: the awaits above can only have resolved from
+        // cache or a same-load fetch (seq-guarded), but a custom color row
+        // may have been added in between.
+        $$('#productionColorChecklist .production-color-row').forEach(row => {
+          const availEl = row.querySelector('.production-color-avail');
+          if (!availEl) return;
+          const result = this._colorRowAvailability(row.dataset.color, row.dataset.group, ctx);
+          if (!result) {
+            availEl.innerText = '';
+            availEl.title = '';
+            availEl.classList.remove('text-danger', 'fw-bold');
+            availEl.classList.add('text-muted');
+            return;
+          }
+          availEl.innerText = `${this.formatQty(result.qty)} avail.`;
+          // Only worth spelling out when several inputs feed this color and
+          // the single min number alone doesn't say which one is the binding
+          // constraint.
+          availEl.title = result.parts.length > 1
+            ? result.parts.map(p => `${p.label}: ${this.formatQty(p.qty)}`).join('  •  ')
+            : `${result.parts[0].label}: ${this.formatQty(result.parts[0].qty)} available`;
+          // Nothing (or less than nothing) available is the whole point of
+          // showing this, and is far too easy to miss as plain gray text —
+          // flagged the same way refreshPoolAvailability flags a negative
+          // component balance. Producing it anyway is still allowed (see
+          // the deliberate zero/negative-stock decision) — this only warns.
+          const empty = result.qty <= 0;
+          availEl.classList.toggle('text-danger', empty);
+          availEl.classList.toggle('fw-bold', empty);
+          availEl.classList.toggle('text-muted', !empty);
         });
       },
 
@@ -3633,6 +3836,13 @@
         } catch (err) {
           // Ignored — availability hints are advisory, not blocking.
         }
+
+        // Same advisory hint, one level up: the Colors to Produce checklist's
+        // own per-color availability. Kept here (rather than only at render
+        // time) so it stays in step with the component rows' hints, and so a
+        // checklist row backed by a plain ITEM input picks up the Stock this
+        // call just loaded. Never throws — see its own catch.
+        await this.refreshColorChecklistAvailability(processId);
       },
 
       // Reads one row from the Common Components table into a plain object.
