@@ -133,7 +133,8 @@ def run():
 
         print("\n[2] Add a custom color to the PRIMARY group (Painted Frame)...")
         page.evaluate("""
-            document.getElementById('productionCustomColorInput').value = 'Sunset Orange';
+            const colorInput = document.getElementById('productionCustomColorInput');
+            colorInput.add(new Option('Sunset Orange', 'Sunset Orange', true, true));
             const sel = document.getElementById('productionCustomColorGroupSelect');
             const opt = Array.from(sel.options).find(o => o.textContent.includes('Painted Frame'));
             sel.value = opt.value;
@@ -155,7 +156,8 @@ def run():
 
         print("\n[3] Add a custom color to the NON-primary group (Mudguard)...")
         page.evaluate("""
-            document.getElementById('productionCustomColorInput').value = 'Neon Green';
+            const colorInput = document.getElementById('productionCustomColorInput');
+            colorInput.add(new Option('Neon Green', 'Neon Green', true, true));
             const sel = document.getElementById('productionCustomColorGroupSelect');
             const opt = Array.from(sel.options).find(o => o.textContent.includes('Mudguard'));
             sel.value = opt.value;
@@ -177,7 +179,8 @@ def run():
 
         print("\n[4] Add a custom color as Independent (no group picked)...")
         page.evaluate("""
-            document.getElementById('productionCustomColorInput').value = 'Test Batch X';
+            const colorInput = document.getElementById('productionCustomColorInput');
+            colorInput.add(new Option('Test Batch X', 'Test Batch X', true, true));
             document.getElementById('productionCustomColorGroupSelect').value = '';
             App.Production.addCustomColorRow();
         """)

@@ -1278,7 +1278,19 @@
           }
           this.renderColorChecklistRows([name], 'custom', true);
         }
-        if (input) input.value = '';
+        // input is now a Select2-enhanced <select> (see
+        // initCustomColorInputSelect2) — a plain .value='' leaves the
+        // visible Select2 selection box showing the just-added name, since
+        // Select2 only repaints its own display in reaction to a real
+        // 'change' event, not a raw DOM property set (same reasoning as
+        // initContractorSelect2's own change-handler comment above).
+        if (input) {
+          if (window.jQuery?.fn?.select2 && window.jQuery(input).data('select2')) {
+            window.jQuery(input).val(null).trigger('change');
+          } else {
+            input.value = '';
+          }
+        }
         if (groupSelect) groupSelect.value = '';
 
         const row = $$('#productionColorChecklist .production-color-row')
@@ -3685,6 +3697,45 @@
         });
       },
 
+      // Initializes a searchable Select2 on the "+ Add Custom Sub-Group"
+      // color field (see addCustomColorRow), allowing the operator to
+      // either pick an existing Color Master name or type a new one —
+      // same pick-or-create pattern as initContractorSelect2 above. A
+      // brand-new name gets auto-registered into Color Master server-side
+      // the moment the lot is saved (see saveProduction's
+      // _ensureColorMasterEntries call, module_production.js/module_tags.js)
+      // so it's available as a real suggestion everywhere else Color
+      // Master feeds a picker from then on, not just on this one lot.
+      initCustomColorInputSelect2() {
+        const selectEl = document.getElementById('productionCustomColorInput');
+        if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+        const $select = window.jQuery(selectEl);
+        if ($select.data('select2')) $select.select2('destroy');
+        selectEl.innerHTML = '';
+
+        $select.select2({
+          placeholder: 'Search or type a color name...',
+          width: '220px',
+          tags: true,
+          allowClear: true,
+          matcher: App.Utils.select2Matcher,
+          dropdownParent: App.Utils.select2DropdownParent($select),
+          data: (App.State.globalColors || []).map(c => ({ id: c.name, text: c.name })),
+          createTag(params) {
+            const term = (params.term || '').trim();
+            if (!term) return null;
+            // Resolve to an existing Color Master name differing only by
+            // case/whitespace instead of minting a second, differently-cased
+            // entry for the same real color (e.g. typing "red" when "Red" is
+            // already on file) — same reasoning as initContractorSelect2.
+            const existing = (App.State.globalColors || []).find(c => App.Utils.sameText(c.name, term));
+            if (existing) return { id: existing.name, text: existing.name };
+            return { id: term, text: term, newTag: true };
+          }
+        });
+      },
+
       // Fetches and displays the contractor payable estimate for the current
       // Assigned To + Process + Qty, so the operator sees the cost before save.
       // For a multi-color (Color Axis / checklist) lot the plain Qty field is
@@ -3764,7 +3815,7 @@
         const form = document.getElementById('productionForm');
         if (form) form.reset();
 
-        await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded()]);
+        await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded(), App.Color.ensureLoaded()]);
 
         document.getElementById('productionRowIdx').value = '';
         document.getElementById('productionDate').value = todayIso();
@@ -3775,6 +3826,7 @@
         document.getElementById('productionProductNameHidden').value = '';
 
         this.initContractorSelect2('');
+        this.initCustomColorInputSelect2();
         document.getElementById('productionPayableHint').innerText = '';
 
         this.populateSizeSelect();
@@ -3817,7 +3869,7 @@
         const form = document.getElementById('productionForm');
         if (form) form.reset();
 
-        await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded()]);
+        await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded(), App.Color.ensureLoaded()]);
 
         document.getElementById('productionRowIdx').value = p.rowIdx;
 
@@ -3833,6 +3885,7 @@
 
         document.getElementById('productionAssignedBy').value = p.assignedBy;
         this.initContractorSelect2(p.assignedTo);
+        this.initCustomColorInputSelect2();
         document.getElementById('productionStatus').value = p.status;
         document.getElementById('productionRemarks').value = p.remarks;
 

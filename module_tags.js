@@ -118,6 +118,62 @@ function getColors() {
   return getCachedListResponse(MASTER_DATA_CACHE_KEYS.COLOR_MASTER, () => _getTagData('COLOR_MASTER', 'Color Master'));
 }
 
+/**
+ * @private Auto-registers any name in `colorNames` that isn't already a
+ * Color Master entry (case-insensitive) — appends every missing one in one
+ * batch write. Does NOT acquire its own lock — callers that write to Color
+ * Master from within an already-locked operation (e.g. saveProduction,
+ * when an operator types a genuinely new color via "+ Add Custom
+ * Sub-Group" — module_production.js) must already be holding that lock
+ * themselves, same convention as _saveProcessColorLinksForProcess. Without
+ * this, a custom color typed on one Production lot stayed invisible
+ * everywhere else Color Master feeds a picker (the Warehouse Pool
+ * "+ Add Combination" datalist, another process's own custom-color
+ * autocomplete) until someone separately re-typed it into the Color Master
+ * screen by hand. Preserves each name's own typed casing exactly — no
+ * normalization — same as saveColor's own duplicate-check.
+ * @param {Array<string>} colorNames
+ * @returns {string[]} the subset that were actually newly registered
+ */
+function _ensureColorMasterEntries(colorNames) {
+  const names = (colorNames || []).map(c => String(c || '').trim()).filter(Boolean);
+  if (names.length === 0) return [];
+
+  try {
+    const sheet = _getOrCreateTagSheet('COLOR_MASTER', 'Color Master');
+    const lastRow = sheet.getLastRow();
+    const existingLower = new Set();
+    if (lastRow >= 2) {
+      sheet.getRange(2, TAG_COL.NAME, lastRow - 1, 1).getValues().forEach(r => {
+        const n = String(r[0] || '').trim();
+        if (n) existingLower.add(n.toLowerCase());
+      });
+    }
+
+    const seenLower = new Set();
+    const toAdd = [];
+    names.forEach(name => {
+      const lower = name.toLowerCase();
+      if (existingLower.has(lower) || seenLower.has(lower)) return;
+      seenLower.add(lower);
+      toAdd.push(name);
+    });
+    if (toAdd.length === 0) return [];
+
+    const startRow = sheet.getLastRow() + 1;
+    sheet.getRange(startRow, 1, toAdd.length, 2).setValues(toAdd.map(name => [name, '']));
+    invalidateListCache(TAG_CACHE_KEY_BY_SHEET_KEY.COLOR_MASTER);
+    toAdd.forEach(name => logAction('CREATE', APP_CONFIG.SHEETS.COLOR_MASTER, name, 'Auto-registered from a Production lot\'s custom color entry', 'SUCCESS'));
+    return toAdd;
+  } catch (error) {
+    // Never let a Color Master registration hiccup block the Production
+    // save that triggered it - the lot's own colorBreakdown already has
+    // the color regardless of whether Color Master picks it up too.
+    Log.error('[_ensureColorMasterEntries] Error:', error.message);
+    return [];
+  }
+}
+
 function getModels() {
   return getCachedListResponse(MASTER_DATA_CACHE_KEYS.MODEL_MASTER, () => _getTagData('MODEL_MASTER', 'Model Master'));
 }

@@ -651,6 +651,19 @@ function saveProduction(formData) {
         return buildResponse(false, null, `Color "${invalidColor.color}" is not a configured color sub-group for this process. It may have been removed — refresh and re-select.`);
       }
 
+      // Auto-register any genuinely new color the operator typed via
+      // "+ Add Custom Sub-Group" (isCustom:true) into Color Master, so it's
+      // available everywhere else Color Master feeds a picker (the
+      // Warehouse Pool "+ Add Combination" datalist, another process's own
+      // custom-color autocomplete) instead of staying invisible outside
+      // this one process's own logged history. Already-known names are a
+      // safe no-op (module_tags.js's own case-insensitive dedup); this must
+      // never block the lot save itself on a registration hiccup.
+      if (typeof _ensureColorMasterEntries === 'function') {
+        const customColorNames = colorBreakdown.filter(c => c.isCustom).map(c => c.color);
+        if (customColorNames.length > 0) _ensureColorMasterEntries(customColorNames);
+      }
+
       // Size is descriptive only — recorded per color for this lot's own
       // record-keeping (lot list, print sheet) but not a Warehouse Pool
       // inventory dimension; Pool buckets stay keyed by Output Item Name +

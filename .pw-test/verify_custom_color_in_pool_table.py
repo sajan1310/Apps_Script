@@ -115,7 +115,7 @@ def run():
 
         print("\n[3] Add a custom color 'Purple-White' (no group choice possible/needed)...")
         page.evaluate("""
-            document.getElementById('productionCustomColorInput').value = 'Purple-White';
+            document.getElementById('productionCustomColorInput').add(new Option('Purple-White', 'Purple-White', true, true));
             App.Production.addCustomColorRow();
             const row = Array.from(document.querySelectorAll('.production-color-row')).find(r => r.dataset.color === 'Purple-White');
             row.querySelector('.production-color-qty').disabled = false;

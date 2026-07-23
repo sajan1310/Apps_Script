@@ -1,19 +1,25 @@
 /**
- * Standalone Node harness (same pattern as test_process_color_groups.js) that
- * loads the REAL server-side files and verifies the 2026-07-22 change:
- * computeColorGroupsForProcess (module_process.js) must widen a
- * color-enabled process's "Colors to Produce" list to the FULL Color Master
- * list, not just the colors its own recipe/pool history has actually
- * touched — while a process with NO color dimension at all must still get
- * an empty list (never suddenly grow a checklist just because Color Master
- * is non-empty). See module_process.js's computeColorGroupsForProcess and
- * _getColorMasterNames doc comments.
+ * Standalone Node harness (same pattern as test_process_color_groups.js)
+ * that loads the REAL server-side files. Originally verified a 2026-07-22
+ * change where a color-enabled process's "Colors to Produce" list widened
+ * to the FULL Color Master list. That widening was deliberately REVERSED
+ * later the same day, once it became clear it let a color only ever used
+ * by one process (e.g. Painted Mudguard) "reflect" onto a completely
+ * unrelated process's checklist (e.g. Fitted Frame) just because both
+ * pull from the same global Color Master — see
+ * _computeKnownColorsForProcess (module_process.js), now the single shared
+ * definition of "known colors" both getProcessColorGroups (singular) and
+ * getAllProcessColorGroups (bulk, Warehouse Pool dialog) use: scoped to
+ * THAT process's own recipe-tagged + pool-detected + actually-logged
+ * Production history + manually-INCLUDEd colors, generic across every
+ * process, and process identity is the only scope boundary (not Model,
+ * not Process Type). A process with NO color dimension at all must still
+ * get an empty list either way (never suddenly grow a checklist just
+ * because Color Master is non-empty).
  *
  * test_process_color_groups.js deliberately does NOT load module_tags.js,
- * so its own "Green" color is correctly rejected there (Color Master widening
- * never kicks in without getColors() available) — that test's assertions
- * must stay untouched. This is a separate file specifically so Color Master
- * IS loaded and the widening path is actually exercised end-to-end.
+ * so its own "Green" color is correctly rejected there regardless of any
+ * widening — that test's assertions are untouched by any of this.
  *
  * Run: node .pw-test/test_color_master_widening.js
  */
@@ -156,6 +162,14 @@ class FakeScriptCache {
   constructor() { this.store = {}; }
   get(key) { return Object.prototype.hasOwnProperty.call(this.store, key) ? this.store[key] : null; }
   put(key, value) { this.store[key] = value; }
+  // Missing before: invalidateListCache (utils.js) calls cache.remove(key)
+  // on every process/color/etc. write path - without this, that call threw
+  // (swallowed by invalidateListCache's own try/catch), silently leaving
+  // getProcessData's cached process list stale for the rest of the test
+  // run the moment a SECOND getAllProcessColorGroups()/getProcessData()
+  // call happened after a new process was created post-cache-population.
+  // The real GAS CacheService has .remove() - this mock just never did.
+  remove(key) { delete this.store[key]; }
   removeAll() { this.store = {}; }
 }
 
@@ -229,7 +243,7 @@ console.log('\n=== Setup: seed a 5-name Color Master ===');
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-console.log('\n=== Test 1: a color-enabled process widens to the full Color Master ===');
+console.log('\n=== Test 1: a color-enabled process stays scoped to its OWN recipe-tagged colors, no Color Master union ===');
 let framePaintingId;
 {
   const res = saveProcess({
@@ -251,10 +265,10 @@ let framePaintingId;
 
   const colorsRes = getProcessColorGroups(framePaintingId);
   assert(colorsRes.success, 'getProcessColorGroups succeeds');
-  const expected = ['Blue', 'Green', 'Orange', 'Red', 'Yellow'];
+  const expected = ['Blue', 'Red']; // just the 2 recipe-tagged colors - "Green"/"Orange"/"Yellow" exist in Color Master but were never touched by this process
   assert(
     JSON.stringify(colorsRes.data) === JSON.stringify(expected),
-    'widened to the full Color Master, not just the 2 recipe-tagged colors (got ' + JSON.stringify(colorsRes.data) + ')'
+    'scoped to the 2 recipe-tagged colors only, no blanket Color Master union (got ' + JSON.stringify(colorsRes.data) + ')'
   );
 }
 
@@ -317,25 +331,27 @@ console.log('\n=== Test 3: saveProduction now accepts a Color Master color the r
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// 2026-07-22 (later same day): getAllProcessColorGroups no longer widens to
-// the full Color Master the way getProcessColorGroups (singular, the
-// Production checklist's own call path) deliberately still does — the
-// Warehouse Pool breakdown dialog's placeholder rows are fed by this bulk
-// variant, and unioning in every Color Master entry there just produced one
-// zero-qty placeholder row per unused color per process (real clutter, not
-// real flexibility — see feature_axis_color_pairings_and_composite_rename_fix
-// / the Phase 3 Warehouse Pool combinations follow-up). `colors` here is now
-// recipe/pool-detected colors UNION colors this process has actually logged
-// producing (see _getProductionLoggedColorsByProcess - "Green" below is a
-// real example: not recipe-tagged, but Test 3 above logged a real Completed
-// lot with it) UNION anything explicitly INCLUDEd via includeWarehousePoolColor
-// (the "+ Add Combination" escape hatch, still fully independent of this
-// narrowing — see Test 6). `removable` stays keyed off baseColors only (not
-// logged history) — a logged-but-not-recipe/pool color like "Green" still
-// LOOKS removable here, but excludeWarehousePoolColors' own separate
-// real-bucket-history guard rejects the actual removal attempt regardless
-// (see Test 5 immediately below), so nothing real is ever actually at risk.
-console.log('\n=== Test 4: bulk getAllProcessColorGroups is recipe/pool/logged-history-scoped, UNLIKE the single-process (checklist) endpoint ===');
+// 2026-07-22: getAllProcessColorGroups (bulk, Warehouse Pool dialog) and
+// getProcessColorGroups (singular, Production checklist) now share the
+// exact same per-process-scoped definition of "known colors" —
+// _computeKnownColorsForProcess (module_process.js): recipe/pool-detected
+// colors UNION colors this process has actually logged producing (see
+// _getProductionLoggedColorsByProcess - "Green" below is a real example:
+// not recipe-tagged, but Test 3 above logged a real Completed lot with it)
+// UNION anything explicitly INCLUDEd via includeWarehousePoolColor (the
+// "+ Add Combination" escape hatch — see Test 6), MINUS EXCLUDEs. No
+// blanket Color Master union anywhere anymore, on either endpoint —
+// unioning in every Color Master entry regardless of relevance was both
+// real clutter (Warehouse Pool placeholder rows) AND real cross-process
+// bleed-through (a color only ever used by one process showing up on an
+// unrelated process's checklist purely because Color Master is global —
+// see Test 7 below for a direct reproduction of that exact scenario).
+// `removable` stays keyed off baseColors only (not logged history) — a
+// logged-but-not-recipe/pool color like "Green" still LOOKS removable
+// here, but excludeWarehousePoolColors' own separate real-bucket-history
+// guard rejects the actual removal attempt regardless (see Test 5
+// immediately below), so nothing real is ever actually at risk.
+console.log('\n=== Test 4: bulk getAllProcessColorGroups and the single-process (checklist) endpoint now agree - both recipe/pool/logged-history-scoped ===');
 {
   const bulkRes = getAllProcessColorGroups();
   assert(bulkRes.success, 'getAllProcessColorGroups succeeds');
@@ -353,14 +369,13 @@ console.log('\n=== Test 4: bulk getAllProcessColorGroups is recipe/pool/logged-h
     'bulk variant still reports zero for the no-color-dimension, never-produced process (got ' + JSON.stringify(bulkRes.data[packingId]) + ')'
   );
 
-  // The single-process (checklist) endpoint is a completely separate call
-  // path and must be COMPLETELY UNAFFECTED by the above - still the full
-  // widened 5-color Color Master union, exactly as Test 1 already proved.
+  // The single-process (checklist) endpoint now computes the exact same
+  // scoped set for this process - no more "widened" vs "narrow" split
+  // between the two call paths.
   const singleRes = getProcessColorGroups(framePaintingId);
-  const expectedWidened = ['Blue', 'Green', 'Orange', 'Red', 'Yellow'];
   assert(
-    JSON.stringify(singleRes.data) === JSON.stringify(expectedWidened),
-    'getProcessColorGroups (singular) still widens to the full Color Master, unaffected by the bulk variant\'s narrowing (got ' + JSON.stringify(singleRes.data) + ')'
+    JSON.stringify(singleRes.data) === JSON.stringify(expectedColors),
+    'getProcessColorGroups (singular) now matches the bulk variant exactly - same scoped colors, no Color Master union (got ' + JSON.stringify(singleRes.data) + ')'
   );
 }
 
@@ -417,6 +432,70 @@ console.log('\n=== Test 6: includeWarehousePoolColor adds a custom combo and und
     (bulkAfterIncludes.data[framePaintingId].colors || []).includes('Orange'),
     'bulk variant still reflects a manually re-INCLUDEd color (got ' + JSON.stringify(bulkAfterIncludes.data[framePaintingId]) + ')'
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Direct reproduction of the reported scenario: "Fitting Frame Crysta" and
+// "Painted Mudguard Crysta" are two separate processed items (same Model,
+// different processes/recipes) - Painted Mudguard's own logged colors must
+// never reflect onto Fitting Frame's checklist, and vice versa, purely
+// because both draw from the same global Color Master. This is exactly
+// what _computeKnownColorsForProcess's per-processId scoping guarantees,
+// generic for every process pair, not special-cased to this one example.
+console.log('\n=== Test 7: two unrelated processes (same Model, different recipes) never see each other\'s logged colors ===');
+{
+  const frameRes = saveProcess({
+    processName: 'Fitting Frame Crysta',
+    sequence: 5,
+    lotPrefix: 'FFC',
+    outputItemName: 'Fitted Frame Crysta Output',
+    isFinalStage: false,
+    active: true,
+    remarks: '',
+    components: JSON.stringify([{ itemName: 'Frame Bolt', sourceType: 'ITEM', qtyPerUnit: 4, colorGroup: 'COMMON' }])
+  });
+  const mudguardRes = saveProcess({
+    processName: 'Painted Mudguard Crysta',
+    sequence: 6,
+    lotPrefix: 'PMC',
+    outputItemName: 'Painted Mudguard Crysta Output',
+    isFinalStage: false,
+    active: true,
+    remarks: '',
+    components: JSON.stringify([{ itemName: 'Mudguard Bracket', sourceType: 'ITEM', qtyPerUnit: 2, colorGroup: 'COMMON' }])
+  });
+  const frameId = frameRes.data && frameRes.data.processId;
+  const mudguardId = mudguardRes.data && mudguardRes.data.processId;
+  assert(!!frameId && !!mudguardId, 'both processes created (got frameId=' + frameId + ', mudguardId=' + mudguardId + ')');
+
+  const frameLot = saveProduction({
+    processId: frameId,
+    assignedTo: 'Test Contractor',
+    status: 'Completed',
+    colorBreakdown: JSON.stringify([{ color: 'Steel Silver', qty: 4, isCustom: true }]),
+    componentsConsumed: JSON.stringify([{ itemName: 'Frame Bolt', sourceType: 'ITEM', qty: 16, colorGroup: 'COMMON' }])
+  });
+  const mudguardLot = saveProduction({
+    processId: mudguardId,
+    assignedTo: 'Test Contractor',
+    status: 'Completed',
+    colorBreakdown: JSON.stringify([{ color: 'Forest Green', qty: 3, isCustom: true }]),
+    componentsConsumed: JSON.stringify([{ itemName: 'Mudguard Bracket', sourceType: 'ITEM', qty: 6, colorGroup: 'COMMON' }])
+  });
+  assert(frameLot.success, 'Fitting Frame Crysta lot ("Steel Silver") saves: ' + frameLot.message);
+  assert(mudguardLot.success, 'Painted Mudguard Crysta lot ("Forest Green") saves: ' + mudguardLot.message);
+
+  const frameChecklist = getProcessColorGroups(frameId);
+  const mudguardChecklist = getProcessColorGroups(mudguardId);
+  assert(frameChecklist.data.includes('Steel Silver'), 'Fitting Frame\'s own checklist includes its own logged color "Steel Silver" (got ' + JSON.stringify(frameChecklist.data) + ')');
+  assert(!frameChecklist.data.includes('Forest Green'), 'Fitting Frame\'s checklist does NOT include Painted Mudguard\'s "Forest Green" (got ' + JSON.stringify(frameChecklist.data) + ')');
+  assert(mudguardChecklist.data.includes('Forest Green'), 'Painted Mudguard\'s own checklist includes its own logged color "Forest Green" (got ' + JSON.stringify(mudguardChecklist.data) + ')');
+  assert(!mudguardChecklist.data.includes('Steel Silver'), 'Painted Mudguard\'s checklist does NOT include Fitting Frame\'s "Steel Silver" (got ' + JSON.stringify(mudguardChecklist.data) + ')');
+
+  // Same isolation must hold on the bulk (Warehouse Pool dialog) endpoint too.
+  const bulk = getAllProcessColorGroups();
+  assert(!(bulk.data[frameId].colors || []).includes('Forest Green'), 'bulk variant: Fitting Frame does not see Painted Mudguard\'s color either');
+  assert(!(bulk.data[mudguardId].colors || []).includes('Steel Silver'), 'bulk variant: Painted Mudguard does not see Fitting Frame\'s color either');
 }
 
 console.log('\n' + (failures === 0 ? 'ALL TESTS PASSED' : failures + ' TEST(S) FAILED'));

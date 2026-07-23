@@ -1095,14 +1095,23 @@ function getProcessComponentsData(processId) {
 
 /**
  * Returns the distinct color sub-group names a process should offer on the
- * Production Lot form, sorted alphabetically. Once a process is
- * color-enabled at all (see computeColorGroupsForProcess), the FULL Color
- * Master list is always offered too — not just colors this process's own
- * history happens to have touched — so the checklist never silently hides
- * a legitimate color just because it hasn't been produced through this
- * exact recipe/pool item yet. See computeColorGroupsForProcess for the
- * full breakdown of what "color-enabled" means and where the base list
- * comes from before Color Master is unioned in.
+ * Production Lot form, sorted alphabetically. Scoped to THIS process only
+ * — recipe-tagged colors, pool-detected colors (from Warehouse Pool items
+ * this recipe consumes), colors this process's own Production history has
+ * actually logged, and any manually-INCLUDEd override — see
+ * _computeKnownColorsForProcess, the same computation getAllProcessColorGroups
+ * (the Warehouse Pool breakdown dialog) uses, so a color never "reflects"
+ * across two unrelated processes just because it exists somewhere in the
+ * global Color Master list (e.g. a Painted Mudguard-only color no longer
+ * appears on a Fitted Frame process's own checklist, even though both
+ * pull from the same Color Master and might share a Model).
+ *
+ * Until 2026-07-22 this unioned in the FULL Color Master once a process
+ * was color-enabled at all, regardless of relevance to that specific
+ * process — deliberately reversed per user request once that
+ * cross-process bleed-through became the actual complaint; see
+ * feature_warehouse_pool_narrowing_and_composite_bucket_credit /
+ * feature_process_scoped_known_colors in project memory.
  * An empty result means the process has no color dimension at all, and
  * Production logging proceeds with just the COMMON components as before.
  * @param {string} processId
@@ -1115,8 +1124,11 @@ function getProcessColorGroups(processId) {
       ? ((getWarehousePoolData() || {}).data || [])
       : [];
     const colorLinks = _getAllProcessColorLinks();
-    const overrides = _getAllProcessColorOverrides()[String(processId || '').trim().toLowerCase()];
-    return buildResponse(true, computeColorGroupsForProcess(processId, components, poolRows, colorLinks, undefined, overrides));
+    const pidLower = String(processId || '').trim().toLowerCase();
+    const overrides = _getAllProcessColorOverrides()[pidLower];
+    const loggedColors = Array.from(_getProductionLoggedColorsByProcess().get(pidLower) || []);
+    const { colors } = _computeKnownColorsForProcess(processId, components, poolRows, colorLinks, loggedColors, overrides);
+    return buildResponse(true, colors);
   } catch (error) {
     Log.error('[getProcessColorGroups] Error:', error.message);
     return buildResponse(false, null, 'Failed to load process color groups: ' + error.message);
@@ -2011,26 +2023,56 @@ function _getProductionLoggedColorsByProcess() {
 }
 
 /**
+ * @private Shared core of getProcessColorGroups (singular) and
+ * getAllProcessColorGroups (bulk) — the one definition of "known colors"
+ * for a process, deliberately scoped to THAT process only, never the
+ * global Color Master list: recipe-tagged + pool-detected colors
+ * (baseColors — see _computeConfiguredColorGroupsForProcess) UNION colors
+ * this process's own Production history has actually logged (see
+ * _getProductionLoggedColorsByProcess) UNION INCLUDE overrides, MINUS
+ * EXCLUDE overrides. This is what stops a color from "reflecting" across
+ * two unrelated processes just because it exists somewhere in Color
+ * Master (e.g. a process for Painted Mudguard and a process for Fitted
+ * Frame never see each other's colors here, even if both happen to share
+ * a Model) — process identity is the only scope boundary, generic across
+ * every process. The "+ Add Combination" override (includeWarehousePoolColor)
+ * remains the correct opt-in escape hatch for a specific color on a
+ * specific process regardless of this scoping.
+ * @param {string} processId
+ * @param {Array} components Process Components rows already filtered to one process.
+ * @param {Array} poolRows Full Warehouse Pool rows (shared across all processes).
+ * @param {Array} colorLinks Full Process Color Links rows (shared across all processes).
+ * @param {Array<string>} loggedColors This process's own logged Production colors.
+ * @param {{included: Map, excluded: Set}} [overrides] This process's own Process Color Overrides.
+ * @returns {{colors: string[], baseColors: string[]}} baseColors is exposed
+ *   so callers can derive their own "removable" (NOT in baseColors) set.
+ */
+function _computeKnownColorsForProcess(processId, components, poolRows, colorLinks, loggedColors, overrides) {
+  const baseColors = _computeConfiguredColorGroupsForProcess(processId, components, poolRows, colorLinks);
+
+  const colorMap = new Map();
+  baseColors.forEach(c => _addUniqueCaseInsensitive(colorMap, c));
+  (loggedColors || []).forEach(c => _addUniqueCaseInsensitive(colorMap, c));
+  if (overrides && overrides.included) {
+    Array.from(overrides.included.values()).forEach(c => _addUniqueCaseInsensitive(colorMap, c));
+  }
+  if (overrides && overrides.excluded && overrides.excluded.size > 0) {
+    Array.from(colorMap.keys()).forEach(key => {
+      if (overrides.excluded.has(key)) colorMap.delete(key);
+    });
+  }
+
+  return {
+    colors: Array.from(colorMap.values()).sort((a, b) => a.localeCompare(b)),
+    baseColors
+  };
+}
+
+/**
  * Bulk variant of getProcessColorGroups — returns every process's color
- * groups in one call, keyed by Process ID, as { colors, removable }.
- * `colors` is the Warehouse-Pool-scoped known list: recipe/pool-detected
- * colors (baseColors) UNION colors this process's own Production history
- * has actually logged (see _getProductionLoggedColorsByProcess) UNION
- * INCLUDE overrides, MINUS EXCLUDE overrides — deliberately NOT widened to
- * the full Color Master the way getProcessColorGroups (singular, the
- * Production checklist's own call path) is. That widening is
- * offering-side flexibility for what the operator can pick when logging a
- * new lot; this bulk variant feeds the Warehouse Pool breakdown dialog's
- * zero-qty placeholder rows, where unioning in every Color Master entry
- * regardless of relevance just produces one placeholder row per unused
- * color per process — real clutter, not real flexibility (the
- * "+ Add Combination" override, via includeWarehousePoolColor, is the
- * correct opt-in escape hatch for a specific color on a specific process,
- * and still works exactly the same regardless of this scoping). Built
- * directly here rather than through computeColorGroupsForProcess, whose
- * `colorMasterNames`-widening and its `baseColors.length===0` gate are
- * tuned for the checklist's different needs and don't have a slot for
- * "logged history" as a source.
+ * groups in one call, keyed by Process ID, as { colors, removable }. See
+ * _computeKnownColorsForProcess for what `colors` means — identical
+ * per-process-scoped definition the singular endpoint now uses too.
  * `removable` is the subset of `colors` NOT configured on the process's own
  * recipe/pool detection (i.e. safe to pass to excludeWarehousePoolColors)
  * — the Warehouse Pool breakdown dialog uses it to decide which zero-qty
@@ -2068,23 +2110,9 @@ function getAllProcessColorGroups() {
     processes.forEach(p => {
       const components = componentsByProcess.get(p.processId) || [];
       const overrides = overridesByProcess[p.processId.toLowerCase()];
-      const baseColors = _computeConfiguredColorGroupsForProcess(p.processId, components, poolRows, colorLinks);
+      const loggedColors = Array.from(loggedColorsByProcess.get(p.processId.toLowerCase()) || []);
+      const { colors, baseColors } = _computeKnownColorsForProcess(p.processId, components, poolRows, colorLinks, loggedColors, overrides);
       const baseLower = new Set(baseColors.map(c => c.toLowerCase()));
-
-      const colorMap = new Map();
-      baseColors.forEach(c => _addUniqueCaseInsensitive(colorMap, c));
-      (loggedColorsByProcess.get(p.processId.toLowerCase()) || new Set())
-        .forEach(c => _addUniqueCaseInsensitive(colorMap, c));
-      if (overrides && overrides.included) {
-        Array.from(overrides.included.values()).forEach(c => _addUniqueCaseInsensitive(colorMap, c));
-      }
-      if (overrides && overrides.excluded && overrides.excluded.size > 0) {
-        Array.from(colorMap.keys()).forEach(key => {
-          if (overrides.excluded.has(key)) colorMap.delete(key);
-        });
-      }
-
-      const colors = Array.from(colorMap.values()).sort((a, b) => a.localeCompare(b));
       result[p.processId] = {
         colors,
         removable: colors.filter(c => !baseLower.has(c.toLowerCase()))
