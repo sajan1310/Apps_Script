@@ -2222,12 +2222,14 @@
      - Preserve inline styles from View_Print.html untouched
      ═════════════════════════════════════════════════════════════════════ */
 
-  /* A4 portrait page geometry — 10mm margins match the html2pdf jsPDF
-     margin (set in Script.html downloadPDF) so window.print() and the
-     downloaded PDF line up identically. */
+  /* A4 portrait page geometry — 6mm margins match the html2pdf jsPDF
+     margin (set in Script_PO.html downloadPDF) so window.print() and the
+     downloaded PDF line up identically. Also mirrored in Mobile_Styles.html
+     and the Production Sheet fit-engine's PAGE_MARGIN_MM (Script_Production.html) —
+     change all three together. */
   @page {
     size: A4 portrait;
-    margin: 10mm;
+    margin: 6mm;
   }
 
   @media print {

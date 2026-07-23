@@ -2268,12 +2268,14 @@
      - Preserve inline styles from View_Print.html untouched
      ═════════════════════════════════════════════════════════════════════ */
 
-  /* A4 portrait page geometry — 10mm margins match the html2pdf jsPDF
-     margin (set in Script.html downloadPDF) so window.print() and the
-     downloaded PDF line up identically. */
+  /* A4 portrait page geometry — 6mm margins match the html2pdf jsPDF
+     margin (set in Script_PO.html downloadPDF) so window.print() and the
+     downloaded PDF line up identically. Also mirrored in Mobile_Styles.html
+     and the Production Sheet fit-engine's PAGE_MARGIN_MM (Script_Production.html) —
+     change all three together. */
   @page {
     size: A4 portrait;
-    margin: 10mm;
+    margin: 6mm;
   }
 
   @media print {
@@ -7962,54 +7964,49 @@
   <div style="height:2px;background:#198754;margin:0 0 12px 0;
               -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
 
-  <!-- Lot Info -->
-  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
+  <!-- Lot Info — fixed grid (not space-between flex) so field count/wrapping
+       stays predictable whether or not Color is shown; Lot Qty is the number
+       the whole sheet hangs on, so it gets a boxed, larger treatment. -->
+  <div style="display:grid;grid-template-columns:auto auto 1fr auto;gap:10px 22px;align-items:end;
+              margin-bottom:6px;padding-bottom:9px;border-bottom:1px solid #ccc;">
     <div>
       <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
-      <div id="print-prod-date" style="font-size:13px;font-weight:700;color:#1a1a1a;"></div>
+      <div id="print-prod-date" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
     </div>
     <div>
       <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Lot #</span>
-      <div id="print-prod-id" style="font-size:13px;font-weight:700;color:#1a1a1a;"></div>
+      <div id="print-prod-id" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
     </div>
     <div>
       <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Output Item</span>
-      <div id="print-prod-name" style="font-size:13px;font-weight:700;color:#1a1a1a;"></div>
+      <div id="print-prod-name" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
     </div>
-    <div id="print-prod-color-wrapper" style="display:none;">
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Color</span>
-      <div id="print-prod-color" style="font-size:13px;font-weight:700;color:#1a1a1a;"></div>
-    </div>
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Lot Qty</span>
-      <div id="print-prod-qty" style="font-size:13px;font-weight:700;color:#1a1a1a;"></div>
+    <div style="background:#e8f5e9;border:1px solid #198754;border-radius:7px;padding:3px 14px 4px;text-align:center;
+                -webkit-print-color-adjust:exact;print-color-adjust:exact;">
+      <span style="font-size:9px;color:#146c43;text-transform:uppercase;letter-spacing:0.5px;">Lot Qty</span>
+      <div id="print-prod-qty" style="font-size:19px;font-weight:800;color:#146c43;line-height:1.05;
+                  -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
     </div>
   </div>
+  <div id="print-prod-color-wrapper" style="display:none;padding:6px 0 9px;margin-bottom:10px;border-bottom:1px solid #ccc;">
+    <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Color(s)</span>
+    <div id="print-prod-color" style="font-size:12px;font-weight:700;color:#198754;margin-top:1px;"></div>
+  </div>
 
-  <!-- Common Components Table -->
+  <!-- Common Components — App.Production.printProductionSheet builds either
+       one full-width table or two side-by-side tables here, at whichever
+       density tier lets the whole sheet land on a single page. -->
   <div id="print-prod-common-section">
-    <div style="font-size:10px;font-weight:700;color:#198754;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Common Components</div>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
-      <thead style="background-color:#fff;color:#000;text-align:center;font-weight:700;
-                    -webkit-print-color-adjust:exact;print-color-adjust:exact;">
-        <tr>
-          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:38%;">Item Name</th>
-          <th style="padding:6px;border:1px solid #bbb;width:18%;">Size</th>
-          <th style="padding:6px;border:1px solid #bbb;width:24%;">Narration</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:right;width:20%;">Required Qty</th>
-        </tr>
-      </thead>
-      <tbody id="print-production-sheet-common-body" style="color:#1a1a1a;text-align:center;"></tbody>
-    </table>
+    <div style="font-size:10.5px;font-weight:800;color:#198754;text-transform:uppercase;letter-spacing:0.7px;margin-bottom:4px;">Common Components</div>
+    <div id="print-production-sheet-common-tables"></div>
   </div>
 
-  <!-- Per-Color Components — one table per group of items sharing the same
-       set of colors (see App.Production.printProductionSheet), instead of
-       one shared table with every color in the lot as a column, which
-       overflowed/bled off the printed page when a lot had many colors
-       split across items that don't all use the same ones. -->
+  <!-- Per-Color Components — a single consolidated matrix (every lot color
+       as a column, blank cells dashed), not one table per color-signature
+       group. See App.Production.printProductionSheet's fit loop for how the
+       density tier (padding/font/Size-column) is chosen. -->
   <div id="print-prod-matrix-section">
-    <div style="font-size:10px;font-weight:700;color:#198754;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Per-Color Components</div>
+    <div style="font-size:10.5px;font-weight:800;color:#198754;text-transform:uppercase;letter-spacing:0.7px;margin-bottom:4px;">Per-Color Components</div>
     <div id="print-production-sheet-matrix-tables"></div>
   </div>
 
@@ -12849,7 +12846,7 @@
           // the element starts at the viewport origin regardless of
           // preceding siblings (app-container, modals, etc.).
           //
-          // 718px ≈ 190mm at 96 dpi = A4 minus 2×10mm margins, so the
+          // 749px ≈ 198mm at 96 dpi = A4 minus 2×6mm margins, so the
           // canvas maps 1:1 to the jsPDF content area.
 
           const prevStyle = element.getAttribute('style');
@@ -12882,7 +12879,7 @@
 
           // Display element and lock page width
           element.style.display = 'block';
-          element.style.width = '718px';
+          element.style.width = '749px';
           element.style.maxWidth = 'none';
 
           // Allow a layout pass so html2canvas measures the correct height
@@ -12891,7 +12888,7 @@
           try {
             await window.html2pdf()
               .set({
-                margin: [10, 10, 10, 10],
+                margin: [6, 6, 6, 6],
                 filename: `PO_${safePoNumber}_${safeVendorName}.pdf`,
                 image: { type: 'jpeg', quality: 0.98 },
                 html2canvas: {
@@ -21241,15 +21238,17 @@
       // (mirrors #print-production-sheet-container's markup/styling) for bulk printing.
       buildProductionSheetPrintPageHtml(p) {
         const BRAND = '#198754';
+        const HEAD_BG = '#e8f5e9', HEAD_INK = '#146c43', ZEBRA = '#f6f8f6';
         const components = p.componentsConsumed || [];
 
         let rowsHtml = '';
-        components.forEach(comp => {
+        components.forEach((comp, i) => {
+          const zebra = i % 2 === 1 ? `background:${ZEBRA};` : '';
           rowsHtml += `<tr>
-        <td style="padding:6px;border:1px solid #ddd;text-align:left;">${escapeHtml(comp.itemName || '')}</td>
-        <td style="padding:6px;border:1px solid #ddd;">${escapeHtml(comp.size || '-')}</td>
-        <td style="padding:6px;border:1px solid #ddd;">${escapeHtml(comp.sourceType === 'POOL' ? 'Pool' : 'Item')}</td>
-        <td style="padding:6px;border:1px solid #ddd;text-align:right;font-weight:700;">${escapeHtml(this.formatQty(comp.qty))}</td>
+        <td style="padding:6px;border:1px solid #ddd;text-align:left;font-size:13.5px;font-weight:700;${zebra}">${escapeHtml(comp.itemName || '')}</td>
+        <td style="padding:6px;border:1px solid #ddd;${zebra}">${escapeHtml(comp.size || '-')}</td>
+        <td style="padding:6px;border:1px solid #ddd;${zebra}">${escapeHtml(comp.sourceType === 'POOL' ? 'Pool' : 'Item')}</td>
+        <td style="padding:6px;border:1px solid #ddd;text-align:right;font-size:14.5px;font-weight:700;${zebra}">${escapeHtml(this.formatQty(comp.qty))}</td>
       </tr>`;
         });
         const rows = rowsHtml || '<tr><td colspan="4" style="padding:10px;text-align:center;color:#999;">No components recorded for this lot.</td></tr>';
@@ -21273,41 +21272,43 @@
       </div>
       <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
 
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;align-items:end;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
         <div>
           <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
-          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.date || '')}</div>
+          <div style="font-size:12px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.date || '')}</div>
         </div>
         <div>
           <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Product ID</span>
-          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.productId || '')}</div>
+          <div style="font-size:12px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.productId || '')}</div>
         </div>
         <div>
           <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Product Name</span>
-          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.productName || '')}</div>
+          <div style="font-size:12px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.productName || '')}</div>
         </div>
         ${(p.colorBreakdown && p.colorBreakdown.length > 0) ? `
         <div>
           <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Colors</span>
-          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.colorBreakdown.map(c => `${c.color}${c.size ? ` (${c.size})` : ''}: ${this.formatQty(c.qty)}`).join(', '))}</div>
+          <div style="font-size:12px;font-weight:700;color:${BRAND};">${escapeHtml(p.colorBreakdown.map(c => `${c.color}${c.size ? ` (${c.size})` : ''}: ${this.formatQty(c.qty)}`).join(', '))}</div>
         </div>` : (p.color ? `
         <div>
           <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Color</span>
-          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.color)}</div>
+          <div style="font-size:12px;font-weight:700;color:${BRAND};">${escapeHtml(p.color)}</div>
         </div>` : '')}
-        <div>
-          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Lot Qty</span>
-          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${this.formatQty(p.qty)}</div>
+        <div style="background:${HEAD_BG};border:1px solid ${BRAND};border-radius:7px;padding:3px 14px 4px;text-align:center;
+                    -webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <span style="font-size:9px;color:${HEAD_INK};text-transform:uppercase;letter-spacing:0.5px;">Lot Qty</span>
+          <div style="font-size:19px;font-weight:800;color:${HEAD_INK};line-height:1.05;
+                      -webkit-print-color-adjust:exact;print-color-adjust:exact;">${this.formatQty(p.qty)}</div>
         </div>
       </div>
 
       <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
-        <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+        <thead style="text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
           <tr>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:45%;">Item / Pool Name</th>
-            <th style="padding:6px;border:1px solid #bbb;width:20%;">Size</th>
-            <th style="padding:6px;border:1px solid #bbb;width:20%;">Source</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:right;width:15%;">Qty</th>
+            <th style="padding:6px;border:1px solid #bbb;background:${HEAD_BG};color:${HEAD_INK};text-align:left;width:45%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Item / Pool Name</th>
+            <th style="padding:6px;border:1px solid #bbb;background:${HEAD_BG};color:${HEAD_INK};width:20%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Size</th>
+            <th style="padding:6px;border:1px solid #bbb;background:${HEAD_BG};color:${HEAD_INK};width:20%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Source</th>
+            <th style="padding:6px;border:1px solid #bbb;background:${HEAD_BG};color:${HEAD_INK};text-align:right;width:15%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Qty</th>
           </tr>
         </thead>
         <tbody style="color:#1a1a1a;text-align:center;">${rows}</tbody>
@@ -25543,82 +25544,181 @@
 
         const colors = App.State.currentProductionSheet?.colors || [];
         const get = (row, sel) => escapeHtml(row.querySelector(sel)?.value.trim() || '');
+        const getRaw = (row, sel) => row.querySelector(sel)?.value.trim() || '';
 
-        // Common Components table
-        const commonBodyDest = document.getElementById('print-production-sheet-common-body');
-        const commonSection = document.getElementById('print-prod-common-section');
         const commonRows = $$('#productionSheetCommonBody tr').filter(row => row.querySelector('.prod-sheet-item-name'));
-        if (commonSection) commonSection.style.display = commonRows.length > 0 ? '' : 'none';
-        if (commonBodyDest) {
-          commonBodyDest.innerHTML = commonRows.map(row => {
-            const qty = row.querySelector('.prod-sheet-qty')?.value || '';
-            return `<tr>
-          <td style="padding:6px;border:1px solid #ddd;text-align:left;">${get(row, '.prod-sheet-item-name')}</td>
-          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-size') || '-'}</td>
-          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-narration') || '-'}</td>
-          <td style="padding:6px;border:1px solid #ddd;text-align:right;font-weight:700;">${qty ? escapeHtml(this.formatQty(qty)) : '-'}</td>
-        </tr>`;
-          }).join('');
-        }
-
-        // Per-Color Components — group rows by which colors they actually
-        // carry a non-blank qty for (rather than every color in the lot),
-        // and render one narrower table per distinct group, so a lot with
-        // many colors spread unevenly across items doesn't overflow the
-        // printed page width with one wide, mostly-blank table.
-        const matrixSection = document.getElementById('print-prod-matrix-section');
-        const tablesDest = document.getElementById('print-production-sheet-matrix-tables');
         const matrixRows = $$('#productionSheetMatrixTables .prod-sheet-matrix-tbody tr').filter(row => row.querySelector('.prod-sheet-item-name'));
 
+        const commonSection = document.getElementById('print-prod-common-section');
+        if (commonSection) commonSection.style.display = commonRows.length > 0 ? '' : 'none';
+        const matrixSection = document.getElementById('print-prod-matrix-section');
         if (matrixSection) matrixSection.style.display = (colors.length > 0 && matrixRows.length > 0) ? '' : 'none';
 
-        if (tablesDest) {
-          tablesDest.innerHTML = '';
+        // A Size column that's "GENERAL"/blank on every row carries no
+        // information — it's the one column the fit loop below is allowed
+        // to drop under space pressure. Narration is never dropped.
+        const isGenericSize = s => !s || s.toUpperCase() === 'GENERAL';
+        const commonSizeDroppable = commonRows.length > 0 && commonRows.every(row => isGenericSize(getRaw(row, '.prod-sheet-size')));
+        const matrixSizeDroppable = matrixRows.length > 0 && matrixRows.every(row => isGenericSize(getRaw(row, '.prod-sheet-size')));
 
-          const groups = new Map();
-          matrixRows.forEach(row => {
-            const activeColors = colors.filter(c => {
-              const input = $$('.prod-sheet-color-qty', row).find(el => el.dataset.color === c);
-              return toNumber(input?.value) > 0;
+        const commonData = commonRows.map(row => ({
+          name: get(row, '.prod-sheet-item-name'),
+          size: get(row, '.prod-sheet-size'),
+          narration: get(row, '.prod-sheet-narration'),
+          qty: row.querySelector('.prod-sheet-qty')?.value || ''
+        }));
+
+        // One row per item, one column per lot color — replaces the old
+        // per-color-signature grouping (which spawned a separate mini-table,
+        // each repeating its own header, whenever items used different
+        // subsets of colors). Unused colors just render a dash.
+        const matrixData = matrixRows.map(row => ({
+          name: get(row, '.prod-sheet-item-name'),
+          size: get(row, '.prod-sheet-size'),
+          narration: get(row, '.prod-sheet-narration'),
+          colorQty: colors.map(c => {
+            const input = $$('.prod-sheet-color-qty', row).find(el => el.dataset.color === c);
+            return input?.value || '';
+          })
+        }));
+
+        // Density tiers the fit loop steps through, tightest last: shrink
+        // padding, then font (Item Name + Qty held a step larger and bold —
+        // the data a worker actually reads off the sheet — never below a
+        // legible floor), then — only where Size is droppable — drop it.
+        // If even the tightest tier still overflows, it's kept anyway (still
+        // the smallest/cleanest option) and the sheet spills to a page 2,
+        // which already gets repeating headers from Styles.html's print CSS.
+        const FIT_TIERS = [
+          { pad: '6px 8px', font: 12, emphasisFont: 14.5, tableGap: 12, hideSize: false },
+          { pad: '4px 7px', font: 11, emphasisFont: 13.5, tableGap: 9, hideSize: false },
+          { pad: '2.5px 6px', font: 10, emphasisFont: 12.5, tableGap: 7, hideSize: false },
+          { pad: '2px 5px', font: 9.5, emphasisFont: 11, tableGap: 5, hideSize: true }
+        ];
+        const HEAD_BG = '#e8f5e9', HEAD_INK = '#146c43', ZEBRA = '#f6f8f6', RULE = '#cfd6d1';
+
+        const headCell = (label, tier, opts = {}) => {
+          const width = opts.width ? `width:${opts.width};` : '';
+          return `<th style="padding:${tier.pad};border:1px solid ${RULE};background:${HEAD_BG};color:${HEAD_INK};
+                    font-weight:700;text-align:${opts.align || 'center'};font-size:${Math.max(tier.font - 1, 9)}px;${width}
+                    -webkit-print-color-adjust:exact;print-color-adjust:exact;">${label}</th>`;
+        };
+        const bodyCell = (content, tier, opts = {}) => {
+          const bg = opts.zebra ? `background:${ZEBRA};` : '';
+          const weight = opts.bold ? 'font-weight:700;' : '';
+          const fs = opts.emphasis ? tier.emphasisFont : tier.font;
+          return `<td style="padding:${tier.pad};border:1px solid ${RULE};text-align:${opts.align || 'left'};
+                    font-size:${fs}px;${weight}${bg}">${content}</td>`;
+        };
+
+        const buildCommonTable = (rows, tier, hideSize) => {
+          if (rows.length === 0) return '';
+          let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '46%' : '38%' });
+          if (!hideSize) head += headCell('Size', tier, { width: '16%' });
+          head += headCell('Narration', tier, { width: hideSize ? '30%' : '22%' });
+          head += headCell('Required Qty', tier, { align: 'right', width: '18%' });
+
+          const body = rows.map((r, i) => {
+            const zebra = i % 2 === 1;
+            let row = bodyCell(r.name, tier, { zebra, bold: true, emphasis: true });
+            if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra });
+            row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
+            row += bodyCell(r.qty ? escapeHtml(this.formatQty(r.qty)) : '&#8211;', tier, { align: 'right', bold: !!r.qty, zebra, emphasis: true });
+            return `<tr>${row}</tr>`;
+          }).join('');
+
+          return `<table style="width:100%;border-collapse:collapse;margin-bottom:${tier.tableGap}px;">
+            <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+        };
+
+        const buildMatrixTable = (rows, tier, hideSize) => {
+          if (rows.length === 0 || colors.length === 0) return '';
+          let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '30%' : '24%' });
+          if (!hideSize) head += headCell('Size', tier, { width: '9%' });
+          head += headCell('Narration', tier, { width: hideSize ? '16%' : '11%' });
+          colors.forEach(c => { head += headCell(escapeHtml(c), tier, { align: 'right' }); });
+
+          const body = rows.map((r, i) => {
+            const zebra = i % 2 === 1;
+            let row = bodyCell(r.name, tier, { zebra, bold: true, emphasis: true });
+            if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra });
+            row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
+            r.colorQty.forEach(val => {
+              row += bodyCell(val ? escapeHtml(this.formatQty(val)) : '&#8211;', tier, { align: 'right', bold: !!val, zebra, emphasis: true });
             });
-            const signature = activeColors.join('|').toLowerCase();
-            if (!groups.has(signature)) groups.set(signature, { activeColors, rows: [] });
-            groups.get(signature).rows.push(row);
-          });
+            return `<tr>${row}</tr>`;
+          }).join('');
 
-          groups.forEach(({ activeColors, rows }) => {
-            const groupColors = activeColors.length > 0 ? activeColors : colors;
-            let headHtml = '<th style="padding:6px;border:1px solid #bbb;text-align:left;width:26%;">Item Name</th>'
-              + '<th style="padding:6px;border:1px solid #bbb;width:10%;">Size</th>'
-              + '<th style="padding:6px;border:1px solid #bbb;width:12%;">Narration</th>';
-            groupColors.forEach(c => {
-              headHtml += `<th style="padding:6px;border:1px solid #bbb;text-align:right;">${escapeHtml(c)}</th>`;
-            });
+          return `<table style="width:100%;border-collapse:collapse;margin-bottom:${tier.tableGap}px;">
+            <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+        };
 
-            const bodyHtml = rows.map(row => {
-              const qtyCellHtml = (color) => {
-                const input = $$('.prod-sheet-color-qty', row).find(el => el.dataset.color === color);
-                const val = input?.value || '';
-                return `<td style="padding:6px;border:1px solid #ddd;text-align:right;font-weight:700;">${val ? escapeHtml(this.formatQty(val)) : '-'}</td>`;
-              };
-              let rowHtml = `<tr>
-          <td style="padding:6px;border:1px solid #ddd;text-align:left;">${get(row, '.prod-sheet-item-name')}</td>
-          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-size') || '-'}</td>
-          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-narration') || '-'}</td>`;
-              groupColors.forEach(c => { rowHtml += qtyCellHtml(c); });
-              rowHtml += '</tr>';
-              return rowHtml;
-            }).join('');
+        // Common Components reads as a tall narrow list; past a handful of
+        // rows it's cheaper on vertical space split into two side-by-side
+        // tables than left as one column with the page's right half empty.
+        const COMMON_TWO_COL_THRESHOLD = 8;
 
-            tablesDest.insertAdjacentHTML('beforeend', `
-          <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
-            <thead style="background-color:#fff;color:#000;text-align:center;font-weight:700;
-                          -webkit-print-color-adjust:exact;print-color-adjust:exact;">
-              <tr>${headHtml}</tr>
-            </thead>
-            <tbody style="color:#1a1a1a;text-align:center;">${bodyHtml}</tbody>
-          </table>`);
-          });
+        const commonDest = document.getElementById('print-production-sheet-common-tables');
+        const matrixDest = document.getElementById('print-production-sheet-matrix-tables');
+
+        const render = tier => {
+          if (commonDest) {
+            const hideSize = tier.hideSize && commonSizeDroppable;
+            if (commonData.length > COMMON_TWO_COL_THRESHOLD) {
+              const mid = Math.ceil(commonData.length / 2);
+              const left = buildCommonTable(commonData.slice(0, mid), tier, hideSize);
+              const right = buildCommonTable(commonData.slice(mid), tier, hideSize);
+              commonDest.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">${left}${right}</div>`;
+            } else {
+              commonDest.innerHTML = buildCommonTable(commonData, tier, hideSize);
+            }
+          }
+          if (matrixDest) {
+            const hideSize = tier.hideSize && matrixSizeDroppable;
+            matrixDest.innerHTML = buildMatrixTable(matrixData, tier, hideSize);
+          }
+        };
+
+        // Measure-and-compress: lay the container out offscreen at the real
+        // A4 printable width (matches the @page margin geometry in
+        // Styles.html — keep PAGE_MARGIN_MM in sync with that file's @page
+        // rule and Mobile_Styles.html's copy of it), try each density tier,
+        // and stop at the first one that fits a single page — so nothing
+        // shrinks or drops a column unless the sheet actually needs it to.
+        const container = document.getElementById('print-production-sheet-container');
+        const MM_TO_PX = 96 / 25.4;
+        const PAGE_MARGIN_MM = 6;
+        const PAGE_WIDTH_PX = Math.round((210 - 2 * PAGE_MARGIN_MM) * MM_TO_PX);
+        const PAGE_HEIGHT_PX = Math.round((297 - 2 * PAGE_MARGIN_MM) * MM_TO_PX);
+
+        if (container) {
+          const prevDisplay = container.style.display;
+          const prevPosition = container.style.position;
+          const prevVisibility = container.style.visibility;
+          const prevWidth = container.style.width;
+          const prevLeft = container.style.left;
+          const prevTop = container.style.top;
+
+          container.style.position = 'fixed';
+          container.style.left = '-10000px';
+          container.style.top = '0';
+          container.style.visibility = 'hidden';
+          container.style.display = 'block';
+          container.style.width = PAGE_WIDTH_PX + 'px';
+
+          for (const tier of FIT_TIERS) {
+            render(tier);
+            if (container.scrollHeight <= PAGE_HEIGHT_PX) break;
+          }
+
+          container.style.display = prevDisplay;
+          container.style.position = prevPosition;
+          container.style.visibility = prevVisibility;
+          container.style.width = prevWidth;
+          container.style.left = prevLeft;
+          container.style.top = prevTop;
+        } else {
+          render(FIT_TIERS[0]);
         }
 
         const remarksSection = document.getElementById('print-prod-remarks-section');

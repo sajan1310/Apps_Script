@@ -1095,7 +1095,7 @@
           // the element starts at the viewport origin regardless of
           // preceding siblings (app-container, modals, etc.).
           //
-          // 718px ≈ 190mm at 96 dpi = A4 minus 2×10mm margins, so the
+          // 749px ≈ 198mm at 96 dpi = A4 minus 2×6mm margins, so the
           // canvas maps 1:1 to the jsPDF content area.
 
           const prevStyle = element.getAttribute('style');
@@ -1128,7 +1128,7 @@
 
           // Display element and lock page width
           element.style.display = 'block';
-          element.style.width = '718px';
+          element.style.width = '749px';
           element.style.maxWidth = 'none';
 
           // Allow a layout pass so html2canvas measures the correct height
@@ -1137,7 +1137,7 @@
           try {
             await window.html2pdf()
               .set({
-                margin: [10, 10, 10, 10],
+                margin: [6, 6, 6, 6],
                 filename: `PO_${safePoNumber}_${safeVendorName}.pdf`,
                 image: { type: 'jpeg', quality: 0.98 },
                 html2canvas: {

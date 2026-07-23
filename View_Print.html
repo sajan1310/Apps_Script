@@ -674,54 +674,49 @@
   <div style="height:2px;background:#198754;margin:0 0 12px 0;
               -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
 
-  <!-- Lot Info -->
-  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
+  <!-- Lot Info — fixed grid (not space-between flex) so field count/wrapping
+       stays predictable whether or not Color is shown; Lot Qty is the number
+       the whole sheet hangs on, so it gets a boxed, larger treatment. -->
+  <div style="display:grid;grid-template-columns:auto auto 1fr auto;gap:10px 22px;align-items:end;
+              margin-bottom:6px;padding-bottom:9px;border-bottom:1px solid #ccc;">
     <div>
       <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
-      <div id="print-prod-date" style="font-size:13px;font-weight:700;color:#1a1a1a;"></div>
+      <div id="print-prod-date" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
     </div>
     <div>
       <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Lot #</span>
-      <div id="print-prod-id" style="font-size:13px;font-weight:700;color:#1a1a1a;"></div>
+      <div id="print-prod-id" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
     </div>
     <div>
       <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Output Item</span>
-      <div id="print-prod-name" style="font-size:13px;font-weight:700;color:#1a1a1a;"></div>
+      <div id="print-prod-name" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
     </div>
-    <div id="print-prod-color-wrapper" style="display:none;">
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Color</span>
-      <div id="print-prod-color" style="font-size:13px;font-weight:700;color:#1a1a1a;"></div>
-    </div>
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Lot Qty</span>
-      <div id="print-prod-qty" style="font-size:13px;font-weight:700;color:#1a1a1a;"></div>
+    <div style="background:#e8f5e9;border:1px solid #198754;border-radius:7px;padding:3px 14px 4px;text-align:center;
+                -webkit-print-color-adjust:exact;print-color-adjust:exact;">
+      <span style="font-size:9px;color:#146c43;text-transform:uppercase;letter-spacing:0.5px;">Lot Qty</span>
+      <div id="print-prod-qty" style="font-size:19px;font-weight:800;color:#146c43;line-height:1.05;
+                  -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
     </div>
   </div>
+  <div id="print-prod-color-wrapper" style="display:none;padding:6px 0 9px;margin-bottom:10px;border-bottom:1px solid #ccc;">
+    <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Color(s)</span>
+    <div id="print-prod-color" style="font-size:12px;font-weight:700;color:#198754;margin-top:1px;"></div>
+  </div>
 
-  <!-- Common Components Table -->
+  <!-- Common Components — App.Production.printProductionSheet builds either
+       one full-width table or two side-by-side tables here, at whichever
+       density tier lets the whole sheet land on a single page. -->
   <div id="print-prod-common-section">
-    <div style="font-size:10px;font-weight:700;color:#198754;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Common Components</div>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
-      <thead style="background-color:#fff;color:#000;text-align:center;font-weight:700;
-                    -webkit-print-color-adjust:exact;print-color-adjust:exact;">
-        <tr>
-          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:38%;">Item Name</th>
-          <th style="padding:6px;border:1px solid #bbb;width:18%;">Size</th>
-          <th style="padding:6px;border:1px solid #bbb;width:24%;">Narration</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:right;width:20%;">Required Qty</th>
-        </tr>
-      </thead>
-      <tbody id="print-production-sheet-common-body" style="color:#1a1a1a;text-align:center;"></tbody>
-    </table>
+    <div style="font-size:10.5px;font-weight:800;color:#198754;text-transform:uppercase;letter-spacing:0.7px;margin-bottom:4px;">Common Components</div>
+    <div id="print-production-sheet-common-tables"></div>
   </div>
 
-  <!-- Per-Color Components — one table per group of items sharing the same
-       set of colors (see App.Production.printProductionSheet), instead of
-       one shared table with every color in the lot as a column, which
-       overflowed/bled off the printed page when a lot had many colors
-       split across items that don't all use the same ones. -->
+  <!-- Per-Color Components — a single consolidated matrix (every lot color
+       as a column, blank cells dashed), not one table per color-signature
+       group. See App.Production.printProductionSheet's fit loop for how the
+       density tier (padding/font/Size-column) is chosen. -->
   <div id="print-prod-matrix-section">
-    <div style="font-size:10px;font-weight:700;color:#198754;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Per-Color Components</div>
+    <div style="font-size:10.5px;font-weight:800;color:#198754;text-transform:uppercase;letter-spacing:0.7px;margin-bottom:4px;">Per-Color Components</div>
     <div id="print-production-sheet-matrix-tables"></div>
   </div>
 
