@@ -25121,13 +25121,20 @@
       // half of a compound Color Master name (e.g. "Frame Sticker---Orange"
       // for the "Orange-White" color) — falling back word-by-word still lets
       // those merge into one matrix row instead of staying split per color.
-      // If no candidate is found in the name verbatim, it's returned
-      // unchanged (the row simply won't merge with that item's other color
-      // variants, rather than risk stripping the wrong thing).
+      // If none of those match, falls back to stripping whatever follows the
+      // item's OWN last "---" separator as a generic variant tag — an item is
+      // sometimes named after its literal physical finish rather than the
+      // logical Color Master name it's tagged with (e.g.
+      // "Backrest---BLACK" used for the "Purple-White" axis column), so a
+      // literal/word match against "color" never fires at all; without this,
+      // that row silently fails to merge with its siblings and shows up as an
+      // orphan row with every other color cell blank (see
+      // bug_merged_row_variant_tag_not_axis_color in project memory). Only if
+      // nothing strippable is found at all is the name returned unchanged.
       _stripColorSubstring(itemName, color) {
-        if (!color || !itemName) return itemName;
+        if (!itemName) return itemName;
         const lowerName = itemName.toLowerCase();
-        const candidates = [color, ...color.split(/[\s\-_]+/)].filter(Boolean);
+        const candidates = color ? [color, ...color.split(/[\s\-_]+/)].filter(Boolean) : [];
 
         for (const candidate of candidates) {
           const idx = lowerName.indexOf(candidate.toLowerCase());
@@ -25136,6 +25143,16 @@
             .replace(/[\s\-_]+/g, ' ')
             .trim();
           return stripped || itemName;
+        }
+
+        const delimIdx = itemName.lastIndexOf('---');
+        if (delimIdx > 0) {
+          // Normalized the same way as the matched-candidate path above —
+          // otherwise this fallback's result (dashes/spaces uncollapsed)
+          // never string-equals the sibling row's already-normalized display
+          // name in findMatrixRowByDisplayName, and the merge still fails.
+          const stripped = itemName.slice(0, delimIdx).replace(/[\s\-_]+/g, ' ').trim();
+          if (stripped) return stripped;
         }
         return itemName;
       },
