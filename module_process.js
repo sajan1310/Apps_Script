@@ -79,6 +79,33 @@ function initProcessMasterSheet() {
  * Retrieves all processes, sorted by Sequence ascending.
  * @param {boolean} [activeOnly] - If true, excludes inactive processes.
  */
+/**
+ * Maps one raw Process Master sheet row into the record shape the client
+ * expects, or null for a blank/incomplete row (missing processId/
+ * processName). Shared by getProcessData's bulk read and saveProcess's
+ * single fresh-row read-back (used to patch just the saved process into the
+ * client's already-loaded table in place instead of a full list reload).
+ * @private
+ */
+function _mapProcessRow(row) {
+  const processId = String(row[PROCESS_COL.PROCESS_ID - 1] || '').trim();
+  const processName = String(row[PROCESS_COL.PROCESS_NAME - 1] || '').trim();
+  if (!processId || !processName) return null;
+
+  return {
+    processId: processId,
+    processName: processName,
+    sequence: Number(row[PROCESS_COL.SEQUENCE - 1]) || 0,
+    lotPrefix: String(row[PROCESS_COL.LOT_PREFIX - 1] || '').trim().toUpperCase(),
+    isFinalStage: row[PROCESS_COL.IS_FINAL_STAGE - 1] === true || String(row[PROCESS_COL.IS_FINAL_STAGE - 1]).toUpperCase() === 'TRUE',
+    active: row[PROCESS_COL.ACTIVE - 1] === true || String(row[PROCESS_COL.ACTIVE - 1]).toUpperCase() === 'TRUE',
+    remarks: String(row[PROCESS_COL.REMARKS - 1] || '').trim(),
+    outputItemName: String(row[PROCESS_COL.OUTPUT_ITEM_NAME - 1] || '').trim(),
+    processType: String(row[PROCESS_COL.PROCESS_TYPE - 1] || '').trim(),
+    primaryColorAxis: String(row[PROCESS_COL.PRIMARY_COLOR_AXIS - 1] || '').trim()
+  };
+}
+
 function getProcessData(activeOnly) {
   const cacheKey = activeOnly ? MASTER_DATA_CACHE_KEYS.PROCESS_ACTIVE : MASTER_DATA_CACHE_KEYS.PROCESS_ALL;
   return getCachedListResponse(cacheKey, () => {
@@ -102,26 +129,10 @@ function getProcessData(activeOnly) {
       const records = [];
 
       for (let i = 0; i < data.length; i++) {
-        const row = data[i];
-        const processId = String(row[PROCESS_COL.PROCESS_ID - 1] || '').trim();
-        const processName = String(row[PROCESS_COL.PROCESS_NAME - 1] || '').trim();
-        if (!processId || !processName) continue;
-
-        const isActive = row[PROCESS_COL.ACTIVE - 1] === true || String(row[PROCESS_COL.ACTIVE - 1]).toUpperCase() === 'TRUE';
-        if (activeOnly && !isActive) continue;
-
-        records.push({
-          processId: processId,
-          processName: processName,
-          sequence: Number(row[PROCESS_COL.SEQUENCE - 1]) || 0,
-          lotPrefix: String(row[PROCESS_COL.LOT_PREFIX - 1] || '').trim().toUpperCase(),
-          isFinalStage: row[PROCESS_COL.IS_FINAL_STAGE - 1] === true || String(row[PROCESS_COL.IS_FINAL_STAGE - 1]).toUpperCase() === 'TRUE',
-          active: isActive,
-          remarks: String(row[PROCESS_COL.REMARKS - 1] || '').trim(),
-          outputItemName: String(row[PROCESS_COL.OUTPUT_ITEM_NAME - 1] || '').trim(),
-          processType: String(row[PROCESS_COL.PROCESS_TYPE - 1] || '').trim(),
-          primaryColorAxis: String(row[PROCESS_COL.PRIMARY_COLOR_AXIS - 1] || '').trim()
-        });
+        const record = _mapProcessRow(data[i]);
+        if (!record) continue;
+        if (activeOnly && !record.active) continue;
+        records.push(record);
       }
 
       records.sort((a, b) => a.sequence - b.sequence);
@@ -449,7 +460,17 @@ function saveProcess(formData) {
       SpreadsheetApp.flush();
       invalidateListCache(MASTER_DATA_CACHE_KEYS.PROCESS_ALL, MASTER_DATA_CACHE_KEYS.PROCESS_ACTIVE);
       logAction('UPDATE', APP_CONFIG.SHEETS.PROCESS_MASTER, processId, `Process updated: ${processName}`, 'SUCCESS');
-      return buildResponse(true, { processId: processId }, 'Process updated successfully.');
+
+      // Read this process's own just-written row back (cheap — one row,
+      // not the whole sheet) so the client can patch it into an already-
+      // loaded Process Master table in place instead of a full reload.
+      // Width = at least every column _mapProcessRow reads (through
+      // PRIMARY_COLOR_AXIS), but honor getLastColumn() so a future column
+      // added past it is still picked up without touching this line (mirrors
+      // saveProduction's fresh-row read-back).
+      const freshProcess = _mapProcessRow(sheet.getRange(targetRow, 1, 1, Math.max(sheet.getLastColumn(), PROCESS_COL.PRIMARY_COLOR_AXIS)).getValues()[0]);
+
+      return buildResponse(true, { processId: processId, process: freshProcess }, 'Process updated successfully.');
     }
 
     const newProcessId = getNextProcessId();
@@ -461,7 +482,10 @@ function saveProcess(formData) {
     SpreadsheetApp.flush();
     invalidateListCache(MASTER_DATA_CACHE_KEYS.PROCESS_ALL, MASTER_DATA_CACHE_KEYS.PROCESS_ACTIVE);
     logAction('CREATE', APP_CONFIG.SHEETS.PROCESS_MASTER, newProcessId, `Process created: ${processName}`, 'SUCCESS');
-    return buildResponse(true, { processId: newProcessId }, 'Process created successfully.');
+
+    const freshNewProcess = _mapProcessRow(sheet.getRange(sheet.getLastRow(), 1, 1, Math.max(sheet.getLastColumn(), PROCESS_COL.PRIMARY_COLOR_AXIS)).getValues()[0]);
+
+    return buildResponse(true, { processId: newProcessId, process: freshNewProcess }, 'Process created successfully.');
   } catch (error) {
     Log.error('[saveProcess] Error:', error.message);
     logAction('ERROR', 'saveProcess', formData.processId || 'NEW', error.message, 'ERROR');

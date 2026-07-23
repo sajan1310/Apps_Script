@@ -250,6 +250,42 @@ function getReadyToDispatchData() {
  * Retrieves the Dispatched Goods ledger.
  * Includes the physical sheet row index (rowIdx) for edit/delete targeting.
  */
+/**
+ * Maps one raw Dispatch sheet row into the record shape the client expects,
+ * given its 2-indexed sheet row number, or null for a blank row (missing
+ * dispatchNumber). Shared by getDispatchData's bulk read and saveDispatch's
+ * single fresh-row read-back (used to patch just the saved record into the
+ * client's already-loaded table in place instead of a full list reload).
+ * @private
+ */
+function _mapDispatchRow(row, rowIdx) {
+  const dispatchNumber = String(row[DISPATCH_COL.DISPATCH_NUMBER - 1] || '').trim();
+  if (!dispatchNumber) return null;
+
+  const rawDate = row[DISPATCH_COL.DISPATCH_DATE - 1];
+  const dateStr = rawDate instanceof Date ? toSafeDateString(rawDate) : String(rawDate || '');
+
+  return {
+    rowIdx: rowIdx,
+    dispatchNumber: dispatchNumber,
+    dispatchDate: dateStr,
+    dateRaw: rawDate instanceof Date ? rawDate.toISOString() : null,
+    orderNumber: String(row[DISPATCH_COL.ORDER_NUMBER - 1] || '').trim(),
+    clientName: String(row[DISPATCH_COL.CLIENT_NAME - 1] || '').trim(),
+    productId: String(row[DISPATCH_COL.PRODUCT_ID - 1] || '').trim(),
+    productName: String(row[DISPATCH_COL.PRODUCT_NAME - 1] || '').trim(),
+    qty: Number(row[DISPATCH_COL.QTY - 1]) || 0,
+    transport: String(row[DISPATCH_COL.TRANSPORT - 1] || '').trim(),
+    remarks: String(row[DISPATCH_COL.REMARKS - 1] || '').trim(),
+    invoiceNumber: String(row[DISPATCH_COL.INVOICE_NUMBER - 1] || '').trim(),
+    privateMark: String(row[DISPATCH_COL.PRIVATE_MARK - 1] || '').trim(),
+    grNumber: String(row[DISPATCH_COL.GR_NUMBER - 1] || '').trim(),
+    logisticsContractor: String(row[DISPATCH_COL.LOGISTICS_CONTRACTOR - 1] || '').trim(),
+    logisticsRate: Number(row[DISPATCH_COL.LOGISTICS_RATE - 1]) || 0,
+    logisticsCost: Number(row[DISPATCH_COL.LOGISTICS_COST - 1]) || 0
+  };
+}
+
 function getDispatchData() {
   try {
     let sheet;
@@ -270,32 +306,8 @@ function getDispatchData() {
     const records = [];
 
     for (let i = 0; i < data.length; i++) {
-      const row = data[i];
-      const dispatchNumber = String(row[DISPATCH_COL.DISPATCH_NUMBER - 1] || '').trim();
-      if (!dispatchNumber) continue;
-
-      const rawDate = row[DISPATCH_COL.DISPATCH_DATE - 1];
-      const dateStr = rawDate instanceof Date ? toSafeDateString(rawDate) : String(rawDate || '');
-
-      records.push({
-        rowIdx: i + 2,
-        dispatchNumber: dispatchNumber,
-        dispatchDate: dateStr,
-        dateRaw: rawDate instanceof Date ? rawDate.toISOString() : null,
-        orderNumber: String(row[DISPATCH_COL.ORDER_NUMBER - 1] || '').trim(),
-        clientName: String(row[DISPATCH_COL.CLIENT_NAME - 1] || '').trim(),
-        productId: String(row[DISPATCH_COL.PRODUCT_ID - 1] || '').trim(),
-        productName: String(row[DISPATCH_COL.PRODUCT_NAME - 1] || '').trim(),
-        qty: Number(row[DISPATCH_COL.QTY - 1]) || 0,
-        transport: String(row[DISPATCH_COL.TRANSPORT - 1] || '').trim(),
-        remarks: String(row[DISPATCH_COL.REMARKS - 1] || '').trim(),
-        invoiceNumber: String(row[DISPATCH_COL.INVOICE_NUMBER - 1] || '').trim(),
-        privateMark: String(row[DISPATCH_COL.PRIVATE_MARK - 1] || '').trim(),
-        grNumber: String(row[DISPATCH_COL.GR_NUMBER - 1] || '').trim(),
-        logisticsContractor: String(row[DISPATCH_COL.LOGISTICS_CONTRACTOR - 1] || '').trim(),
-        logisticsRate: Number(row[DISPATCH_COL.LOGISTICS_RATE - 1]) || 0,
-        logisticsCost: Number(row[DISPATCH_COL.LOGISTICS_COST - 1]) || 0
-      });
+      const record = _mapDispatchRow(data[i], i + 2);
+      if (record) records.push(record);
     }
 
     // Sort by date descending, then rowIdx descending (newest first).
@@ -518,6 +530,7 @@ function saveDispatch(formData) {
       sheet.getRange(targetRow, 1, 1, rowData.length).setValues([rowData]);
     } else {
       sheet.appendRow(rowData);
+      targetRow = sheet.getLastRow();
     }
 
     if (typeof recalculateWarehousePool === 'function') {
@@ -543,7 +556,12 @@ function saveDispatch(formData) {
       successMsg += ` Note: PI / Estimate "${orderNumber}" has no line for "${productName}" (it may have been edited or removed).`;
     }
 
-    return buildResponse(true, { dispatchNumber: dispatchNumber }, successMsg);
+    // Read this dispatch's own just-written row back (cheap — one row, not
+    // the whole sheet) so the client can patch it into an already-loaded
+    // Dispatch table in place instead of a full reload.
+    const freshRow = _mapDispatchRow(sheet.getRange(targetRow, 1, 1, DISPATCH_COL.LOGISTICS_COST).getValues()[0], targetRow);
+
+    return buildResponse(true, { dispatchNumber: dispatchNumber, row: freshRow }, successMsg);
   } catch (error) {
     Log.error('[saveDispatch] Error:', error.message);
     logAction('ERROR', 'saveDispatch', formData.productId || 'NEW', error.message, 'ERROR');

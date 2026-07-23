@@ -180,18 +180,20 @@ vm.runInContext(`
 const {
   APP_CONFIG, PO_COL, BILL_COL, ITEMS_COL, VENDORS_COL, CLIENTS_COL, CONTRACTORS_COL,
   BOM_COL, PROCESS_COL, PRODUCTION_COL, ISSUE_COL, DISPATCH_COL, RETURN_COL, WASTAGE_COL,
-  savePO, deletePO,
+  savePO, deletePO, getPOData,
+  getBillData,
   saveBill, deleteBill,
-  saveItem, deleteItem,
+  saveItem, deleteItem, getItemsData,
   saveVendor, deleteVendor,
-  saveClient, deleteClient,
+  saveClient, deleteClient, getClientsData,
+  saveClientOrder, deleteClientOrder, getClientOrdersData,
   saveContractor, deleteContractor,
-  saveBOM, deleteBOM,
-  saveProcess, deleteProcess,
+  saveBOM, deleteBOM, getBOMData,
+  saveProcess, deleteProcess, getProcessData,
   saveProduction, deleteProduction,
   saveIssueStock, deleteIssueBulk,
-  saveDispatch, deleteDispatch,
-  saveReturn, deleteReturn,
+  saveDispatch, deleteDispatch, getDispatchData,
+  saveReturn, deleteReturn, getReturnData,
   saveWastage, deleteWastageBulk,
   initVendorsSheet, initItemsSheet, initUnitsSheet, initClientsSheet, initContractorsSheet,
   initBOMSheet, initProcessMasterSheet, initProcessComponentsSheet, initProductionSheet,
@@ -290,6 +292,18 @@ console.log('=== 1. PO ===');
   // PO logs 'CREATE' even on edit (hardcoded, confirmed by research) — assert that, not 'UPDATE'.
   assertLogged('CREATE', APP_CONFIG.SHEETS.PO, 'Logs has a CREATE/PO entry for the edit too (PO always logs CREATE)');
 
+  // savePO's response now echoes the freshly-written PO back (see
+  // _buildPoRecordFromRows) so the client can patch it into an already-
+  // loaded PO Ledger in place instead of a full getPOData() reload — must
+  // match what a full reload would return for this same PO number.
+  const echoedPo = editRes.data && editRes.data.po;
+  assert(!!echoedPo, 'savePO echoes back the fresh PO in response.data.po');
+  assert(echoedPo.poNumber === poNumber, 'echoed PO has the correct poNumber (got ' + (echoedPo && echoedPo.poNumber) + ')');
+  assert(echoedPo.totalQty === 3, 'echoed PO has the updated totalQty 3 (got ' + (echoedPo && echoedPo.totalQty) + ')');
+  assert(echoedPo.poRemarks === 'edited', 'echoed PO has the updated remarks (got "' + (echoedPo && echoedPo.poRemarks) + '")');
+  const reloaded = getPOData().data.find(p => p.poNumber === poNumber);
+  assert(JSON.stringify(echoedPo) === JSON.stringify(reloaded), 'echoed PO matches what a full getPOData() reload returns for this PO');
+
   const deleteRes = deletePO(poNumber);
   assert(deleteRes.success, 'delete succeeds: ' + deleteRes.message);
   assert(poSheet.getLastRow() < 3, 'sheet row removed after delete');
@@ -319,6 +333,17 @@ console.log('\n=== 2. Bill ===');
   assert(rowAfterEdit[BILL_COL.QTY - 1] === 4, 'sheet row reflects edited qty (got ' + rowAfterEdit[BILL_COL.QTY - 1] + ')');
   assertLogged('UPDATE', APP_CONFIG.SHEETS.BILL, 'Logs has an UPDATE/Bill entry for the edit');
 
+  // saveBill's response now echoes the freshly-written bill back (see
+  // _buildBillRecordFromRows) so the client can patch it into an already-
+  // loaded Bill Ledger in place instead of a full getBillData() reload.
+  const echoedBill = editRes.data && editRes.data.bill;
+  assert(!!echoedBill, 'saveBill echoes back the fresh bill in response.data.bill');
+  assert(echoedBill.billNumber === 'SWEEP-B-1', 'echoed bill has the correct billNumber (got ' + (echoedBill && echoedBill.billNumber) + ')');
+  assert(echoedBill.totalQty === 4, 'echoed bill has the updated totalQty 4 (got ' + (echoedBill && echoedBill.totalQty) + ')');
+  assert(echoedBill.remarks === 'edited', 'echoed bill has the updated remarks (got "' + (echoedBill && echoedBill.remarks) + '")');
+  const reloadedBill = getBillData().data.find(b => b.vendor === 'Sweep Vendor' && b.billNumber === 'SWEEP-B-1');
+  assert(JSON.stringify(echoedBill) === JSON.stringify(reloadedBill), 'echoed bill matches what a full getBillData() reload returns for this bill');
+
   const deleteRes = deleteBill('Sweep Vendor', 'SWEEP-B-1');
   assert(deleteRes.success, 'delete succeeds: ' + deleteRes.message);
   assert(billSheet.getLastRow() < 2, 'sheet row removed after delete');
@@ -346,6 +371,17 @@ console.log('\n=== 3. Item ===');
   });
   assert(editRes.success, 'edit succeeds: ' + editRes.message);
   assertLogged('UPDATE', APP_CONFIG.SHEETS.ITEMS, 'Logs has an UPDATE/Items entry for the edit');
+
+  // saveItem's response now echoes the freshly-written item back (see
+  // _mapItemRow) so the client can patch it into an already-loaded Item
+  // Master list in place instead of a full getItemsData() reload.
+  const echoedItem = editRes.data && editRes.data.item;
+  assert(!!echoedItem, 'saveItem echoes back the fresh item in response.data.item');
+  assert(echoedItem.name === 'Sweep Test Item', 'echoed item has the correct name (got ' + (echoedItem && echoedItem.name) + ')');
+  assert(echoedItem.remarks === 'edited', 'echoed item has the updated remarks (got "' + (echoedItem && echoedItem.remarks) + '")');
+  assert(echoedItem.vendors && echoedItem.vendors[0] && echoedItem.vendors[0].rate === 30, 'echoed item has the updated vendor rate 30 (got ' + JSON.stringify(echoedItem && echoedItem.vendors) + ')');
+  const reloadedItem = getItemsData().data.find(it => it.name === 'Sweep Test Item' && it.size === 'Std');
+  assert(JSON.stringify(echoedItem) === JSON.stringify(reloadedItem), 'echoed item matches what a full getItemsData() reload returns for this item');
 
   const deleteRes = deleteItem('Sweep Test Item', 'Std');
   assert(deleteRes.success, 'delete succeeds: ' + deleteRes.message);
@@ -390,9 +426,61 @@ console.log('\n=== 5. Client ===');
   assert(editRes.success, 'edit succeeds: ' + editRes.message);
   assertLogged('UPDATE', APP_CONFIG.SHEETS.CLIENTS, 'Logs has an UPDATE/Clients entry for the edit');
 
+  // saveClient's response now echoes the freshly-written client back (see
+  // _mapClientRow) so the client-side table can patch it in place instead
+  // of a full getClientsData() reload.
+  const echoedClient = editRes.data && editRes.data.client;
+  assert(!!echoedClient, 'saveClient echoes back the fresh client in response.data.client');
+  assert(echoedClient.name === 'Sweep Test Client', 'echoed client has the correct name (got ' + (echoedClient && echoedClient.name) + ')');
+  assert(echoedClient.contact === '6666666666', 'echoed client has the updated contact (got "' + (echoedClient && echoedClient.contact) + '")');
+  const reloadedClient = getClientsData().data.find(c => c.name === 'Sweep Test Client');
+  assert(JSON.stringify(echoedClient) === JSON.stringify(reloadedClient), 'echoed client matches what a full getClientsData() reload returns for this client');
+
   const deleteRes = deleteClient('Sweep Test Client');
   assert(deleteRes.success, 'delete succeeds: ' + deleteRes.message);
   assertLogged('DELETE', APP_CONFIG.SHEETS.CLIENTS, 'Logs has a DELETE/Clients entry');
+}
+
+console.log('\n=== 5b. Client Order (PI/Estimate) ===');
+{
+  const orderBomToken = 'sweep-order-test-token';
+  fakeCache.put('BOM_AUTH_TOKEN_' + orderBomToken, '1');
+  const bomHelper = saveBOM({
+    productName: 'Sweep Order Product',
+    components: JSON.stringify([{ itemName: 'Sweep Order Item', qtyPerProduct: 1 }])
+  }, orderBomToken);
+  assert(bomHelper.success, 'helper BOM product for Client Order created: ' + bomHelper.message);
+  const helperProductId = bomHelper.data.productId;
+
+  const createRes = saveClientOrder({
+    clientName: 'Sweep Order Client', orderDate: '2026-01-01', status: 'Estimate',
+    lines: JSON.stringify([{ productId: helperProductId, qty: 2 }])
+  });
+  assert(createRes.success, 'create succeeds: ' + createRes.message);
+  const orderNumber = createRes.data.orderNumber;
+  assertLogged('CREATE', APP_CONFIG.SHEETS.CLIENT_ORDERS, 'Logs has a CREATE/Client Orders entry');
+
+  const editRes = saveClientOrder({
+    orderNumber, clientName: 'Sweep Order Client', orderDate: '2026-01-02', status: 'Estimate',
+    lines: JSON.stringify([{ productId: helperProductId, qty: 5 }])
+  });
+  assert(editRes.success, 'edit succeeds: ' + editRes.message);
+  assertLogged('UPDATE', APP_CONFIG.SHEETS.CLIENT_ORDERS, 'Logs has an UPDATE/Client Orders entry for the edit');
+
+  // saveClientOrder's response now echoes the freshly-written order back
+  // (see _buildClientOrderRecordFromRows) so the client can patch it into
+  // an already-loaded PI/Estimate list in place instead of a full
+  // getClientOrdersData() reload.
+  const echoedOrder = editRes.data && editRes.data.order;
+  assert(!!echoedOrder, 'saveClientOrder echoes back the fresh order in response.data.order');
+  assert(echoedOrder.orderNumber === orderNumber, 'echoed order has the correct orderNumber (got ' + (echoedOrder && echoedOrder.orderNumber) + ')');
+  assert(echoedOrder.lines && echoedOrder.lines[0] && echoedOrder.lines[0].qty === 5, 'echoed order has the updated qty 5 (got ' + JSON.stringify(echoedOrder && echoedOrder.lines) + ')');
+  const reloadedOrder = getClientOrdersData().data.find(o => o.orderNumber === orderNumber);
+  assert(JSON.stringify(echoedOrder) === JSON.stringify(reloadedOrder), 'echoed order matches what a full getClientOrdersData() reload returns for this order');
+
+  const deleteRes = deleteClientOrder(orderNumber);
+  assert(deleteRes.success, 'delete succeeds: ' + deleteRes.message);
+  assertLogged('DELETE', APP_CONFIG.SHEETS.CLIENT_ORDERS, 'Logs has a DELETE/Client Orders entry');
 }
 
 console.log('\n=== 6. Contractor ===');
@@ -439,6 +527,16 @@ fakeCache.put('BOM_AUTH_TOKEN_' + BOM_TOKEN, '1');
   assert(editRes.success, 'edit succeeds: ' + editRes.message);
   assertLogged('UPDATE', APP_CONFIG.SHEETS.BOM, 'Logs has an UPDATE/BOM entry for the edit');
 
+  // saveBOM's response now echoes the freshly-written product back (see
+  // _buildBomRecordFromRows) so the client can patch it into an already-
+  // loaded BOM list in place instead of a full getBOMData() reload.
+  const echoedProduct = editRes.data && editRes.data.product;
+  assert(!!echoedProduct, 'saveBOM echoes back the fresh product in response.data.product');
+  assert(echoedProduct.productId === productId, 'echoed product has the correct productId (got ' + (echoedProduct && echoedProduct.productId) + ')');
+  assert(echoedProduct.components && echoedProduct.components[0] && echoedProduct.components[0].qtyPerProduct === 2, 'echoed product has the updated qtyPerProduct 2 (got ' + JSON.stringify(echoedProduct && echoedProduct.components) + ')');
+  const reloadedProduct = getBOMData(BOM_TOKEN).data.find(p => p.productId === productId);
+  assert(JSON.stringify(echoedProduct) === JSON.stringify(reloadedProduct), 'echoed product matches what a full getBOMData() reload returns for this product');
+
   const deleteRes = deleteBOM(productId, BOM_TOKEN);
   assert(deleteRes.success, 'delete succeeds: ' + deleteRes.message);
   assertLogged('DELETE', APP_CONFIG.SHEETS.BOM, 'Logs has a DELETE/BOM entry');
@@ -463,6 +561,18 @@ console.log('\n=== 8. Process ===');
   });
   assert(editRes.success, 'edit succeeds: ' + editRes.message);
   assertLogged('UPDATE', APP_CONFIG.SHEETS.PROCESS_MASTER, 'Logs has an UPDATE/Process Master entry for the edit');
+
+  // saveProcess's response now echoes the freshly-written process back
+  // (see _mapProcessRow) so the client can patch it into an already-
+  // loaded Process Master table in place instead of a full
+  // getProcessData() reload.
+  const echoedProcess = editRes.data && editRes.data.process;
+  assert(!!echoedProcess, 'saveProcess echoes back the fresh process in response.data.process');
+  assert(echoedProcess.processId === processId, 'echoed process has the correct processId (got ' + (echoedProcess && echoedProcess.processId) + ')');
+  assert(echoedProcess.processName === 'Sweep Test Process (edited)', 'echoed process has the updated name (got "' + (echoedProcess && echoedProcess.processName) + '")');
+  assert(echoedProcess.sequence === 2, 'echoed process has the updated sequence 2 (got ' + (echoedProcess && echoedProcess.sequence) + ')');
+  const reloadedProcess = getProcessData().data.find(p => p.processId === processId);
+  assert(JSON.stringify(echoedProcess) === JSON.stringify(reloadedProcess), 'echoed process matches what a full getProcessData() reload returns for this process');
 
   const deleteRes = deleteProcess(processId);
   assert(deleteRes.success, 'delete succeeds: ' + deleteRes.message);
@@ -571,6 +681,17 @@ console.log('\n=== 11. Dispatch ===');
   assert(rowAfterEdit[0] === 6, 'sheet row reflects edited qty (got ' + rowAfterEdit[0] + ')');
   assertLogged('UPDATE', APP_CONFIG.SHEETS.DISPATCH, 'Logs has an UPDATE/Dispatch entry for the edit');
 
+  // saveDispatch's response now echoes the freshly-written row back (see
+  // _mapDispatchRow) so the client can patch it into an already-loaded
+  // Dispatch table in place instead of a full getDispatchData() reload.
+  const echoedDispatch = editRes.data && editRes.data.row;
+  assert(!!echoedDispatch, 'saveDispatch echoes back the fresh row in response.data.row');
+  assert(echoedDispatch.rowIdx === rowIdx, 'echoed row has the correct rowIdx (got ' + (echoedDispatch && echoedDispatch.rowIdx) + ')');
+  assert(echoedDispatch.qty === 6, 'echoed row has the updated qty 6 (got ' + (echoedDispatch && echoedDispatch.qty) + ')');
+  assert(echoedDispatch.remarks === 'edited', 'echoed row has the updated remarks (got "' + (echoedDispatch && echoedDispatch.remarks) + '")');
+  const reloadedDispatch = getDispatchData().data.find(d => d.rowIdx === rowIdx);
+  assert(JSON.stringify(echoedDispatch) === JSON.stringify(reloadedDispatch), 'echoed row matches what a full getDispatchData() reload returns for this rowIdx');
+
   const deleteRes = deleteDispatch(rowIdx, undefined, undefined);
   assert(deleteRes.success, 'delete succeeds: ' + deleteRes.message);
   assertLogged('DELETE', APP_CONFIG.SHEETS.DISPATCH, 'Logs has a DELETE/Dispatch entry');
@@ -597,6 +718,17 @@ console.log('\n=== 12. Return ===');
   });
   assert(editRes.success, 'edit succeeds: ' + editRes.message);
   assertLogged('UPDATE', APP_CONFIG.SHEETS.RETURN, 'Logs has an UPDATE/Return entry for the edit');
+
+  // saveReturn's response now echoes the freshly-written return back (see
+  // _buildReturnRecordFromRows) so the client can patch it into an
+  // already-loaded Return Ledger in place instead of a full
+  // getReturnData() reload.
+  const echoedReturn = editRes.data && editRes.data.ret;
+  assert(!!echoedReturn, 'saveReturn echoes back the fresh return in response.data.ret');
+  assert(echoedReturn.returnNumber === returnNumber, 'echoed return has the correct returnNumber (got ' + (echoedReturn && echoedReturn.returnNumber) + ')');
+  assert(echoedReturn.totalQty === 3, 'echoed return has the updated totalQty 3 (got ' + (echoedReturn && echoedReturn.totalQty) + ')');
+  const reloadedReturn = getReturnData().data.find(r => r.returnNumber === returnNumber);
+  assert(JSON.stringify(echoedReturn) === JSON.stringify(reloadedReturn), 'echoed return matches what a full getReturnData() reload returns for this return');
 
   const deleteRes = deleteReturn(returnNumber);
   assert(deleteRes.success, 'delete succeeds: ' + deleteRes.message);

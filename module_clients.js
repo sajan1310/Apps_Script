@@ -59,6 +59,23 @@ function initClientsSheet() {
  * Retrieves all clients from the database.
  * @returns {Object} JSON Response with clients array.
  */
+/**
+ * Maps one raw Clients sheet row into the record shape the client expects.
+ * Shared by getClientsData's bulk read and saveClient's single fresh-row
+ * read-back (used to patch just the saved client into the client's
+ * already-loaded table in place instead of a full list reload).
+ * @private
+ */
+function _mapClientRow(r) {
+  return {
+    name: String(r[0] || "").trim(),
+    contact: String(r[1] || "").trim(),
+    address: String(r[2] || "").trim(),
+    gstin: String(r[3] || "").trim(),
+    remarks: String(r[4] || "").trim()
+  };
+}
+
 function getClientsData() {
   try {
     let sheet;
@@ -73,13 +90,7 @@ function getClientsData() {
     if (lastRow < 2) return buildResponse(true, []);
 
     const data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
-    const clients = data.map(r => ({
-      name: String(r[0] || "").trim(),
-      contact: String(r[1] || "").trim(),
-      address: String(r[2] || "").trim(),
-      gstin: String(r[3] || "").trim(),
-      remarks: String(r[4] || "").trim()
-    })).filter(c => c.name !== "");
+    const clients = data.map(_mapClientRow).filter(c => c.name !== "");
 
     clients.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -248,7 +259,13 @@ function saveClient(formData) {
     const msg = isEdit ? "Client profile updated successfully." : "New client registered.";
     logAction(action, APP_CONFIG.SHEETS.CLIENTS, newName, JSON.stringify(formData), 'SUCCESS');
 
-    return buildResponse(true, { name: newName }, msg);
+    // Read this client's own just-written row back (cheap — one row, not
+    // the whole sheet) so the client-side table can patch it in place
+    // instead of a full reload.
+    const freshClientRow = isEdit ? targetRow : sheet.getLastRow();
+    const freshClient = _mapClientRow(sheet.getRange(freshClientRow, 1, 1, 5).getValues()[0]);
+
+    return buildResponse(true, { name: newName, client: freshClient }, msg);
   } catch (error) {
     logAction('ERROR', 'saveClient', formData ? formData.clientName : 'unknown', error.message, 'ERROR');
     return buildResponse(false, null, error.message);
@@ -457,6 +474,53 @@ function getNextOrderNumber() {
  *   [{orderNumber, orderDate, clientName, orderRemarks, status,
  *     lines: [{productId, productName, qty, lineRemarks, productionPushed}]}]
  */
+/** Builds a Client Order header object (no lines yet) from its first sheet row. @private */
+function _buildClientOrderHeaderFromRow(row) {
+  const rawDate = row[CLIENT_ORDERS_COL.ORDER_DATE - 1];
+  const dateStr = rawDate instanceof Date ? toSafeDateString(rawDate) : String(rawDate || '');
+
+  return {
+    orderNumber: String(row[CLIENT_ORDERS_COL.ORDER_NUMBER - 1] || '').trim(),
+    orderDate: dateStr,
+    dateRaw: rawDate instanceof Date ? rawDate.toISOString() : null,
+    clientName: String(row[CLIENT_ORDERS_COL.CLIENT_NAME - 1] || '').trim(),
+    status: String(row[CLIENT_ORDERS_COL.STATUS - 1] || '').trim() || 'Estimate',
+    orderRemarks: String(row[CLIENT_ORDERS_COL.ORDER_REMARKS - 1] || '').trim(),
+    lines: []
+  };
+}
+
+/** Appends one product line row onto an in-progress Client Order object. @private */
+function _addClientOrderLineFromRow(order, row) {
+  const productId = String(row[CLIENT_ORDERS_COL.PRODUCT_ID - 1] || '').trim();
+  if (!productId) return;
+
+  const pushedRaw = String(row[CLIENT_ORDERS_COL.PRODUCTION_PUSHED - 1] || '').trim().toLowerCase();
+  order.lines.push({
+    productId: productId,
+    productName: String(row[CLIENT_ORDERS_COL.PRODUCT_NAME - 1] || '').trim(),
+    qty: Number(row[CLIENT_ORDERS_COL.QTY_ORDERED - 1]) || 0,
+    lineRemarks: String(row[CLIENT_ORDERS_COL.LINE_REMARKS - 1] || '').trim(),
+    productionPushed: pushedRaw === 'yes',
+    needsManualProduction: pushedRaw === 'manual'
+  });
+}
+
+/**
+ * Builds one Client Order record (header + lines) from a contiguous block
+ * of raw Client Orders sheet rows that all share the same Order Number.
+ * Used by saveClientOrder's fresh-row read-back so the client can patch
+ * just this one order into its already-loaded list instead of a full
+ * getClientOrdersData() reload.
+ * @private
+ */
+function _buildClientOrderRecordFromRows(rows) {
+  if (!rows || rows.length === 0) return null;
+  const order = _buildClientOrderHeaderFromRow(rows[0]);
+  rows.forEach(row => _addClientOrderLineFromRow(order, row));
+  return order;
+}
+
 function getClientOrdersData() {
   try {
     let sheet;
@@ -479,32 +543,10 @@ function getClientOrdersData() {
       if (!orderNumber) continue;
 
       if (!orderMap[orderNumber]) {
-        const rawDate = row[CLIENT_ORDERS_COL.ORDER_DATE - 1];
-        const dateStr = rawDate instanceof Date ? toSafeDateString(rawDate) : String(rawDate || '');
-
-        orderMap[orderNumber] = {
-          orderNumber: orderNumber,
-          orderDate: dateStr,
-          dateRaw: rawDate instanceof Date ? rawDate.toISOString() : null,
-          clientName: String(row[CLIENT_ORDERS_COL.CLIENT_NAME - 1] || '').trim(),
-          status: String(row[CLIENT_ORDERS_COL.STATUS - 1] || '').trim() || 'Estimate',
-          orderRemarks: String(row[CLIENT_ORDERS_COL.ORDER_REMARKS - 1] || '').trim(),
-          lines: []
-        };
+        orderMap[orderNumber] = _buildClientOrderHeaderFromRow(row);
       }
 
-      const productId = String(row[CLIENT_ORDERS_COL.PRODUCT_ID - 1] || '').trim();
-      if (!productId) continue;
-
-      const pushedRaw = String(row[CLIENT_ORDERS_COL.PRODUCTION_PUSHED - 1] || '').trim().toLowerCase();
-      orderMap[orderNumber].lines.push({
-        productId: productId,
-        productName: String(row[CLIENT_ORDERS_COL.PRODUCT_NAME - 1] || '').trim(),
-        qty: Number(row[CLIENT_ORDERS_COL.QTY_ORDERED - 1]) || 0,
-        lineRemarks: String(row[CLIENT_ORDERS_COL.LINE_REMARKS - 1] || '').trim(),
-        productionPushed: pushedRaw === 'yes',
-        needsManualProduction: pushedRaw === 'manual'
-      });
+      _addClientOrderLineFromRow(orderMap[orderNumber], row);
     }
 
     const orders = Object.values(orderMap);
@@ -707,7 +749,14 @@ function saveClientOrder(formData) {
       successMsg += ` ${manualCount} line(s) need manual Production setup — log them yourself in the Production tab (BOM doesn't unambiguously map to one final-stage Process, or it's multi-color).`;
     }
 
-    return buildResponse(true, { orderNumber: orderNumber }, successMsg);
+    // Read this order's own just-written rows back (cheap — only its own
+    // block, not the whole sheet) so the client can patch it into an
+    // already-loaded PI/Estimate list in place instead of a full
+    // getClientOrdersData() reload.
+    const freshRows = sheet.getRange(startRow, 1, rowsToWrite.length, 10).getValues();
+    const freshOrder = _buildClientOrderRecordFromRows(freshRows);
+
+    return buildResponse(true, { orderNumber: orderNumber, order: freshOrder }, successMsg);
   } catch (error) {
     Log.error('[saveClientOrder] Error:', error.message);
     logAction('ERROR', 'saveClientOrder', formData.orderNumber || 'NEW', error.message, 'ERROR');

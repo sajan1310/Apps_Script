@@ -103,8 +103,20 @@
 
         let html = '';
         pageItems.forEach(c => {
-          const checked = App.Selection.isSelected(App.State.selectedClients, c.name) ? 'checked' : '';
-          html += `<tr>
+          html += this.clientRowHtml(c);
+        });
+
+        tbody.innerHTML = html;
+
+        App.Utils.renderPagination('clientsPagination', filteredClients.length, cur, rpp, 'client-page', 'Clients');
+        this.updateClientBulkButtons();
+      },
+
+      // Renders one <tr> for a client. Shared by renderClientsTable's full
+      // rebuild and patchClientRowInPlace's single-row swap below.
+      clientRowHtml(c) {
+        const checked = App.Selection.isSelected(App.State.selectedClients, c.name) ? 'checked' : '';
+        return `<tr data-client-key="${escapeHtml(c.name)}">
         <td class="text-center">
           <input type="checkbox" class="form-check-input client-select-chk" data-key="${escapeHtml(c.name)}" ${checked} onchange="App.Client.onClientRowSelectChange()">
         </td>
@@ -118,12 +130,28 @@
           <button class="btn btn-sm btn-outline-danger btn-action w-100" data-client-name="${escapeHtml(c.name)}" onclick="App.Client.deleteClient(this.dataset.clientName)">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
+      // Patches one already-loaded client's data + its rendered <tr> after
+      // an edit save, instead of a full loadClientsData() reload — see
+      // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+      // for the full rationale/trade-offs this mirrors. name is
+      // user-editable on an edit (a rename), so this is keyed by the
+      // PRE-edit name — how the row is currently indexed in
+      // globalClients/the DOM — not the post-save freshClient's own name.
+      // Returns false — caller should fall back to loadClientsData() — if
+      // the client isn't currently loaded or isn't on the displayed page.
+      patchClientRowInPlace(freshClient, oldName) {
+        const existing = App.State.globalClients.find(c => c.name === oldName);
+        if (!existing) return false;
 
-        App.Utils.renderPagination('clientsPagination', filteredClients.length, cur, rpp, 'client-page', 'Clients');
-        this.updateClientBulkButtons();
+        Object.assign(existing, freshClient);
+
+        const tr = document.querySelector(`#clientsTableBody tr[data-client-key="${CSS.escape(oldName)}"]`);
+        if (!tr) return false;
+
+        tr.outerHTML = this.clientRowHtml(existing);
+        return true;
       },
 
       toggleSelectAllClients(masterChk) {
@@ -317,14 +345,26 @@
 
         let html = '';
         pageItems.forEach(o => {
-          const idx = App.State.globalOrders.indexOf(o);
-          const checked = App.Selection.isSelected(App.State.selectedOrders, o.orderNumber) ? 'checked' : '';
-          const productsSummary = (o.lines || [])
-            .map(l => `${escapeHtml(l.productName)} <span class="text-muted">x${App.Production.formatQty(l.qty)}</span>`)
-            .join('<br>');
-          const { label, badgeClass } = this.calculatePIDisplayStatus(o);
+          html += this.orderRowHtml(o);
+        });
 
-          html += `<tr>
+        tbody.innerHTML = html;
+
+        App.Utils.renderPagination('clientOrdersPagination', filteredOrders.length, cur, rpp, 'order-page', 'PI / Estimates');
+        this.updateOrderBulkButtons();
+      },
+
+      // Renders one <tr> for a PI/Estimate. Shared by renderOrdersTable's
+      // full rebuild and patchOrderRowInPlace's single-row swap below.
+      orderRowHtml(o) {
+        const idx = App.State.globalOrders.indexOf(o);
+        const checked = App.Selection.isSelected(App.State.selectedOrders, o.orderNumber) ? 'checked' : '';
+        const productsSummary = (o.lines || [])
+          .map(l => `${escapeHtml(l.productName)} <span class="text-muted">x${App.Production.formatQty(l.qty)}</span>`)
+          .join('<br>');
+        const { label, badgeClass } = this.calculatePIDisplayStatus(o);
+
+        return `<tr data-order-key="${escapeHtml(o.orderNumber)}">
         <td class="text-center">
           <input type="checkbox" class="form-check-input order-select-chk" data-key="${escapeHtml(o.orderNumber)}" ${checked} onchange="App.Client.onOrderRowSelectChange()">
         </td>
@@ -339,12 +379,27 @@
           <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Client.deleteOrder('${escapeHtml(o.orderNumber)}')">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
+      // Patches one already-loaded PI/Estimate's data + its rendered <tr>
+      // after an edit save, instead of a full loadOrdersData() reload —
+      // see App.Production.patchRowInPlace's doc comment (Script_Production.html)
+      // for the full rationale/trade-offs this mirrors. orderNumber is
+      // server-assigned and never user-editable, so this is a safe stable
+      // key. Returns false — caller should fall back to loadOrdersData() —
+      // if the order isn't currently loaded or isn't on the displayed page.
+      patchOrderRowInPlace(freshOrder) {
+        const key = String(freshOrder.orderNumber);
+        const existing = App.State.globalOrders.find(o => String(o.orderNumber) === key);
+        if (!existing) return false;
 
-        App.Utils.renderPagination('clientOrdersPagination', filteredOrders.length, cur, rpp, 'order-page', 'PI / Estimates');
-        this.updateOrderBulkButtons();
+        Object.assign(existing, freshOrder);
+
+        const tr = document.querySelector(`#clientOrdersTableBody tr[data-order-key="${key}"]`);
+        if (!tr) return false;
+
+        tr.outerHTML = this.orderRowHtml(existing);
+        return true;
       },
 
       toggleSelectAllOrders(masterChk) {
@@ -930,15 +985,30 @@
           try {
             const res = await Api.call('saveClient', formData);
             if (res.success) {
-              await App.Client.loadClientsData();
               if (isEdit) {
-                // Save (edit mode): stay open on the SAME client instead of
-                // closing — Exit (App.Nav.exit) is the only way to close
-                // from here now. Client name is editable (rename cascades
-                // server-side), so re-open with the NEW value just saved,
-                // not the pre-edit originalClientName.
+                // Save (edit mode): patch just this one client's data +
+                // <tr> in place instead of a full loadClientsData()
+                // reload — keyed by the PRE-edit name (originalClientName),
+                // since that's how the row is currently indexed in
+                // globalClients/the DOM. Falls back to a full reload if
+                // the client can't be patched.
+                const patched = res.data && res.data.client
+                  ? App.Client.patchClientRowInPlace(res.data.client, formData.originalClientName)
+                  : false;
+                if (!patched) await App.Client.loadClientsData();
+
+                // Stay open on the SAME client instead of closing — Exit
+                // (App.Nav.exit) is the only way to close from here now.
+                // Client name is editable (rename cascades server-side), so
+                // re-open with the NEW value just saved, not the pre-edit
+                // originalClientName.
                 App.Client.openEditClientModal(formData.clientName);
               } else {
+                // A brand-new client's alphabetically-sorted position can't
+                // be determined cheaply on the client — full reload here
+                // (see App.Client.patchClientRowInPlace's doc comment for
+                // why an edit doesn't need to).
+                await App.Client.loadClientsData();
                 App.Client.openCreateClientModal();
               }
             }
@@ -965,15 +1035,23 @@
           try {
             const res = await Api.call('saveClientOrder', formData);
             if (res.success) {
-              await App.Client.loadOrdersData();
               if (typeof App.Dispatch !== 'undefined') await App.Dispatch.loadReadyData();
+
               if (isEdit) {
-                // Save (edit mode): stay open on the SAME order instead of
-                // closing — Exit (App.Nav.exit) is the only way to close
-                // from here now. orderNumber is server-assigned and never
-                // user-editable (blank until the server generates one on
-                // first create), so it's a safe stable key to re-find this
-                // record by after the reload.
+                // Save (edit mode): patch just this one order's data +
+                // <tr> in place instead of a full loadOrdersData() reload
+                // — falls back to a full reload if the order can't be
+                // patched.
+                const patched = res.data && res.data.order
+                  ? App.Client.patchOrderRowInPlace(res.data.order)
+                  : false;
+                if (!patched) await App.Client.loadOrdersData();
+
+                // Stay open on the SAME order instead of closing — Exit
+                // (App.Nav.exit) is the only way to close from here now.
+                // orderNumber is server-assigned and never user-editable
+                // (blank until the server generates one on first create),
+                // so it's a safe stable key to re-find this record by.
                 const freshIdx = App.State.globalOrders.findIndex(o => String(o.orderNumber) === String(formData.orderNumber));
                 if (freshIdx !== -1) {
                   App.Client.openEditOrderModal(freshIdx);
@@ -981,6 +1059,11 @@
                   safeModalHide('clientOrderModal');
                 }
               } else {
+                // A brand-new order's newest-first sorted position can't
+                // be determined cheaply on the client — full reload here
+                // (see App.Client.patchOrderRowInPlace's doc comment for
+                // why an edit doesn't need to).
+                await App.Client.loadOrdersData();
                 App.Client.openCreateOrderModal();
               }
             }

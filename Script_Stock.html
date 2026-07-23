@@ -1821,28 +1821,50 @@
             pageItems.every(item => App.Selection.isSelected(App.State.selectedStock, this.stockKey(item)));
         }
 
-        tbody.innerHTML = pageItems.map(item => {
-          const statusBadge = item.isLowStock
-            ? '<span class="badge bg-danger px-2 py-1 shadow-sm">Low Stock</span>'
-            : '<span class="badge bg-success px-2 py-1 shadow-sm">Well Stocked</span>';
+        tbody.innerHTML = pageItems.map(item => this.rowHtml(item)).join('');
 
-          const rowClass = item.isLowStock ? 'low-stock-row' : '';
-          const key = this.stockKey(item);
-          const checked = App.Selection.isSelected(App.State.selectedStock, key) ? 'checked' : '';
-          const encName = encodeURIComponent(item.name);
-          const encSize = encodeURIComponent(item.size || '');
-          const deadChecked = item.deadStock ? 'checked' : '';
-          const deadRowStyle = item.deadStock ? 'opacity: 0.6;' : '';
+        App.Utils.renderPagination('stockPagination', filteredStock.length, cur, rpp, 'stock-page', 'Items');
+        this.updateBulkButtons();
+      },
 
-          return `
-      <tr class="${rowClass}" style="${deadRowStyle}">
+      // The two bits of a stock row that a Current Stock / threshold edit
+      // rewrites. Kept as their own renderers so rowHtml (full rebuild) and
+      // patchRowInPlace (single-cell repaint) always produce identical markup
+      // — the same renderSpan() trick editPoolStockCell uses.
+      currentStockSpanHtml(item) {
+        const encName = encodeURIComponent(item.name);
+        const encSize = encodeURIComponent(item.size || '');
+        return `<span class="stock-current-display" data-qty="${item.currentStock}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
+                onclick="App.Stock.editStockCell(this, '${encName}', '${encSize}')">${item.currentStock}</span>`;
+      },
+
+      statusBadgeHtml(item) {
+        return item.isLowStock
+          ? '<span class="badge bg-danger px-2 py-1 shadow-sm">Low Stock</span>'
+          : '<span class="badge bg-success px-2 py-1 shadow-sm">Well Stocked</span>';
+      },
+
+      // Renders one <tr> for a stock row. Used by renderTable's full rebuild;
+      // the cells an edit can change carry data-stock-field markers so
+      // patchRowInPlace can repaint just those without touching the rest of
+      // the row.
+      rowHtml(item) {
+        const rowClass = item.isLowStock ? 'low-stock-row' : '';
+        const key = this.stockKey(item);
+        const checked = App.Selection.isSelected(App.State.selectedStock, key) ? 'checked' : '';
+        const encName = encodeURIComponent(item.name);
+        const encSize = encodeURIComponent(item.size || '');
+        const deadChecked = item.deadStock ? 'checked' : '';
+        const deadRowStyle = item.deadStock ? 'opacity: 0.6;' : '';
+
+        return `
+      <tr class="${rowClass}" style="${deadRowStyle}" data-stock-key="${escapeHtml(key)}">
         <td class="text-center"><input type="checkbox" class="form-check-input stock-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Stock.onRowSelectChange()"></td>
         <td><strong class="text-dark">${escapeHtml(item.name)}</strong></td>
         <td><span class="badge bg-secondary">${escapeHtml(item.size || 'GENERAL')}</span></td>
-        <td class="text-center fw-bold">${item.initialStock}</td>
-        <td class="text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}">
-          <span class="stock-current-display" data-qty="${item.currentStock}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
-                onclick="App.Stock.editStockCell(this, '${encName}', '${encSize}')">${item.currentStock}</span>
+        <td class="text-center fw-bold" data-stock-field="initial">${item.initialStock}</td>
+        <td class="text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}" data-stock-field="current">
+          ${this.currentStockSpanHtml(item)}
         </td>
         <td class="text-center">
           <input type="number"
@@ -1854,7 +1876,7 @@
                  onchange="App.Stock.saveThreshold(this)"
                  style="width: 80px; font-weight: bold; border-color: #ced4da;">
         </td>
-        <td class="text-center">${statusBadge}</td>
+        <td class="text-center" data-stock-field="status">${this.statusBadgeHtml(item)}</td>
         <td class="text-center">
           <div class="form-check d-flex justify-content-center mb-0">
             <input type="checkbox" class="form-check-input dead-stock-chk" ${deadChecked}
@@ -1865,15 +1887,105 @@
         </td>
         <td class="text-center">
           <button type="button" class="btn btn-outline-warning btn-sm" title="Correct stock manually"
-                  onclick="App.Stock.openAdjustModal('${escapeHtml(item.name).replace(/'/g, "\\'")}', '${escapeHtml(item.size || '').replace(/'/g, "\\'")}', ${item.currentStock})">
+                  data-enc-name="${encName}" data-enc-size="${encSize}"
+                  onclick="App.Stock.openAdjustModalFromRow(this)">
             <i class="bi bi-pencil-square"></i>
           </button>
         </td>
       </tr>`;
-        }).join('');
+      },
 
-        App.Utils.renderPagination('stockPagination', filteredStock.length, cur, rpp, 'stock-page', 'Items');
-        this.updateBulkButtons();
+      // Applies a stock edit (Current Stock and/or threshold) to the loaded
+      // client state and repaints ONLY the cells that edit can change — no
+      // full loadData()/renderTable(), and not even a whole-<tr> swap. Same
+      // approach as the Warehouse Pool table's editPoolStockCell: the row's
+      // existing DOM nodes stay put, so the page you're on, your scroll
+      // position, the active search, any checkbox selection and the focus/
+      // hover state of everything else in the row all survive the edit —
+      // you never have to hunt the item down again.
+      //
+      // Safe to patch in place because nothing this edit touches can move
+      // the row: the list order is load order, and applyDeadSort only ever
+      // reorders on the Dead Stock flag, which isn't changed here. The Low
+      // Stock alerts panel IS derived from these numbers, so it's re-rendered
+      // too (cheap — it's a single card, not the table).
+      //
+      // Returns false — caller should fall back to loadData() — if the item
+      // isn't loaded or its row isn't on the displayed page (e.g. it's on
+      // another page or filtered out).
+      patchRowInPlace(name, size, changes) {
+        const matches = (i) => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size || '');
+        const item = (App.State.globalStock || []).find(matches);
+        if (!item) return false;
+
+        Object.assign(item, changes);
+        item.isLowStock = Number(item.currentStock) < Number(item.threshold);
+
+        // filteredStock normally holds the SAME object references as
+        // globalStock (filterData only spreads/filters), so this is usually a
+        // no-op — kept as a guard for any path that ever repopulates it with
+        // copies, mirroring the existing toggleDeadStock patch.
+        const filteredItem = (App.State.filteredStock || []).find(matches);
+        if (filteredItem && filteredItem !== item) {
+          Object.assign(filteredItem, changes);
+          filteredItem.isLowStock = item.isLowStock;
+        }
+
+        this.renderAlerts();
+
+        const tr = document.querySelector(`#stockTableBody tr[data-stock-key="${CSS.escape(this.stockKey(item))}"]`);
+        if (!tr) return false;
+
+        // classList.toggle rather than reassigning className so the row keeps
+        // any other class, and the inline dead-stock opacity is left alone
+        // (this edit can't change the Dead Stock flag).
+        tr.classList.toggle('low-stock-row', !!item.isLowStock);
+
+        const initialCell = tr.querySelector('[data-stock-field="initial"]');
+        if (initialCell) initialCell.textContent = item.initialStock;
+
+        // innerHTML (not textContent) because this cell may currently hold
+        // the inline editor's <input> — this is what puts the display span
+        // back, exactly as editPoolStockCell does.
+        const currentCell = tr.querySelector('[data-stock-field="current"]');
+        if (currentCell) {
+          currentCell.className = `text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}`;
+          currentCell.innerHTML = this.currentStockSpanHtml(item);
+        }
+
+        const statusCell = tr.querySelector('[data-stock-field="status"]');
+        if (statusCell) statusCell.innerHTML = this.statusBadgeHtml(item);
+
+        // The threshold <input> is never re-created (that would drop focus
+        // mid-tab-through) — only its value is synced, and it's re-enabled
+        // here since saveThreshold disables it for the duration of the call.
+        const thresholdInput = tr.querySelector('.threshold-input');
+        if (thresholdInput) {
+          if (String(thresholdInput.value) !== String(item.threshold)) thresholdInput.value = item.threshold;
+          thresholdInput.disabled = false;
+        }
+
+        return true;
+      },
+
+      // Reflects a successful adjustStockManually(name, size, newQty) in the
+      // loaded data + the single rendered row. Initial Stock moves with it
+      // because the server back-solves it so recalculateStock() still derives
+      // the corrected Current Stock (see adjustStockManually in
+      // module_stock.js): it writes newInitial = newCurrent - billed +
+      // consumed, and since the loaded row already satisfies oldCurrent =
+      // oldInitial + billed - consumed, that's exactly oldInitial + the
+      // delta — derivable here without another round trip.
+      applyStockChangeLocally(name, size, newQty) {
+        const item = (App.State.globalStock || []).find(i =>
+          App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size || ''));
+        if (!item) return false;
+
+        const delta = newQty - (Number(item.currentStock) || 0);
+        return this.patchRowInPlace(name, size, {
+          currentStock: newQty,
+          initialStock: (Number(item.initialStock) || 0) + delta
+        });
       },
 
       // Click-to-edit Current Stock cell — same interaction as the Warehouse
@@ -1904,18 +2016,11 @@
         const name = decodeURIComponent(encName || '');
         const size = decodeURIComponent(encSize || '');
 
-        // Patches both state arrays (same pattern as toggleDeadStock) and
-        // re-renders — Current Stock drives isLowStock, which in turn drives
-        // this row's color/badge and the whole Alerts panel, so a full
-        // renderTable()/renderAlerts() is simpler and safer than hand-
-        // patching every derived bit of UI.
+        // Patches state + repaints just this row (see patchRowInPlace), so
+        // the table doesn't jump back to page 1 / lose the search. Falls
+        // back to a full render if the row can't be located.
         const applyLocally = (qty) => {
-          const item = App.State.globalStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
-          if (item) { item.currentStock = qty; item.isLowStock = qty < item.threshold; }
-          const filteredItem = App.State.filteredStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
-          if (filteredItem) { filteredItem.currentStock = qty; filteredItem.isLowStock = qty < filteredItem.threshold; }
-          this.renderAlerts();
-          this.renderTable();
+          if (!this.applyStockChangeLocally(name, size, qty)) this.renderTable();
         };
 
         let settled = false;
@@ -2202,8 +2307,12 @@
           const res = await Api.call('updateThreshold', name, size, thresholdVal);
           if (res?.success) {
             App.Utils.showToast('Threshold updated successfully.');
-            // Refresh stock data to recalculate isLowStock status and alert lists
-            await this.loadData();
+            // Recalculates isLowStock + the alert list for this one row
+            // rather than reloading the whole table (see patchRowInPlace),
+            // so editing thresholds down a list doesn't reset your place.
+            if (!this.patchRowInPlace(name, size, { threshold: thresholdVal })) {
+              await this.loadData();
+            }
           } else {
             App.Utils.showToast(res?.message || 'Failed to update threshold.', true);
             inputEl.disabled = false;
@@ -2218,6 +2327,21 @@
         const form = document.getElementById('stockImportForm');
         if (form) form.reset();
         safeModalShow('importStockModal');
+      },
+
+      // Row-button entry point for the "Correct stock manually" modal. Reads
+      // the qty from the loaded data rather than from a number baked into the
+      // button's onclick, so a cell-level patch (see patchRowInPlace, which
+      // deliberately doesn't rebuild the row's buttons) can never leave this
+      // button carrying a stale "old value". Name/size travel as encoded data
+      // attributes, which also sidesteps quoting names containing apostrophes.
+      openAdjustModalFromRow(btn) {
+        if (!btn) return;
+        const name = decodeURIComponent(btn.getAttribute('data-enc-name') || '');
+        const size = decodeURIComponent(btn.getAttribute('data-enc-size') || '');
+        const item = (App.State.globalStock || []).find(i =>
+          App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+        this.openAdjustModal(name, size, item ? item.currentStock : 0);
       },
 
       openAdjustModal(name, size, currentStock) {
@@ -2257,7 +2381,10 @@
           App.Utils.showToast(res?.message || 'Stock adjusted.', !res?.success);
           if (res?.success) {
             safeModalHide('adjustStockModal');
-            await this.loadData();
+            // Patch just this row instead of reloading the whole table —
+            // see patchRowInPlace. Full reload only if it can't be patched
+            // (row not loaded / not on the displayed page).
+            if (!this.applyStockChangeLocally(name, size, newValue)) await this.loadData();
           }
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to adjust stock.', true);

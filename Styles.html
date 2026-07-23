@@ -283,18 +283,6 @@
     color: var(--text-primary);
   }
 
-  [data-theme="dark"] .toast.bg-success {
-    background-color: #064e3b;
-    border-color: #065f46;
-    color: #a7f3d0;
-  }
-
-  [data-theme="dark"] .toast.bg-danger {
-    background-color: #450a0a;
-    border-color: #7f1d1d;
-    color: #fca5a5;
-  }
-
   [data-theme="dark"] .page-link {
     background-color: var(--bg-light);
     border-color: var(--border-color);
@@ -427,16 +415,19 @@
     border: 1px solid var(--border-color);
   }
 
-  /* Toasts: match new semantic colors */
+  /* Toasts: match new semantic colors. Solid/opaque on purpose — these
+     used to be rgba(...,0.12) "tinted glass" backgrounds, which read as
+     a see-through/washed-out notification against busy page content
+     behind it, so they were switched to fully opaque fills. */
   [data-theme="dark"] .toast.bg-success {
-    background-color: rgba(52, 211, 153, 0.12) !important;
-    border-color: rgba(52, 211, 153, 0.3) !important;
-    color: #6ee7b7 !important;
+    background-color: #064e3b !important;
+    border-color: #065f46 !important;
+    color: #a7f3d0 !important;
   }
 
   [data-theme="dark"] .toast.bg-danger {
-    background-color: rgba(248, 113, 113, 0.12) !important;
-    border-color: rgba(248, 113, 113, 0.3) !important;
+    background-color: #450a0a !important;
+    border-color: #7f1d1d !important;
     color: #fca5a5 !important;
   }
 
@@ -675,6 +666,156 @@
   .dark-mode-toggle svg {
     width: 16px;
     height: 16px;
+  }
+
+  /* Notification bell + history panel — every showToast() call is kept
+     here (App.Notify) so a 3s-autohide toast can still be reviewed later. */
+  .notif-wrap {
+    position: relative;
+  }
+
+  .notif-bell-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-base);
+    padding: 0;
+    position: relative;
+    font-size: 16px;
+  }
+
+  .notif-bell-btn:hover {
+    border-color: var(--secondary-color);
+    color: var(--secondary-color);
+    background-color: rgba(99, 102, 241, 0.08);
+    transform: translateY(-1px);
+  }
+
+  .notif-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--danger-color);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+  }
+
+  .notif-panel {
+    position: absolute;
+    top: 44px;
+    right: 0;
+    z-index: 99999;
+    width: 320px;
+    max-height: 420px;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    overflow: hidden;
+  }
+
+  .notif-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+
+  .notif-clear-btn {
+    border: none;
+    background: transparent;
+    color: var(--primary-color);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+
+  .notif-clear-btn:hover {
+    text-decoration: underline;
+  }
+
+  .notif-list {
+    overflow-y: auto;
+    max-height: 360px;
+  }
+
+  .notif-empty {
+    padding: 24px 12px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .notif-item {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px;
+  }
+
+  .notif-item:last-child {
+    border-bottom: none;
+  }
+
+  .notif-item-dot {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    margin-top: 5px;
+    border-radius: 50%;
+    background: var(--success-color);
+  }
+
+  .notif-item.notif-error .notif-item-dot {
+    background: var(--danger-color);
+  }
+
+  .notif-item-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .notif-item-msg {
+    color: var(--text-primary);
+    word-break: break-word;
+  }
+
+  .notif-item-time {
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 11px;
+  }
+
+  [data-theme="dark"] .notif-panel {
+    background-color: var(--bg-light);
+    border-color: var(--border-color);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+
+  [data-theme="dark"] .notif-item {
+    border-color: var(--border-color);
   }
 
   /* ─────────────────────────────────────────────────────────────────────
@@ -1917,7 +2058,8 @@
   }
 
   .toast {
-    background-color: var(--bg-light);
+    background-color: var(--bg-light) !important;
+    opacity: 1 !important;
     border: 1px solid var(--border-light);
     border-radius: var(--border-radius);
     box-shadow: var(--shadow-lg);
@@ -1928,16 +2070,20 @@
     pointer-events: auto;
   }
 
+  /* !important: Bootstrap's own .bg-success/.bg-danger utility classes
+     (also !important) would otherwise win the opaque-but-wrong-color
+     fight and paint these solid Bootstrap green/red instead of the
+     app's pastel notification colors. */
   .toast.bg-success {
-    background-color: #d4edda;
-    border-color: #c3e6cb;
-    color: #155724;
+    background-color: #d4edda !important;
+    border-color: #c3e6cb !important;
+    color: #155724 !important;
   }
 
   .toast.bg-danger {
-    background-color: #f8d7da;
-    border-color: #f5c6cb;
-    color: #721c24;
+    background-color: #f8d7da !important;
+    border-color: #f5c6cb !important;
+    color: #721c24 !important;
   }
 
   @keyframes slideInRight {

@@ -160,21 +160,37 @@
               pageItems.every(bill => App.Selection.isSelected(App.State.selectedBills, this.billKey(bill)));
           }
 
-          tbody.innerHTML = pageItems.map(bill => {
-            const index = App.State.globalBills.indexOf(bill);
-            const poNums = bill.poNumbers?.length ? bill.poNumbers : (bill.poNumber ? [bill.poNumber] : []);
-            const poBadge = poNums.map(p =>
-              p === 'DIRECT'
-                ? '<span class="badge bg-secondary shadow-sm">Direct</span>'
-                : `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">PO-${escapeHtml(String(p))}</span>`
-            ).join(' ') || '<span class="badge bg-secondary">—</span>';
+          tbody.innerHTML = pageItems.map(bill => this.rowHtml(bill)).join('');
 
-            const itemsPreview = formatItemsPreview(bill.items);
-            const key = this.billKey(bill);
-            const checkedAttr = App.Selection.isSelected(App.State.selectedBills, key) ? 'checked' : '';
+          App.Utils.renderPagination('billPagination', filteredBills.length, cur, rpp, 'bill-page', 'Bills');
+          this.updateBulkButtons();
+        },
 
-            return `
-            <tr>
+        // Builds a stable string key for a bill row (Vendor + Bill Number) —
+        // bill numbers are only unique per-vendor, so selection/delete/print
+        // must key on the pair, not the bill number alone. Mirrors
+        // App.Stock.stockKey's "name|size" convention.
+        billKey(bill) {
+          return `${bill.vendor || ''}|${bill.billNumber || ''}`;
+        },
+
+        // Renders one <tr> for a bill. Shared by renderTable's full rebuild
+        // and patchRowInPlace's single-row swap below.
+        rowHtml(bill) {
+          const index = App.State.globalBills.indexOf(bill);
+          const poNums = bill.poNumbers?.length ? bill.poNumbers : (bill.poNumber ? [bill.poNumber] : []);
+          const poBadge = poNums.map(p =>
+            p === 'DIRECT'
+              ? '<span class="badge bg-secondary shadow-sm">Direct</span>'
+              : `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">PO-${escapeHtml(String(p))}</span>`
+          ).join(' ') || '<span class="badge bg-secondary">—</span>';
+
+          const itemsPreview = formatItemsPreview(bill.items);
+          const key = this.billKey(bill);
+          const checkedAttr = App.Selection.isSelected(App.State.selectedBills, key) ? 'checked' : '';
+
+          return `
+            <tr data-bill-key="${escapeHtml(key)}">
               <td class="text-center">
                 <input type="checkbox" class="form-check-input bill-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.Bill.onRowSelectChange()">
               </td>
@@ -198,18 +214,31 @@
                         data-bill-number="${escapeHtml(bill.billNumber || '')}">Delete</button>
               </td>
             </tr>`;
-          }).join('');
-
-          App.Utils.renderPagination('billPagination', filteredBills.length, cur, rpp, 'bill-page', 'Bills');
-          this.updateBulkButtons();
         },
 
-        // Builds a stable string key for a bill row (Vendor + Bill Number) —
-        // bill numbers are only unique per-vendor, so selection/delete/print
-        // must key on the pair, not the bill number alone. Mirrors
-        // App.Stock.stockKey's "name|size" convention.
-        billKey(bill) {
-          return `${bill.vendor || ''}|${bill.billNumber || ''}`;
+        // Patches one already-loaded bill's data + its rendered <tr> after
+        // an edit save, instead of a full loadData() reload — see
+        // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+        // for the full rationale/trade-offs this mirrors. Mutates the SAME
+        // bill object already in globalBills (and filteredBills too — same
+        // object references, not copies). freshBill's key (vendor +
+        // billNumber, the NEW post-save values) may differ from the row's
+        // pre-edit key if either was just changed on this edit — deleting the
+        // old key's attribute first ensures a stale data-bill-key never
+        // lingers on the DOM node. Returns false — caller should fall back to
+        // loadData() — if the bill isn't currently loaded or isn't on the
+        // displayed page.
+        patchRowInPlace(freshBill, oldKey) {
+          const existing = App.State.globalBills.find(b => this.billKey(b) === oldKey);
+          if (!existing) return false;
+
+          Object.assign(existing, freshBill);
+
+          const tr = document.querySelector(`#billTableBody tr[data-bill-key="${CSS.escape(oldKey)}"]`);
+          if (!tr) return false;
+
+          tr.outerHTML = this.rowHtml(existing);
+          return true;
         },
 
         toggleSelectAll(masterChk) {

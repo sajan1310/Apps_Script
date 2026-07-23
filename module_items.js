@@ -568,6 +568,82 @@ function getItemsData() {
   return getCachedListResponse(MASTER_DATA_CACHE_KEYS.ITEMS, () => _getItemsDataUncached());
 }
 
+/**
+ * Maps one raw Items sheet row into the record shape the client expects.
+ * Shared by _getItemsDataUncached's bulk read and saveItem's single fresh-
+ * row read-back (used to patch just the saved item into the client's
+ * already-loaded table in place instead of a full list reload). Returns
+ * null for a blank/empty row (mirrors the bulk loop's `continue`).
+ * @private
+ */
+function _mapItemRow(row, unitsMap, rowIdxForLog) {
+  const name = String(row[ITEMS_COL.ITEM_NAME - 1] || '').trim();
+  if (!name) return null;
+
+  const baseUnit = String(row[ITEMS_COL.BASE_UNIT - 1] || '').trim() || 'Pcs';
+  const purchaseUnit = String(row[ITEMS_COL.PURCHASE_UNIT - 1] || '').trim() || baseUnit;
+  const weightPerBaseUnit = Number(row[ITEMS_COL.WEIGHT_PER_BASE_UNIT - 1]) || 0;
+
+  const itemRecord = {
+    name: name,
+    size: String(row[ITEMS_COL.SIZE - 1] || '').trim(),
+    remarks: String(row[ITEMS_COL.REMARKS - 1] || '').trim(),
+    narration: String(row[ITEMS_COL.NARRATION - 1] || '').trim(),
+    specification: String(row[ITEMS_COL.SPECIFICATION - 1] || '').trim(),
+    baseUnit: baseUnit,
+    purchaseUnit: purchaseUnit,
+    weightPerBaseUnit: weightPerBaseUnit,
+    vendors: []
+  };
+
+  // Read vendor pairs: F = name, G = rate, H = name, I = rate, etc.
+  const vendorStart = ITEMS_COL.VENDOR_DATA - 1;  // Convert to 0-based
+
+  for (let v = 0; vendorStart + v * VENDOR_PAIR_WIDTH + 1 < row.length; v++) {
+    const nameOffset = vendorStart + v * VENDOR_PAIR_WIDTH;
+    const rateOffset = nameOffset + 1;
+
+    const vendorName = String(row[nameOffset] || '').trim();
+    const rateRaw = row[rateOffset];
+    const rate = Number(rateRaw);
+
+    // Stop if both name and rate are empty
+    if (!vendorName && !rateRaw) {
+      break;
+    }
+
+    // Warn if rate is non-numeric but not empty
+    if (rateRaw !== '' && rateRaw !== null && isNaN(rate)) {
+      Log.warn(
+        `[_mapItemRow] Non-numeric rate "${rateRaw}" for vendor "${vendorName}" ` +
+        `on item "${name}" (sheet row ${rowIdxForLog}) — skipped.`
+      );
+      continue;
+    }
+
+    // Include vendor only if rate is positive and name exists
+    if (rate >= MIN_VENDOR_RATE && vendorName) {
+      let ratePerBaseUnit = rate;
+      try {
+        ratePerBaseUnit = convertRateToBaseUnit(rate, purchaseUnit, itemRecord, unitsMap);
+      } catch (e) {
+        Log.warn(
+          `[_mapItemRow] Could not convert rate for vendor "${vendorName}" on item ` +
+          `"${name}" (sheet row ${rowIdxForLog}): ${e.message}`
+        );
+      }
+
+      itemRecord.vendors.push({
+        vendor: vendorName,
+        rate: rate,
+        ratePerBaseUnit: ratePerBaseUnit
+      });
+    }
+  }
+
+  return itemRecord;
+}
+
 function _getItemsDataUncached() {
   try {
     const sheet = getSheet(APP_CONFIG.SHEETS.ITEMS);
@@ -589,74 +665,8 @@ function _getItemsDataUncached() {
     const unitsMap = _getUnitsMap();
 
     for (let i = 0; i < data.length; i++) {
-      const row = data[i];
-
-      // Extract fixed fields
-      const name = String(row[ITEMS_COL.ITEM_NAME - 1] || '').trim();
-      if (!name) continue;  // Skip empty rows
-
-      const baseUnit = String(row[ITEMS_COL.BASE_UNIT - 1] || '').trim() || 'Pcs';
-      const purchaseUnit = String(row[ITEMS_COL.PURCHASE_UNIT - 1] || '').trim() || baseUnit;
-      const weightPerBaseUnit = Number(row[ITEMS_COL.WEIGHT_PER_BASE_UNIT - 1]) || 0;
-
-      const itemRecord = {
-        name: name,
-        size: String(row[ITEMS_COL.SIZE - 1] || '').trim(),
-        remarks: String(row[ITEMS_COL.REMARKS - 1] || '').trim(),
-        narration: String(row[ITEMS_COL.NARRATION - 1] || '').trim(),
-        specification: String(row[ITEMS_COL.SPECIFICATION - 1] || '').trim(),
-        baseUnit: baseUnit,
-        purchaseUnit: purchaseUnit,
-        weightPerBaseUnit: weightPerBaseUnit,
-        vendors: []
-      };
-
-      // Read vendor pairs: F = name, G = rate, H = name, I = rate, etc.
-      const vendorStart = ITEMS_COL.VENDOR_DATA - 1;  // Convert to 0-based
-
-      for (let v = 0; vendorStart + v * VENDOR_PAIR_WIDTH + 1 < row.length; v++) {
-        const nameOffset = vendorStart + v * VENDOR_PAIR_WIDTH;
-        const rateOffset = nameOffset + 1;
-
-        const vendorName = String(row[nameOffset] || '').trim();
-        const rateRaw = row[rateOffset];
-        const rate = Number(rateRaw);
-
-        // Stop if both name and rate are empty
-        if (!vendorName && !rateRaw) {
-          break;
-        }
-
-        // Warn if rate is non-numeric but not empty
-        if (rateRaw !== '' && rateRaw !== null && isNaN(rate)) {
-          Log.warn(
-            `[getItemsData] Non-numeric rate "${rateRaw}" for vendor "${vendorName}" ` +
-            `on item "${name}" (sheet row ${i + 2}) — skipped.`
-          );
-          continue;
-        }
-
-        // Include vendor only if rate is positive and name exists
-        if (rate >= MIN_VENDOR_RATE && vendorName) {
-          let ratePerBaseUnit = rate;
-          try {
-            ratePerBaseUnit = convertRateToBaseUnit(rate, purchaseUnit, itemRecord, unitsMap);
-          } catch (e) {
-            Log.warn(
-              `[getItemsData] Could not convert rate for vendor "${vendorName}" on item ` +
-              `"${name}" (sheet row ${i + 2}): ${e.message}`
-            );
-          }
-
-          itemRecord.vendors.push({
-            vendor: vendorName,
-            rate: rate,
-            ratePerBaseUnit: ratePerBaseUnit
-          });
-        }
-      }
-
-      items.push(itemRecord);
+      const itemRecord = _mapItemRow(data[i], unitsMap, i + 2);
+      if (itemRecord) items.push(itemRecord);
     }
 
     // Sort by name for consistent ordering
@@ -958,7 +968,14 @@ function saveItem(formData) {
       'SUCCESS'
     );
 
-    return buildResponse(true, { name: newName, size: newSize }, msg);
+    // Read this item's own just-written row back (cheap — one row, not the
+    // whole sheet) and map it through the same logic getItemsData uses, so
+    // the client can patch this one item into its already-loaded list in
+    // place instead of a full reload.
+    const freshRowValues = sheet.getRange(targetRow, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const freshItem = _mapItemRow(freshRowValues, _getUnitsMap(), targetRow);
+
+    return buildResponse(true, { name: newName, size: newSize, item: freshItem }, msg);
   } catch (error) {
     Log.error('[saveItem] Error:', error.message);
     logAction('ERROR', 'saveItem', formData.itemName, error.message, 'ERROR');

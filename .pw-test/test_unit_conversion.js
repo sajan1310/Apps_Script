@@ -96,7 +96,13 @@ const sandbox = {
   CacheService: { getScriptCache: () => fakeCache },
   console,
   Logger: { log: () => {} },
-  Utilities: { getUuid: () => 'uuid-' + Math.random().toString(36).slice(2) },
+  Utilities: {
+    getUuid: () => 'uuid-' + Math.random().toString(36).slice(2),
+    formatDate: (date, tz, fmt) => {
+      const y = date.getFullYear(), m = String(date.getMonth() + 1).padStart(2, '0'), d = String(date.getDate()).padStart(2, '0');
+      return fmt === 'dd/MM/yyyy' ? `${d}/${m}/${y}` : `${y}-${m}-${d}`;
+    }
+  },
   Session: { getActiveUser: () => ({ getEmail: () => 'test@example.com' }), getScriptTimeZone: () => 'Asia/Kolkata' }
 };
 sandbox.global = sandbox;

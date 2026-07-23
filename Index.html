@@ -272,6 +272,24 @@
             <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
           </svg>
         </button>
+
+        <!-- Notifications: bell shows a panel of past toast notifications
+             (App.Notify), since the toast itself auto-dismisses after 3s. -->
+        <div class="notif-wrap">
+          <button id="notif-bell-btn" class="notif-bell-btn" type="button" title="Notifications" aria-label="Notifications" aria-haspopup="true" aria-expanded="false" onclick="App.Notify.toggle()">
+            <i class="bi bi-bell"></i>
+            <span id="notif-badge" class="notif-badge" style="display:none;">0</span>
+          </button>
+          <div id="notif-panel" class="notif-panel" style="display:none;">
+            <div class="notif-panel-header">
+              <span>Notifications</span>
+              <button type="button" id="notif-clear-btn" class="notif-clear-btn" onclick="App.Notify.clear()">Clear all</button>
+            </div>
+            <div id="notif-list" class="notif-list">
+              <div class="notif-empty">No notifications yet.</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Enterprise Badge -->

@@ -87,18 +87,26 @@
               pageItems.every(ret => App.Selection.isSelected(App.State.selectedReturns, String(ret.returnNumber)));
           }
 
-          tbody.innerHTML = pageItems.map(ret => {
-            const index = App.State.globalReturns.indexOf(ret);
-            const billBadge = ret.billNumber
-              ? `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">${escapeHtml(ret.billNumber)}</span>`
-              : '<span class="badge bg-secondary">—</span>';
+          tbody.innerHTML = pageItems.map(ret => this.rowHtml(ret)).join('');
 
-            const itemsPreview = formatItemsPreview(ret.items);
-            const key = String(ret.returnNumber);
-            const checkedAttr = App.Selection.isSelected(App.State.selectedReturns, key) ? 'checked' : '';
+          App.Utils.renderPagination('returnPagination', filteredReturns.length, cur, rpp, 'return-page', 'Returns');
+          this.updateBulkButtons();
+        },
 
-            return `
-            <tr>
+        // Renders one <tr> for a return. Shared by renderTable's full
+        // rebuild and patchRowInPlace's single-row swap below.
+        rowHtml(ret) {
+          const index = App.State.globalReturns.indexOf(ret);
+          const billBadge = ret.billNumber
+            ? `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">${escapeHtml(ret.billNumber)}</span>`
+            : '<span class="badge bg-secondary">—</span>';
+
+          const itemsPreview = formatItemsPreview(ret.items);
+          const key = String(ret.returnNumber);
+          const checkedAttr = App.Selection.isSelected(App.State.selectedReturns, key) ? 'checked' : '';
+
+          return `
+            <tr data-return-key="${escapeHtml(key)}">
               <td class="text-center">
                 <input type="checkbox" class="form-check-input return-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.Return.onRowSelectChange()">
               </td>
@@ -121,10 +129,28 @@
                         data-return-number="${escapeHtml(ret.returnNumber || '')}">Delete</button>
               </td>
             </tr>`;
-          }).join('');
+        },
 
-          App.Utils.renderPagination('returnPagination', filteredReturns.length, cur, rpp, 'return-page', 'Returns');
-          this.updateBulkButtons();
+        // Patches one already-loaded return's data + its rendered <tr>
+        // after an edit save, instead of a full loadData() reload — see
+        // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+        // for the full rationale/trade-offs this mirrors. returnNumber is
+        // user-editable (optional — server auto-generates when blank), so
+        // this is keyed by the PRE-edit number (oldReturnNumber), same as
+        // App.Bill.patchRowInPlace's oldKey. Returns false — caller should
+        // fall back to loadData() — if the return isn't currently loaded or
+        // isn't on the displayed page.
+        patchRowInPlace(freshReturn, oldReturnNumber) {
+          const existing = App.State.globalReturns.find(r => String(r.returnNumber) === String(oldReturnNumber));
+          if (!existing) return false;
+
+          Object.assign(existing, freshReturn);
+
+          const tr = document.querySelector(`#returnTableBody tr[data-return-key="${CSS.escape(String(oldReturnNumber))}"]`);
+          if (!tr) return false;
+
+          tr.outerHTML = this.rowHtml(existing);
+          return true;
         },
 
         toggleSelectAll(masterChk) {

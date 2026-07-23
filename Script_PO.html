@@ -64,15 +64,23 @@
               pageItems.every(po => App.Selection.isSelected(App.State.selectedPOs, String(po.poNumber)));
           }
 
-          tbody.innerHTML = pageItems.map(po => {
-            const index = App.State.globalPOs.indexOf(po);
-            const itemsPreview = formatItemsPreview(po.items);
-            const key = String(po.poNumber);
-            const checkedAttr = App.Selection.isSelected(App.State.selectedPOs, key) ? 'checked' : '';
-            const statusInfo = this.getStatusBadge(po.status);
+          tbody.innerHTML = pageItems.map(po => this.rowHtml(po)).join('');
 
-            return `
-            <tr>
+          App.Utils.renderPagination('poPagination', filteredPOs.length, cur, rpp, 'po-page', 'Purchase Orders');
+          this.updateBulkButtons();
+        },
+
+        // Renders one <tr> for a PO. Shared by renderTable's full rebuild
+        // and patchRowInPlace's single-row swap below.
+        rowHtml(po) {
+          const index = App.State.globalPOs.indexOf(po);
+          const itemsPreview = formatItemsPreview(po.items);
+          const key = String(po.poNumber);
+          const checkedAttr = App.Selection.isSelected(App.State.selectedPOs, key) ? 'checked' : '';
+          const statusInfo = this.getStatusBadge(po.status);
+
+          return `
+            <tr data-po-key="${escapeHtml(key)}">
               <td class="text-center">
                 <input type="checkbox" class="form-check-input po-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.PO.onRowSelectChange()">
               </td>
@@ -90,10 +98,33 @@
                 <button class="btn btn-sm btn-danger           btn-action w-100"      data-action="po-delete" data-po-number="${escapeHtml(po.poNumber)}">Delete</button>
               </td>
             </tr>`;
-          }).join('');
+        },
 
-          App.Utils.renderPagination('poPagination', filteredPOs.length, cur, rpp, 'po-page', 'Purchase Orders');
-          this.updateBulkButtons();
+        // Patches one already-loaded PO's data + its rendered <tr> after an
+        // edit save, instead of a full loadData() reload — see
+        // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+        // for the full rationale/trade-offs this mirrors. Mutates the SAME PO
+        // object already in globalPOs (and therefore filteredPOs too, since
+        // it's built via [...globalPOs]/.filter() — same object references,
+        // not copies). Returns false — caller should fall back to loadData()
+        // — if the PO isn't currently loaded or isn't on the displayed page.
+        patchRowInPlace(freshPo) {
+          const key = String(freshPo.poNumber);
+          const existing = App.State.globalPOs.find(p => String(p.poNumber) === key);
+          if (!existing) return false;
+
+          Object.assign(existing, freshPo);
+          // status is server-derived from billing and can shift on an edit
+          // (date/qty changes affect which bills match it) — keep the
+          // status-count bar in sync the same way loadData() does. Purely a
+          // client-side array scan, no server call.
+          this.updateStatusBar();
+
+          const tr = document.querySelector(`#poTableBody tr[data-po-key="${key}"]`);
+          if (!tr) return false;
+
+          tr.outerHTML = this.rowHtml(existing);
+          return true;
         },
 
         toggleSelectAll(masterChk) {

@@ -563,28 +563,42 @@
           const stockMap = this._getStockMap();
 
           tbody.innerHTML = pageItems
-            .map(item => {
-              const vendorsHtml = (item.vendors || [])
-                .map(
-                  v => `
+            .map(item => this.rowHtml(item, pendingMap, stockMap))
+            .join('');
+
+          this.renderPagination(filteredItems.length);
+        },
+
+        // Renders one <tr> for an item. Shared by renderTable's full
+        // rebuild and patchRowInPlace's single-row swap below. pendingMap/
+        // stockMap are optional — patchRowInPlace recomputes them itself
+        // (cheap, purely derived from already-loaded client state) so a
+        // single-row patch never needs the caller to have them on hand.
+        rowHtml(item, pendingMap, stockMap) {
+          if (!pendingMap) pendingMap = App.Utils.getPendingByItem();
+          if (!stockMap) stockMap = this._getStockMap();
+
+          const vendorsHtml = (item.vendors || [])
+            .map(
+              v => `
             <span class="badge border border-secondary text-dark me-1 mb-1 fs-6 fw-normal">
               <i class="text-secondary">${escapeHtml(v.vendor)}:</i>
               <strong>${formatCurrency(v.rate)}</strong>
             </span>`
-                )
-                .join('');
+            )
+            .join('');
 
-              const { parts: metaParts } = this.getMetaInfo(item, pendingMap, stockMap);
+          const { parts: metaParts } = this.getMetaInfo(item, pendingMap, stockMap);
 
-              const encodedName = encodeURIComponent(item.name || '');
-              const encodedSize = encodeURIComponent(item.size || '');
-              const key = this.itemKey(item);
+          const encodedName = encodeURIComponent(item.name || '');
+          const encodedSize = encodeURIComponent(item.size || '');
+          const key = this.itemKey(item);
 
-              const isSelected = App.Selection.isSelected(App.State.selectedItems, key);
-              const checkedAttr = isSelected ? 'checked' : '';
+          const isSelected = App.Selection.isSelected(App.State.selectedItems, key);
+          const checkedAttr = isSelected ? 'checked' : '';
 
-              return `
-            <tr class="item-row-clickable" style="cursor:pointer;" data-row-name="${encodedName}" data-row-size="${encodedSize}" title="Click to view Item Ledger">
+          return `
+            <tr class="item-row-clickable" style="cursor:pointer;" data-row-name="${encodedName}" data-row-size="${encodedSize}" data-item-key="${escapeHtml(key)}" title="Click to view Item Ledger">
               <td class="text-center">
                 <input type="checkbox" class="form-check-input item-select-chk"
                        data-key="${escapeHtml(key)}"
@@ -607,10 +621,29 @@
                         data-name="${encodedName}" data-size="${encodedSize}">Delete</button>
               </td>
             </tr>`;
-            })
-            .join('');
+        },
 
-          this.renderPagination(filteredItems.length);
+        // Patches one already-loaded item's data + its rendered <tr> after
+        // an edit save, instead of a full loadData() reload — see
+        // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+        // for the full rationale/trade-offs this mirrors. itemKey (name +
+        // size) is user-editable on an edit, so this is keyed by the
+        // PRE-edit (name, size) — how the row is currently indexed in
+        // globalItems/the DOM — not the post-save freshItem's own key.
+        // Returns false — caller should fall back to loadData() — if the
+        // item isn't currently loaded or isn't on the displayed page.
+        patchRowInPlace(freshItem, oldName, oldSize) {
+          const oldKey = this.itemKey({ name: oldName, size: oldSize });
+          const existing = App.State.globalItems.find(it => this.itemKey(it) === oldKey);
+          if (!existing) return false;
+
+          Object.assign(existing, freshItem);
+
+          const tr = document.querySelector(`#itemTableBody tr[data-item-key="${CSS.escape(oldKey)}"]`);
+          if (!tr) return false;
+
+          tr.outerHTML = this.rowHtml(existing);
+          return true;
         },
 
         renderPagination(totalItems) {
@@ -1947,43 +1980,55 @@
 
         let html = '';
         pageItems.forEach(bom => {
-          const idx = App.State.globalBOMs.indexOf(bom);
-          const key = String(bom.productId);
-          const checked = App.Selection.isSelected(App.State.selectedBOMs, key) ? 'checked' : '';
+          html += this.rowHtml(bom, dragEnabled);
+        });
 
-          // Build a flat list of component lines, with a small group badge when
-          // the BOM spans more than one process group.
-          const groupOrder = [];
-          const groupMap = {};
-          bom.components.forEach(c => {
-            const groupName = c.processGroup || 'General';
-            if (!groupMap[groupName]) { groupMap[groupName] = []; groupOrder.push(groupName); }
-            groupMap[groupName].push(c);
-          });
+        tbody.innerHTML = html;
 
-          const multiGroup = groupOrder.length > 1;
-          const componentLines = bom.components.map(c => {
-            const groupBadge = multiGroup
-              ? `<span class="badge bg-secondary me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.processGroup || 'General')}</span>`
-              : '';
-            const colorBadge = c.color
-              ? `<span class="badge bg-info text-dark me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.color)}</span>`
-              : '';
-            return `${groupBadge}${colorBadge}• ${escapeHtml(c.itemName)} [${escapeHtml(c.size || '-')}] (${escapeHtml(String(c.qtyPerProduct))} qty @ ${formatCurrency(c.rate)} from ${escapeHtml(c.vendor || 'Custom')})`;
-          });
+        App.Utils.renderPagination('bomPagination', filteredBOMs.length, cur, rpp, 'bom-page', 'Products');
+        this.updateBulkButtons();
+      },
 
-          const PREVIEW_LIMIT = 3;
-          const needsToggle = componentLines.length > PREVIEW_LIMIT;
-          const previewId = `bom_cpreview_${key}`;
+      // Renders one <tr> for a BOM product. Shared by renderTable's full
+      // rebuild and patchRowInPlace's single-row swap below.
+      rowHtml(bom, dragEnabled) {
+        const idx = App.State.globalBOMs.indexOf(bom);
+        const key = String(bom.productId);
+        const checked = App.Selection.isSelected(App.State.selectedBOMs, key) ? 'checked' : '';
 
-          let componentsCell;
-          if (!needsToggle) {
-            componentsCell = componentLines.join('<br>');
-          } else {
-            const visibleHtml = componentLines.slice(0, PREVIEW_LIMIT).join('<br>');
-            const allHtml = componentLines.join('<br>');
-            const remaining = componentLines.length - PREVIEW_LIMIT;
-            componentsCell = `
+        // Build a flat list of component lines, with a small group badge when
+        // the BOM spans more than one process group.
+        const groupOrder = [];
+        const groupMap = {};
+        bom.components.forEach(c => {
+          const groupName = c.processGroup || 'General';
+          if (!groupMap[groupName]) { groupMap[groupName] = []; groupOrder.push(groupName); }
+          groupMap[groupName].push(c);
+        });
+
+        const multiGroup = groupOrder.length > 1;
+        const componentLines = bom.components.map(c => {
+          const groupBadge = multiGroup
+            ? `<span class="badge bg-secondary me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.processGroup || 'General')}</span>`
+            : '';
+          const colorBadge = c.color
+            ? `<span class="badge bg-info text-dark me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.color)}</span>`
+            : '';
+          return `${groupBadge}${colorBadge}• ${escapeHtml(c.itemName)} [${escapeHtml(c.size || '-')}] (${escapeHtml(String(c.qtyPerProduct))} qty @ ${formatCurrency(c.rate)} from ${escapeHtml(c.vendor || 'Custom')})`;
+        });
+
+        const PREVIEW_LIMIT = 3;
+        const needsToggle = componentLines.length > PREVIEW_LIMIT;
+        const previewId = `bom_cpreview_${key}`;
+
+        let componentsCell;
+        if (!needsToggle) {
+          componentsCell = componentLines.join('<br>');
+        } else {
+          const visibleHtml = componentLines.slice(0, PREVIEW_LIMIT).join('<br>');
+          const allHtml = componentLines.join('<br>');
+          const remaining = componentLines.length - PREVIEW_LIMIT;
+          componentsCell = `
           <div class="bom-preview-collapsed">
             ${visibleHtml}
             <br><a href="#" class="text-primary small fw-bold mt-1 d-inline-block" onclick="event.preventDefault();App.BOM.toggleComponents('${key}',true)">&#9660; Show ${remaining} more</a>
@@ -1992,16 +2037,16 @@
             ${allHtml}
             <br><a href="#" class="text-muted small fw-bold mt-1 d-inline-block" onclick="event.preventDefault();App.BOM.toggleComponents('${key}',false)">&#9650; Show less</a>
           </div>`;
-          }
+        }
 
-          const rowAttrs = dragEnabled
-            ? `draggable="true" ondragstart="App.BOM.onDragStart(event,'${escapeHtml(bom.productId)}')" ondragover="App.BOM.onDragOver(event)" ondrop="App.BOM.onDrop(event,'${escapeHtml(bom.productId)}')" ondragend="App.BOM.onDragEnd(event)"`
-            : '';
-          const handleCell = dragEnabled
-            ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
-            : '<td></td>';
+        const rowAttrs = dragEnabled
+          ? `draggable="true" ondragstart="App.BOM.onDragStart(event,'${escapeHtml(bom.productId)}')" ondragover="App.BOM.onDragOver(event)" ondrop="App.BOM.onDrop(event,'${escapeHtml(bom.productId)}')" ondragend="App.BOM.onDragEnd(event)"`
+          : '';
+        const handleCell = dragEnabled
+          ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
+          : '<td></td>';
 
-          html += `<tr ${rowAttrs}>
+        return `<tr ${rowAttrs} data-bom-key="${escapeHtml(key)}">
         ${handleCell}
         <td class="text-center"><input type="checkbox" class="form-check-input bom-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.BOM.onRowSelectChange()"></td>
         <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(bom.productId)}</span></td>
@@ -2018,12 +2063,34 @@
           <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.BOM.delete('${escapeHtml(bom.productId)}')">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
+      // Patches one already-loaded product's data + its rendered <tr> after
+      // an edit save, instead of a full loadData() reload — see
+      // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+      // for the full rationale/trade-offs this mirrors. productId is
+      // server-assigned and never user-editable, so this is a safe stable
+      // key. Any expanded "Show more" component preview on this row resets
+      // to collapsed (its state lives in the DOM, not JS state) — cosmetic,
+      // same as a fresh render. Drag-and-drop's dragEnabled flag isn't
+      // known here (only renderTable computes it from the search box), so
+      // this re-derives it the same way. Returns false — caller should fall
+      // back to loadData() — if the product isn't currently loaded or isn't
+      // on the displayed page (e.g. mid-search).
+      patchRowInPlace(freshProduct) {
+        const key = String(freshProduct.productId);
+        const existing = App.State.globalBOMs.find(b => String(b.productId) === key);
+        if (!existing) return false;
 
-        App.Utils.renderPagination('bomPagination', filteredBOMs.length, cur, rpp, 'bom-page', 'Products');
-        this.updateBulkButtons();
+        Object.assign(existing, freshProduct);
+
+        const tr = document.querySelector(`#bomTableBody tr[data-bom-key="${key}"]`);
+        if (!tr) return false;
+
+        const searchEl = document.getElementById('searchBOM');
+        const dragEnabled = !(searchEl && searchEl.value.trim());
+        tr.outerHTML = this.rowHtml(existing, dragEnabled);
+        return true;
       },
 
       // Drag-and-drop manual reorder (default unfiltered view only — see
@@ -3314,14 +3381,25 @@
           try {
             const response = await Api.call('saveBOM', formData, App.BOM.getToken());
             if (response.success) {
-              await App.BOM.loadData();
               if (isEdit) {
-                // Save (edit mode): stay open on the SAME BOM instead of
-                // closing — Exit (App.Nav.exit) is the only way to close
-                // from here now. productId is server-assigned and never
-                // user-editable (no visible input for it, only the hidden
-                // bomProductId + a readonly display field), so it's a safe
-                // stable key to re-find this record by after the reload.
+                // Save (edit mode): patch just this one product's data +
+                // <tr> in place instead of a full loadData() reload —
+                // falls back to a full reload if the product can't be
+                // patched.
+                const patched = response.data && response.data.product
+                  ? App.BOM.patchRowInPlace(response.data.product)
+                  : false;
+                if (!patched) await App.BOM.loadData();
+                if (App.Production && App.Production.populateProductSelect) {
+                  App.Production.populateProductSelect();
+                }
+
+                // Stay open on the SAME BOM instead of closing — Exit
+                // (App.Nav.exit) is the only way to close from here now.
+                // productId is server-assigned and never user-editable (no
+                // visible input for it, only the hidden bomProductId + a
+                // readonly display field), so it's a safe stable key to
+                // re-find this record by.
                 const freshIdx = App.State.globalBOMs.findIndex(b => b.productId === formData.productId);
                 if (freshIdx !== -1) {
                   App.BOM.openEditModal(freshIdx);
@@ -3330,6 +3408,11 @@
                   if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
                 }
               } else {
+                // A brand-new product's manual drag-and-drop display order
+                // position can't be determined cheaply on the client —
+                // full reload here (see App.BOM.patchRowInPlace's doc
+                // comment for why an edit doesn't need to).
+                await App.BOM.loadData();
                 await App.BOM.openCreateModal();
               }
             }

@@ -233,6 +233,111 @@ function _validateGstRate(gstRate) {
  *   totalAmount: 8850              // Sum of line totals (with GST)
  * }
  */
+
+/**
+ * Column offsets (relative to firstCol = BILL_COL.PO_NUMBER) shared by
+ * getBillData's bulk read and _buildBillRecordFromRows' single-bill
+ * read-back, so both stay in sync with BILL_COL by construction.
+ * @private
+ */
+function _mapBillColumnOffsets(firstCol) {
+  return {
+    poNum:    BILL_COL.PO_NUMBER - firstCol,
+    billNum:  BILL_COL.BILL_NUMBER - firstCol,
+    billDate: BILL_COL.BILL_DATE - firstCol,
+    vendor:   BILL_COL.VENDOR - firstCol,
+    contact:  BILL_COL.CONTACT - firstCol,
+    itemName: BILL_COL.ITEM_NAME - firstCol,
+    size:     BILL_COL.SIZE - firstCol,
+    narration: BILL_COL.NARRATION - firstCol,
+    qty:      BILL_COL.QTY - firstCol,
+    unit:     BILL_COL.UNIT - firstCol,
+    price:    BILL_COL.PRICE - firstCol,
+    gst:      BILL_COL.GST - firstCol,
+    remarks:  BILL_COL.REMARKS - firstCol,
+    baseQty:  BILL_COL.BASE_QTY - firstCol,
+    baseRate: BILL_COL.BASE_RATE - firstCol,
+    affectsStock: BILL_COL.AFFECTS_STOCK - firstCol
+  };
+}
+
+/** Builds a bill header object (no items yet) from its first sheet row. @private */
+function _buildBillHeaderFromRow(r, OFF) {
+  const billNum = String(r[OFF.billNum] || '').trim();
+  const rawDate = r[OFF.billDate];
+  const parsedDate = toSafeDateString(rawDate); // returns DD/MM/YYYY
+
+  if (!parsedDate && rawDate) {
+    Log.warn(`[_buildBillHeaderFromRow] Unparseable date in bill #${billNum}: "${rawDate}"`);
+  }
+
+  // Convert DD/MM/YYYY to YYYY-MM-DD for HTML date inputs and date sorting
+  const isoDateStr = parsedDate ? parsedDate.split('/').reverse().join('-') : '';
+
+  return {
+    poNumber: String(r[OFF.poNum] || ''),
+    poNumbers: [],
+    billNumber: billNum,
+    billDate: parsedDate || (rawDate ? String(rawDate) : 'N/A'),
+    billDateRaw: isoDateStr,
+    vendor: String(r[OFF.vendor] || '').trim(),
+    contact: String(r[OFF.contact] || ''),
+    remarks: String(r[OFF.remarks] || ''),
+    items: [],
+    totalQty: 0,
+    totalAmount: 0
+  };
+}
+
+/** Appends one item row onto an in-progress bill object, updating its totals. @private */
+function _addBillItemFromRow(bill, r, OFF) {
+  const rowPoNum = String(r[OFF.poNum] || '').trim();
+  if (rowPoNum && !bill.poNumbers.includes(rowPoNum)) {
+    bill.poNumbers.push(rowPoNum);
+  }
+
+  const qty = _toValidNumber(r[OFF.qty], 'Qty');
+  const price = _toValidNumber(r[OFF.price], 'Price');
+  const gstRatePct = _validateGstRate(r[OFF.gst]);
+  const { lineTotal } = _computeLineTotals(qty, price, gstRatePct);
+
+  bill.items.push({
+    name: String(r[OFF.itemName] || ''),
+    size: String(r[OFF.size] || ''),
+    narration: String(r[OFF.narration] || ''),
+    unit: String(r[OFF.unit] || 'Pcs'),
+    qty: qty,
+    price: price,
+    gstRatePct: gstRatePct,
+    lineTotal: lineTotal,
+    poNumber: rowPoNum,
+    baseQty: _toValidNumber(r[OFF.baseQty], 'Base Qty', true) || qty,
+    baseRate: _toValidNumber(r[OFF.baseRate], 'Base Rate', true) || price,
+    // Blank (legacy rows predating this column) defaults to affecting Stock.
+    affectsStock: String(r[OFF.affectsStock] || 'Y').trim().toUpperCase() !== 'N'
+  });
+
+  bill.totalQty += qty;
+  bill.totalAmount += lineTotal;
+}
+
+/**
+ * Builds one bill record (header + items + totals) from a contiguous block
+ * of raw Bill sheet rows that all share the same (vendor, bill number) pair.
+ * Used by saveBill's fresh-row read-back so the client can patch just this
+ * one bill into its already-loaded list instead of re-fetching/re-
+ * aggregating every bill via a full getBillData().
+ * @private
+ */
+function _buildBillRecordFromRows(rows) {
+  if (!rows || rows.length === 0) return null;
+  const firstCol = BILL_COL.PO_NUMBER;
+  const OFF = _mapBillColumnOffsets(firstCol);
+  const bill = _buildBillHeaderFromRow(rows[0], OFF);
+  rows.forEach(function(r) { _addBillItemFromRow(bill, r, OFF); });
+  return bill;
+}
+
 function getBillData() {
   try {
     const sheet = getSheet(APP_CONFIG.SHEETS.BILL);
@@ -257,25 +362,7 @@ function getBillData() {
       .getRange(startRow, firstCol, lastRow - startRow + 1, numCols)
       .getValues();
 
-    // Calculate zero-based offsets relative to firstCol
-    const OFF = {
-      poNum:    BILL_COL.PO_NUMBER - firstCol,
-      billNum:  BILL_COL.BILL_NUMBER - firstCol,
-      billDate: BILL_COL.BILL_DATE - firstCol,
-      vendor:   BILL_COL.VENDOR - firstCol,
-      contact:  BILL_COL.CONTACT - firstCol,
-      itemName: BILL_COL.ITEM_NAME - firstCol,
-      size:     BILL_COL.SIZE - firstCol,
-      narration: BILL_COL.NARRATION - firstCol,
-      qty:      BILL_COL.QTY - firstCol,
-      unit:     BILL_COL.UNIT - firstCol,
-      price:    BILL_COL.PRICE - firstCol,
-      gst:      BILL_COL.GST - firstCol,
-      remarks:  BILL_COL.REMARKS - firstCol,
-      baseQty:  BILL_COL.BASE_QTY - firstCol,
-      baseRate: BILL_COL.BASE_RATE - firstCol,
-      affectsStock: BILL_COL.AFFECTS_STOCK - firstCol
-    };
+    const OFF = _mapBillColumnOffsets(firstCol);
 
     // Aggregate rows into bill objects
     const billMap = {};
@@ -295,71 +382,11 @@ function getBillData() {
 
       // Create bill entry if first time seeing this (vendor, bill number) pair
       if (!billMap[key]) {
-        const rawDate = r[OFF.billDate];
-        const parsedDate = toSafeDateString(rawDate); // returns DD/MM/YYYY
-
-        // Log unparseable dates for debugging
-        if (!parsedDate && rawDate) {
-          Log.warn(
-            `[getBillData] Unparseable date in bill #${billNum}: "${rawDate}"`
-          );
-        }
-
-        // Convert DD/MM/YYYY to YYYY-MM-DD for HTML date inputs and date sorting
-        const isoDateStr = parsedDate
-          ? parsedDate.split('/').reverse().join('-')
-          : '';
-
-        billMap[key] = {
-          poNumber: String(r[OFF.poNum] || ''),
-          poNumbers: [],
-          billNumber: billNum,
-          billDate: parsedDate || (rawDate ? String(rawDate) : 'N/A'),
-          billDateRaw: isoDateStr,
-          vendor: vendorName,
-          contact: String(r[OFF.contact] || ''),
-          remarks: String(r[OFF.remarks] || ''),
-          items: [],  // Structured, not pre-formatted
-          totalQty: 0,
-          totalAmount: 0,
-          _rowIdx: i
-        };
+        billMap[key] = _buildBillHeaderFromRow(r, OFF);
+        billMap[key]._rowIdx = i;
       }
 
-      // Track unique PO numbers for this bill
-      const rowPoNum = String(r[OFF.poNum] || '').trim();
-      if (rowPoNum && !billMap[key].poNumbers.includes(rowPoNum)) {
-        billMap[key].poNumbers.push(rowPoNum);
-      }
-
-      // Parse item data
-      const qty = _toValidNumber(r[OFF.qty], 'Qty');
-      const price = _toValidNumber(r[OFF.price], 'Price');
-      const gstRatePct = _validateGstRate(r[OFF.gst]);
-
-      // Compute line total from item data
-      const { lineTotal } = _computeLineTotals(qty, price, gstRatePct);
-
-      // Add structured item (not pre-formatted string)
-      billMap[key].items.push({
-        name: String(r[OFF.itemName] || ''),
-        size: String(r[OFF.size] || ''),
-        narration: String(r[OFF.narration] || ''),
-        unit: String(r[OFF.unit] || 'Pcs'),
-        qty: qty,
-        price: price,
-        gstRatePct: gstRatePct,
-        lineTotal: lineTotal,
-        poNumber: rowPoNum,
-        baseQty: _toValidNumber(r[OFF.baseQty], 'Base Qty', true) || qty,
-        baseRate: _toValidNumber(r[OFF.baseRate], 'Base Rate', true) || price,
-        // Blank (legacy rows predating this column) defaults to affecting Stock.
-        affectsStock: String(r[OFF.affectsStock] || 'Y').trim().toUpperCase() !== 'N'
-      });
-
-      // Update totals (always recomputed, never from sheet columns)
-      billMap[key].totalQty += qty;
-      billMap[key].totalAmount += lineTotal;
+      _addBillItemFromRow(billMap[key], r, OFF);
     }
 
     // Convert to array and sort by bill date (newest first), then by row
@@ -753,13 +780,19 @@ function saveBill(formData) {
     // ─────────────────────────────────────────────────────────────────
     // Append to sheet or update
     // ─────────────────────────────────────────────────────────────────
+    // freshStartRow tracks where this bill's own rows just landed
+    // (contiguous either way) so they can be read back below for the
+    // client's in-place row-patch response, without re-reading every other
+    // bill on the sheet.
+    let freshStartRow;
     if (isEdit) {
       _rewriteBillsWithoutMatchingRows(sheet, startRow, oldVendor, oldBillNum);
       _insertBillRowsAt(sheet, firstMatchRow, newRows);
+      freshStartRow = firstMatchRow;
     } else {
-      const appendRow = sheet.getLastRow() + 1;
+      freshStartRow = sheet.getLastRow() + 1;
       sheet.getRange(
-        appendRow,
+        freshStartRow,
         BILL_COL.PO_NUMBER,
         newRows.length,
         newRows[0].length
@@ -790,7 +823,14 @@ function saveBill(formData) {
 
     logAction(isEdit ? 'UPDATE' : 'CREATE', APP_CONFIG.SHEETS.BILL, billNumber, `Items: ${items.length}`, 'SUCCESS');
 
-    return buildResponse(true, { billNumber }, msg);
+    // Read this bill's own just-written rows back (cheap — only its own
+    // block, not the whole sheet) so the client can patch it into an
+    // already-loaded Bill Ledger in place instead of a full reload.
+    const freshNumCols = BILL_COL.AFFECTS_STOCK - BILL_COL.PO_NUMBER + 1;
+    const freshRows = sheet.getRange(freshStartRow, BILL_COL.PO_NUMBER, newRows.length, freshNumCols).getValues();
+    const freshBill = _buildBillRecordFromRows(freshRows);
+
+    return buildResponse(true, { billNumber: billNumber, bill: freshBill }, msg);
   } catch (error) {
     Log.error('[saveBill] Error:', error.message);
     logAction('ERROR', 'saveBill', formData.billNumber, error.message, 'ERROR');

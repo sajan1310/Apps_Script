@@ -90,6 +90,70 @@ function _getReturnSheet() {
  *     remarks, items: [{name, size, narration, unit, qty, price, lineTotal,
  *     reason, baseQty, baseRate}], totalQty, totalAmount }
  */
+/** Builds a return header object (no items yet) from its first sheet row. @private */
+function _buildReturnHeaderFromRow(r) {
+  const returnNum = String(r[RETURN_COL.RETURN_NUMBER - 1] || '').trim();
+  const rawDate = r[RETURN_COL.RETURN_DATE - 1];
+  const parsedDate = toSafeDateString(rawDate);
+
+  if (!parsedDate && rawDate) {
+    Log.warn(`[_buildReturnHeaderFromRow] Unparseable date in return #${returnNum}: "${rawDate}"`);
+  }
+
+  const isoDateStr = parsedDate ? parsedDate.split('/').reverse().join('-') : '';
+
+  return {
+    returnNumber: returnNum,
+    returnDate: parsedDate || (rawDate ? String(rawDate) : 'N/A'),
+    returnDateRaw: isoDateStr,
+    vendor: String(r[RETURN_COL.VENDOR - 1] || ''),
+    contact: String(r[RETURN_COL.CONTACT - 1] || ''),
+    billNumber: String(r[RETURN_COL.BILL_NUMBER - 1] || ''),
+    remarks: String(r[RETURN_COL.REMARKS - 1] || ''),
+    items: [],
+    totalQty: 0,
+    totalAmount: 0
+  };
+}
+
+/** Appends one item row onto an in-progress return object, updating its totals. @private */
+function _addReturnItemFromRow(ret, r) {
+  const qty = _toValidNumber(r[RETURN_COL.QTY - 1], 'Qty');
+  const price = _toValidNumber(r[RETURN_COL.PRICE - 1], 'Price');
+  const lineTotal = parseFloat((qty * price).toFixed(2));
+
+  ret.items.push({
+    name: String(r[RETURN_COL.ITEM_NAME - 1] || ''),
+    size: String(r[RETURN_COL.SIZE - 1] || ''),
+    narration: String(r[RETURN_COL.NARRATION - 1] || ''),
+    unit: String(r[RETURN_COL.UNIT - 1] || 'Pcs'),
+    qty: qty,
+    price: price,
+    lineTotal: lineTotal,
+    reason: String(r[RETURN_COL.REASON - 1] || ''),
+    baseQty: _toValidNumber(r[RETURN_COL.BASE_QTY - 1], 'Base Qty', true) || qty,
+    baseRate: _toValidNumber(r[RETURN_COL.BASE_RATE - 1], 'Base Rate', true) || price
+  });
+
+  ret.totalQty += qty;
+  ret.totalAmount += lineTotal;
+}
+
+/**
+ * Builds one return record (header + items + totals) from a contiguous
+ * block of raw Return sheet rows that all share the same Return Number.
+ * Used by saveReturn's fresh-row read-back so the client can patch just
+ * this one return into its already-loaded list instead of a full
+ * getReturnData() reload.
+ * @private
+ */
+function _buildReturnRecordFromRows(rows) {
+  if (!rows || rows.length === 0) return null;
+  const ret = _buildReturnHeaderFromRow(rows[0]);
+  rows.forEach(function(r) { _addReturnItemFromRow(ret, r); });
+  return ret;
+}
+
 function getReturnData() {
   try {
     const sheet = _getReturnSheet();
@@ -112,51 +176,11 @@ function getReturnData() {
       if (!returnNum) continue;
 
       if (!returnMap[returnNum]) {
-        const rawDate = r[RETURN_COL.RETURN_DATE - 1];
-        const parsedDate = toSafeDateString(rawDate);
-
-        if (!parsedDate && rawDate) {
-          Log.warn(`[getReturnData] Unparseable date in return #${returnNum}: "${rawDate}"`);
-        }
-
-        const isoDateStr = parsedDate
-          ? parsedDate.split('/').reverse().join('-')
-          : '';
-
-        returnMap[returnNum] = {
-          returnNumber: returnNum,
-          returnDate: parsedDate || (rawDate ? String(rawDate) : 'N/A'),
-          returnDateRaw: isoDateStr,
-          vendor: String(r[RETURN_COL.VENDOR - 1] || ''),
-          contact: String(r[RETURN_COL.CONTACT - 1] || ''),
-          billNumber: String(r[RETURN_COL.BILL_NUMBER - 1] || ''),
-          remarks: String(r[RETURN_COL.REMARKS - 1] || ''),
-          items: [],
-          totalQty: 0,
-          totalAmount: 0,
-          _rowIdx: i
-        };
+        returnMap[returnNum] = _buildReturnHeaderFromRow(r);
+        returnMap[returnNum]._rowIdx = i;
       }
 
-      const qty = _toValidNumber(r[RETURN_COL.QTY - 1], 'Qty');
-      const price = _toValidNumber(r[RETURN_COL.PRICE - 1], 'Price');
-      const lineTotal = parseFloat((qty * price).toFixed(2));
-
-      returnMap[returnNum].items.push({
-        name: String(r[RETURN_COL.ITEM_NAME - 1] || ''),
-        size: String(r[RETURN_COL.SIZE - 1] || ''),
-        narration: String(r[RETURN_COL.NARRATION - 1] || ''),
-        unit: String(r[RETURN_COL.UNIT - 1] || 'Pcs'),
-        qty: qty,
-        price: price,
-        lineTotal: lineTotal,
-        reason: String(r[RETURN_COL.REASON - 1] || ''),
-        baseQty: _toValidNumber(r[RETURN_COL.BASE_QTY - 1], 'Base Qty', true) || qty,
-        baseRate: _toValidNumber(r[RETURN_COL.BASE_RATE - 1], 'Base Rate', true) || price
-      });
-
-      returnMap[returnNum].totalQty += qty;
-      returnMap[returnNum].totalAmount += lineTotal;
+      _addReturnItemFromRow(returnMap[returnNum], r);
     }
 
     // Sort by return date (newest first), then by row order (newest first)
@@ -311,12 +335,18 @@ function saveReturn(formData) {
       ];
     });
 
+    // freshStartRow tracks where this return's own rows just landed
+    // (contiguous either way) so they can be read back below for the
+    // client's in-place row-patch response, without re-reading every other
+    // return on the sheet.
+    let freshStartRow;
     if (isEdit) {
       _rewriteReturnsWithoutMatchingRows(sheet, startRow, oldReturnNumber);
       _insertReturnRowsAt(sheet, firstMatchRow, newRows);
+      freshStartRow = firstMatchRow;
     } else {
-      const appendRow = sheet.getLastRow() + 1;
-      sheet.getRange(appendRow, 1, newRows.length, newRows[0].length).setValues(newRows);
+      freshStartRow = sheet.getLastRow() + 1;
+      sheet.getRange(freshStartRow, 1, newRows.length, newRows[0].length).setValues(newRows);
     }
 
     if (typeof recalculateStock === 'function') {
@@ -330,7 +360,13 @@ function saveReturn(formData) {
       : `Return #${returnNumber} recorded successfully.`;
     logAction(isEdit ? 'UPDATE' : 'CREATE', APP_CONFIG.SHEETS.RETURN, returnNumber, `Items: ${items.length}`, 'SUCCESS');
 
-    return buildResponse(true, { returnNumber }, msg);
+    // Read this return's own just-written rows back (cheap — only its own
+    // block, not the whole sheet) so the client can patch it into an
+    // already-loaded Return Ledger in place instead of a full reload.
+    const freshRows = sheet.getRange(freshStartRow, 1, newRows.length, RETURN_COL.BASE_RATE).getValues();
+    const freshReturn = _buildReturnRecordFromRows(freshRows);
+
+    return buildResponse(true, { returnNumber: returnNumber, ret: freshReturn }, msg);
   } catch (error) {
     Log.error('[saveReturn] Error:', error.message);
     logAction('ERROR', 'saveReturn', formData.returnNumber, error.message, 'ERROR');

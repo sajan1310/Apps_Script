@@ -287,15 +287,27 @@
             if (collapsed.has(keyPrefix.slice(0, -1))) hiddenByCollapse = true;
           }
           if (hiddenByCollapse) return;
-          const idx = App.State.globalProcesses.indexOf(p);
-          const checked = App.Selection.isSelected(App.State.selectedProcesses, p.processId) ? 'checked' : '';
-          const rowAttrs = dragEnabled
-            ? `draggable="true" ondragstart="App.Process.onDragStart(event,'${escapeHtml(p.processId)}')" ondragover="App.Process.onDragOver(event)" ondrop="App.Process.onDrop(event,'${escapeHtml(p.processId)}')" ondragend="App.Process.onDragEnd(event)"`
-            : '';
-          const handleCell = dragEnabled
-            ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
-            : '<td></td>';
-          html += `<tr ${rowAttrs}>
+          html += this.rowHtml(p, dragEnabled);
+        });
+
+        tbody.innerHTML = html;
+        this.updateBulkButtons();
+      },
+
+      // Renders one <tr> for a process (no group headers — those are
+      // built inline in renderTable, which is the only caller that needs
+      // them). Shared by renderTable's full rebuild and patchRowInPlace's
+      // single-row swap below.
+      rowHtml(p, dragEnabled) {
+        const idx = App.State.globalProcesses.indexOf(p);
+        const checked = App.Selection.isSelected(App.State.selectedProcesses, p.processId) ? 'checked' : '';
+        const rowAttrs = dragEnabled
+          ? `draggable="true" ondragstart="App.Process.onDragStart(event,'${escapeHtml(p.processId)}')" ondragover="App.Process.onDragOver(event)" ondrop="App.Process.onDrop(event,'${escapeHtml(p.processId)}')" ondragend="App.Process.onDragEnd(event)"`
+          : '';
+        const handleCell = dragEnabled
+          ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
+          : '<td></td>';
+        return `<tr ${rowAttrs} data-process-key="${escapeHtml(p.processId)}">
         ${handleCell}
         <td class="text-center"><input type="checkbox" class="form-check-input process-select-chk" data-key="${escapeHtml(p.processId)}" ${checked} onchange="App.Process.onRowSelectChange()"></td>
         <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(p.processId)}</span></td>
@@ -312,10 +324,49 @@
           <button class="btn btn-sm btn-danger btn-action" onclick="App.Process.delete('${escapeHtml(p.processId)}')">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
-        this.updateBulkButtons();
+      // Patches one already-loaded process's data + its rendered <tr> after
+      // an edit save, instead of a full loadData() reload — see
+      // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+      // for the full rationale/trade-offs this mirrors. processId is
+      // server-assigned and never user-editable, so this is a safe stable
+      // key.
+      //
+      // Only swaps the single <tr> in place when the table is in its flat,
+      // ungrouped, unfiltered view — group headers (see renderTable's tiers/
+      // lastValues walk) are inline with data rows and depend on each row's
+      // position relative to its neighbors, so a change to whatever field
+      // the active "Group by" dimensions key off of could move this row to
+      // a different group entirely. In that case (or search-filtered), this
+      // still mutates the in-memory record and does a full
+      // renderTable() — a client-side re-render from already-correct data,
+      // NOT a server reload — so the group/search UI stays consistent.
+      //
+      // Returns false only when the process isn't currently loaded at all
+      // (caller falls back to loadData()); a grouped/filtered re-render is
+      // reported as a successful patch since it never hit the network.
+      patchRowInPlace(freshProcess) {
+        const key = String(freshProcess.processId);
+        const existing = App.State.globalProcesses.find(p => String(p.processId) === key);
+        if (!existing) return false;
+
+        Object.assign(existing, freshProcess);
+
+        const tiers = App.State.processGroupOrder.filter(dim => dim && App.Process.GROUP_DIMENSIONS[dim]);
+        const searchEl = document.getElementById('searchProcess');
+        const isSearchFiltered = !!(searchEl && searchEl.value.trim());
+
+        if (tiers.length > 0 || isSearchFiltered) {
+          this.renderTable();
+          return true;
+        }
+
+        const tr = document.querySelector(`#processTableBody tr[data-process-key="${key}"]`);
+        if (!tr) { this.renderTable(); return true; }
+
+        tr.outerHTML = this.rowHtml(existing, true);
+        return true;
       },
 
       // Drag-and-drop manual reorder (flat/ungrouped view only — see
@@ -2104,8 +2155,6 @@
           try {
             const response = await Api.call('saveProcess', formData);
             if (response.success) {
-              await App.Process.loadData();
-
               // A saved Color Sub-Group changes the known-colors list Warehouse
               // Pool uses to render placeholder rows (App.Stock.computeLeafRowsForProcess,
               // fed by getAllProcessColorGroups) — refresh it now instead of
@@ -2118,12 +2167,22 @@
               }
 
               if (isEdit) {
-                // Save (edit mode): stay open on the SAME process instead of
-                // closing — Exit (App.Nav.exit) is the only way to close
-                // from here now. processId is server-assigned and never
-                // user-editable (duplicateProcess explicitly clears it to
-                // signal "this is really a create"), so it's a safe stable
-                // key to re-find this record by after the reload.
+                // Save (edit mode): patch just this one process's data +
+                // <tr> in place instead of a full loadData() reload — see
+                // App.Process.patchRowInPlace's doc comment for how it
+                // handles the grouped/filtered table views. Falls back to
+                // a full reload if the process can't be patched.
+                const patched = response.data && response.data.process
+                  ? App.Process.patchRowInPlace(response.data.process)
+                  : false;
+                if (!patched) await App.Process.loadData();
+
+                // Stay open on the SAME process instead of closing — Exit
+                // (App.Nav.exit) is the only way to close from here now.
+                // processId is server-assigned and never user-editable
+                // (duplicateProcess explicitly clears it to signal "this is
+                // really a create"), so it's a safe stable key to re-find
+                // this record by.
                 const freshIdx = App.State.globalProcesses.findIndex(p => p.processId === formData.processId);
                 if (freshIdx !== -1) {
                   App.Process.openEditModal(freshIdx);
@@ -2132,6 +2191,11 @@
                   if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
                 }
               } else {
+                // A brand-new process's manual drag-and-drop display order
+                // position can't be determined cheaply on the client —
+                // full reload here (see App.Process.patchRowInPlace's doc
+                // comment for why an edit doesn't need to).
+                await App.Process.loadData();
                 await App.Process.openCreateModal();
               }
             }

@@ -327,6 +327,138 @@ function ensureBOMCostsExtraColumns(sheet) {
  * details. Requires a valid BOM access token (see verifyBOMAccess).
  * @param {string} token - Access token from verifyBOMAccess
  */
+/** Builds a BOM product header object (no components/costs yet) from its first component row. @private */
+function _buildBomProductHeader(row) {
+  return {
+    productId: String(row[BOM_COL.PRODUCT_ID - 1] || '').trim(),
+    productName: String(row[BOM_COL.PRODUCT_NAME - 1] || '').trim(),
+    components: [],
+    colors: [],
+    totalCost: 0,
+    totalQty: 0,
+    additionalCosts: [],
+    totalAdditionalCost: 0,
+    remarks: String(row[BOM_COL.REMARKS - 1] || '').trim(),
+    sequence: Number(row[BOM_COL.SEQUENCE - 1]) || 0
+  };
+}
+
+/**
+ * Appends one BOM component row onto an in-progress product object.
+ * colorsSeen is a Set scoped to THIS product (mirrors getBOMData's
+ * colorsSeenByProduct, one Set per product) for O(1) color-dedup.
+ * @private
+ */
+function _addBomComponentFromRow(product, row, processNameById, colorsSeen) {
+  const itemName = String(row[BOM_COL.ITEM_NAME - 1] || '').trim();
+  const rate = Number(row[BOM_COL.RATE - 1]) || 0;
+  const qty = Number(row[BOM_COL.QTY_PER_PRODUCT - 1]) || 0;
+  const lineCost = rate * qty;
+  const processId = String(row[BOM_COL.PROCESS_GROUP - 1] || '').trim();
+  const color = String(row[BOM_COL.COLOR - 1] || '').trim();
+
+  product.components.push({
+    itemName: itemName,
+    size: String(row[BOM_COL.SIZE - 1] || '').trim(),
+    narration: String(row[BOM_COL.NARRATION - 1] || '').trim(),
+    rate: rate,
+    vendor: String(row[BOM_COL.VENDOR - 1] || '').trim(),
+    qtyPerProduct: qty,
+    lineCost: lineCost,
+    processId: processId,
+    processGroup: processNameById[processId.toLowerCase()] || processId || 'General',
+    color: color
+  });
+
+  if (color && !colorsSeen.has(color)) {
+    colorsSeen.add(color);
+    product.colors.push(color);
+  }
+}
+
+/** Appends one additional/dynamic cost row onto an in-progress product object. @private */
+function _addBomCostFromRow(product, row) {
+  const description = String(row[BOM_COSTS_COL.DESCRIPTION - 1] || '').trim();
+  if (!description) return;
+
+  const rate = Number(row[BOM_COSTS_COL.RATE - 1]) || 0;
+  const processName = String(row[BOM_COSTS_COL.PROCESS_NAME - 1] || '').trim();
+  const contractorName = String(row[BOM_COSTS_COL.CONTRACTOR_NAME - 1] || '').trim();
+  product.additionalCosts.push({ description: description, rate: rate, processName: processName, contractorName: contractorName });
+  product.totalAdditionalCost += rate;
+}
+
+/**
+ * Computes the per-color cost/qty aggregation (commonCost + per-color
+ * buckets -> colorCosts/totalCost/totalQty/grandTotal) for one already-
+ * populated BOM product object. See getBOMData's own inline comment (kept
+ * there) for why a blank-Color row is common-to-every-color while a
+ * non-blank one is an alternative exclusive to that color. Mutates
+ * `product` in place. Shared by getBOMData's bulk read and
+ * _buildBomRecordFromRows' single-product read-back.
+ * @private
+ */
+function _finalizeBomProductCosts(product) {
+  let commonCost = 0, commonQty = 0;
+  const perColor = new Map(); // colorLower -> {color, cost, qty}
+  product.components.forEach(c => {
+    if (!c.color) {
+      commonCost += c.lineCost;
+      commonQty += c.qtyPerProduct;
+      return;
+    }
+    const key = c.color.toLowerCase();
+    if (!perColor.has(key)) perColor.set(key, { color: c.color, cost: 0, qty: 0 });
+    const bucket = perColor.get(key);
+    bucket.cost += c.lineCost;
+    bucket.qty += c.qtyPerProduct;
+  });
+
+  product.colorCosts = product.colors.map(color => {
+    const bucket = perColor.get(color.toLowerCase()) || { cost: 0, qty: 0 };
+    return {
+      color: color,
+      totalCost: commonCost + bucket.cost,
+      totalQty: commonQty + bucket.qty
+    };
+  });
+
+  const primary = product.colorCosts.length > 0 ? product.colorCosts[0] : null;
+  product.totalCost = primary ? primary.totalCost : commonCost;
+  product.totalQty = primary ? primary.totalQty : commonQty;
+  product.grandTotal = product.totalCost + product.totalAdditionalCost;
+}
+
+/**
+ * Builds one BOM product record (header + components + additional costs +
+ * derived totals) from a contiguous block of raw BOM component rows (all
+ * sharing the same Product ID) plus its matching BOM_COSTS rows. Used by
+ * saveBOM's fresh-row read-back so the client can patch just this one
+ * product into its already-loaded list instead of a full getBOMData().
+ * @private
+ */
+function _buildBomRecordFromRows(componentRows, costRows, processNameById) {
+  if (!componentRows || componentRows.length === 0) return null;
+
+  let product = null;
+  const colorsSeen = new Set();
+  componentRows.forEach(row => {
+    const productId = String(row[BOM_COL.PRODUCT_ID - 1] || '').trim();
+    const productName = String(row[BOM_COL.PRODUCT_NAME - 1] || '').trim();
+    const itemName = String(row[BOM_COL.ITEM_NAME - 1] || '').trim();
+    if (!productId || !productName || !itemName) return;
+
+    if (!product) product = _buildBomProductHeader(row);
+    _addBomComponentFromRow(product, row, processNameById, colorsSeen);
+  });
+
+  if (!product) return null;
+
+  (costRows || []).forEach(row => _addBomCostFromRow(product, row));
+  _finalizeBomProductCosts(product);
+  return product;
+}
+
 function getBOMData(token) {
   try {
     _requireBOMAccess(token);
@@ -372,47 +504,11 @@ function getBOMData(token) {
       if (!productId || !productName || !itemName) continue;
 
       if (!productMap[productId]) {
-        productMap[productId] = {
-          productId: productId,
-          productName: productName,
-          components: [],
-          colors: [],
-          totalCost: 0,
-          totalQty: 0,
-          additionalCosts: [],
-          totalAdditionalCost: 0,
-          remarks: String(row[BOM_COL.REMARKS - 1] || '').trim(),
-          sequence: Number(row[BOM_COL.SEQUENCE - 1]) || 0
-        };
+        productMap[productId] = _buildBomProductHeader(row);
         colorsSeenByProduct.set(productId, new Set());
       }
 
-      const rate = Number(row[BOM_COL.RATE - 1]) || 0;
-      const qty = Number(row[BOM_COL.QTY_PER_PRODUCT - 1]) || 0;
-      const lineCost = rate * qty;
-      const processId = String(row[BOM_COL.PROCESS_GROUP - 1] || '').trim();
-      const color = String(row[BOM_COL.COLOR - 1] || '').trim();
-
-      productMap[productId].components.push({
-        itemName: itemName,
-        size: String(row[BOM_COL.SIZE - 1] || '').trim(),
-        narration: String(row[BOM_COL.NARRATION - 1] || '').trim(),
-        rate: rate,
-        vendor: String(row[BOM_COL.VENDOR - 1] || '').trim(),
-        qtyPerProduct: qty,
-        lineCost: lineCost,
-        processId: processId,
-        processGroup: processNameById[processId.toLowerCase()] || processId || 'General',
-        color: color
-      });
-
-      if (color) {
-        const seen = colorsSeenByProduct.get(productId);
-        if (!seen.has(color)) {
-          seen.add(color);
-          productMap[productId].colors.push(color);
-        }
-      }
+      _addBomComponentFromRow(productMap[productId], row, processNameById, colorsSeenByProduct.get(productId));
     }
 
     // Load additional/dynamic costs (labor, paint, fitting, overheads, etc.)
@@ -432,14 +528,8 @@ function getBOMData(token) {
       for (let i = 0; i < costsData.length; i++) {
         const row = costsData[i];
         const productId = String(row[BOM_COSTS_COL.PRODUCT_ID - 1] || '').trim();
-        const description = String(row[BOM_COSTS_COL.DESCRIPTION - 1] || '').trim();
-        if (!productId || !description || !productMap[productId]) continue;
-
-        const rate = Number(row[BOM_COSTS_COL.RATE - 1]) || 0;
-        const processName = String(row[BOM_COSTS_COL.PROCESS_NAME - 1] || '').trim();
-        const contractorName = String(row[BOM_COSTS_COL.CONTRACTOR_NAME - 1] || '').trim();
-        productMap[productId].additionalCosts.push({ description: description, rate: rate, processName: processName, contractorName: contractorName });
-        productMap[productId].totalAdditionalCost += rate;
+        if (!productId || !productMap[productId]) continue;
+        _addBomCostFromRow(productMap[productId], row);
       }
     }
 
@@ -454,36 +544,7 @@ function getBOMData(token) {
     // single representative number for the headline display); colorCosts
     // carries the full per-color breakdown so no color's true cost is lost.
     const products = Object.values(productMap);
-    products.forEach(p => {
-      let commonCost = 0, commonQty = 0;
-      const perColor = new Map(); // colorLower -> {color, cost, qty}
-      p.components.forEach(c => {
-        if (!c.color) {
-          commonCost += c.lineCost;
-          commonQty += c.qtyPerProduct;
-          return;
-        }
-        const key = c.color.toLowerCase();
-        if (!perColor.has(key)) perColor.set(key, { color: c.color, cost: 0, qty: 0 });
-        const bucket = perColor.get(key);
-        bucket.cost += c.lineCost;
-        bucket.qty += c.qtyPerProduct;
-      });
-
-      p.colorCosts = p.colors.map(color => {
-        const bucket = perColor.get(color.toLowerCase()) || { cost: 0, qty: 0 };
-        return {
-          color: color,
-          totalCost: commonCost + bucket.cost,
-          totalQty: commonQty + bucket.qty
-        };
-      });
-
-      const primary = p.colorCosts.length > 0 ? p.colorCosts[0] : null;
-      p.totalCost = primary ? primary.totalCost : commonCost;
-      p.totalQty = primary ? primary.totalQty : commonQty;
-      p.grandTotal = p.totalCost + p.totalAdditionalCost;
-    });
+    products.forEach(p => _finalizeBomProductCosts(p));
     // Sort by manual display order (drag-and-drop reorderable on the Products tab)
     products.sort((a, b) => a.sequence - b.sequence);
 
@@ -942,8 +1003,9 @@ function saveBOM(formData, token) {
       costRowsToWrite.push([productId, description, rate, processName, contractorName]);
     });
 
+    let costsStartRow = -1;
     if (costRowsToWrite.length > 0) {
-      const costsStartRow = costsSheet.getLastRow() + 1;
+      costsStartRow = costsSheet.getLastRow() + 1;
       costsSheet.getRange(costsStartRow, 1, costRowsToWrite.length, 5).setValues(costRowsToWrite);
     }
 
@@ -955,7 +1017,21 @@ function saveBOM(formData, token) {
 
     logAction(isEdit ? 'UPDATE' : 'CREATE', APP_CONFIG.SHEETS.BOM, productId, logMsg, 'SUCCESS');
 
-    return buildResponse(true, { productId: productId, productName: productName }, isEdit ? 'BOM updated successfully.' : 'Product BOM saved successfully.');
+    // Read this product's own just-written rows back (cheap — only its own
+    // block in each sheet, not either sheet in full) so the client can
+    // patch it into an already-loaded BOM list in place instead of a full
+    // getBOMData() reload.
+    const freshComponentRows = sheet.getRange(startRow, 1, rowsToWrite.length, 12).getValues();
+    const freshCostRows = costsStartRow !== -1
+      ? costsSheet.getRange(costsStartRow, 1, costRowsToWrite.length, 5).getValues()
+      : [];
+    const processNameById = {};
+    (_getAllProcessRecords() || []).forEach(p => {
+      processNameById[p.processId.toLowerCase()] = p.processName;
+    });
+    const freshProduct = _buildBomRecordFromRows(freshComponentRows, freshCostRows, processNameById);
+
+    return buildResponse(true, { productId: productId, productName: productName, product: freshProduct }, isEdit ? 'BOM updated successfully.' : 'Product BOM saved successfully.');
   } catch (error) {
     Log.error('[saveBOM] Error:', error.message);
     logAction('ERROR', 'saveBOM', formData.productId || 'NEW', error.message, 'ERROR');

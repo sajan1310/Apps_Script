@@ -916,6 +916,89 @@ function _attachPoStatus(po, billedMap) {
  *   Ledger read instead of aggregating it twice. Public client calls always
  *   omit this and getPOData computes its own, unchanged from before.
  */
+/**
+ * Column offsets (relative to PO_NUMBER) shared by getPOData's bulk read and
+ * _buildPoRecordFromRows' single-PO read-back, so both stay in sync with
+ * PO_COL by construction instead of by convention.
+ * @private
+ */
+function _mapPoColumnOffsets() {
+  const base = PO_COL.PO_NUMBER;
+  return {
+    poNum:      PO_COL.PO_NUMBER - base,
+    poDate:     PO_COL.PO_DATE - base,
+    vendor:     PO_COL.VENDOR - base,
+    contact:    PO_COL.CONTACT - base,
+    desc:       PO_COL.PO_DESCRIPTION - base,
+    remarks:    PO_COL.PO_REMARKS - base,
+    totalQty:   PO_COL.TOTAL_QTY - base,
+    supRemarks: PO_COL.SUPPLIER_REMARKS - base,
+    itemName:   PO_COL.ITEM_NAME - base,
+    narration:  PO_COL.NARRATION - base,
+    size:       PO_COL.SIZE - base,
+    qty:        PO_COL.QTY - base,
+    unit:       PO_COL.UNIT - base,
+    price:      PO_COL.PRICE - base,
+    baseQty:    PO_COL.BASE_QTY - base,
+    baseRate:   PO_COL.BASE_RATE - base
+  };
+}
+
+/** Builds a PO header object (no items yet) from its first sheet row. @private */
+function _buildPoHeaderFromRow(r, OFF) {
+  const rawDate = r[OFF.poDate];
+  return {
+    poNumber: String(r[OFF.poNum] || '').trim(),
+    poDate: _toDisplayDate(rawDate),
+    poDateRaw: _toSafeDateString(rawDate) || '',
+    vendor: String(r[OFF.vendor] || ''),
+    contact: String(r[OFF.contact] || ''),
+    poDescription: String(r[OFF.desc] || ''),
+    poRemarks: String(r[OFF.remarks] || ''),
+    supplierRemarks: String(r[OFF.supRemarks] || ''),
+    items: [],
+    grandTotal: 0,
+    totalQty: 0
+  };
+}
+
+/** Appends one item row onto an in-progress PO object, updating its totals. @private */
+function _addPoItemFromRow(po, r, OFF) {
+  const qty = _toFiniteNumber(r[OFF.qty], 0);
+  const price = _toFiniteNumber(r[OFF.price], 0);
+  const total = parseFloat((qty * price).toFixed(2));
+
+  po.items.push({
+    name: String(r[OFF.itemName] || ''),
+    narration: String(r[OFF.narration] || ''),
+    size: String(r[OFF.size] || ''),
+    qty: qty,
+    unit: String(r[OFF.unit] || 'Pcs'),
+    price: price,
+    baseQty: _toFiniteNumber(r[OFF.baseQty], qty),
+    baseRate: _toFiniteNumber(r[OFF.baseRate], price)
+  });
+
+  po.grandTotal += total;
+  po.totalQty += qty;
+}
+
+/**
+ * Builds one PO record (header + items + totals, status NOT attached — call
+ * _attachPoStatus separately) from a contiguous block of raw PO sheet rows
+ * that all share the same PO Number. Used by savePO's fresh-row read-back so
+ * the client can patch just this one PO into its already-loaded list
+ * instead of re-fetching/re-aggregating every PO via a full getPOData().
+ * @private
+ */
+function _buildPoRecordFromRows(rows) {
+  if (!rows || rows.length === 0) return null;
+  const OFF = _mapPoColumnOffsets();
+  const po = _buildPoHeaderFromRow(rows[0], OFF);
+  rows.forEach(function(r) { _addPoItemFromRow(po, r, OFF); });
+  return po;
+}
+
 function getPOData(preloadedBilledMap) {
   try {
     const sheet = getSheet(APP_CONFIG.SHEETS.PO);
@@ -930,26 +1013,7 @@ function getPOData(preloadedBilledMap) {
       return buildResponse(true, []);
     }
 
-    // Calculate column offsets relative to PO_NUMBER column
-    const base = PO_COL.PO_NUMBER;
-    const OFF = {
-      poNum:      PO_COL.PO_NUMBER - base,
-      poDate:     PO_COL.PO_DATE - base,
-      vendor:     PO_COL.VENDOR - base,
-      contact:    PO_COL.CONTACT - base,
-      desc:       PO_COL.PO_DESCRIPTION - base,
-      remarks:    PO_COL.PO_REMARKS - base,
-      totalQty:   PO_COL.TOTAL_QTY - base,
-      supRemarks: PO_COL.SUPPLIER_REMARKS - base,
-      itemName:   PO_COL.ITEM_NAME - base,
-      narration:  PO_COL.NARRATION - base,
-      size:       PO_COL.SIZE - base,
-      qty:        PO_COL.QTY - base,
-      unit:       PO_COL.UNIT - base,
-      price:      PO_COL.PRICE - base,
-      baseQty:    PO_COL.BASE_QTY - base,
-      baseRate:   PO_COL.BASE_RATE - base
-    };
+    const OFF = _mapPoColumnOffsets();
 
     // Aggregate rows into PO objects
     const poMap = {};
@@ -962,42 +1026,10 @@ function getPOData(preloadedBilledMap) {
 
       // Create PO entry if first time seeing this PO number
       if (!poMap[poNum]) {
-        const rawDate = r[OFF.poDate];
-
-        poMap[poNum] = {
-          poNumber: poNum,
-          poDate: _toDisplayDate(rawDate),
-          poDateRaw: _toSafeDateString(rawDate) || '',
-          vendor: String(r[OFF.vendor] || ''),
-          contact: String(r[OFF.contact] || ''),
-          poDescription: String(r[OFF.desc] || ''),
-          poRemarks: String(r[OFF.remarks] || ''),
-          supplierRemarks: String(r[OFF.supRemarks] || ''),
-          items: [],
-          grandTotal: 0,
-          totalQty: 0
-        };
+        poMap[poNum] = _buildPoHeaderFromRow(r, OFF);
       }
 
-      // Add item to PO
-      const qty = _toFiniteNumber(r[OFF.qty], 0);
-      const price = _toFiniteNumber(r[OFF.price], 0);
-      const total = parseFloat((qty * price).toFixed(2));
-
-      poMap[poNum].items.push({
-        name: String(r[OFF.itemName] || ''),
-        narration: String(r[OFF.narration] || ''),
-        size: String(r[OFF.size] || ''),
-        qty: qty,
-        unit: String(r[OFF.unit] || 'Pcs'),
-        price: price,
-        baseQty: _toFiniteNumber(r[OFF.baseQty], qty),
-        baseRate: _toFiniteNumber(r[OFF.baseRate], price)
-      });
-
-      // Update totals
-      poMap[poNum].grandTotal += total;
-      poMap[poNum].totalQty += qty;
+      _addPoItemFromRow(poMap[poNum], r, OFF);
     }
 
     // Attach a derived status (PO Issued / Partially Received / Completed)
@@ -1378,7 +1410,11 @@ function savePO(formData) {
       return _buildPoSheetRow(header, item);
     });
 
-    // Execute create or update
+    // Execute create or update. freshStartRow tracks where this PO's own
+    // rows just landed (contiguous either way) so they can be read back
+    // below for the client's in-place row-patch response, without re-reading
+    // every other PO on the sheet.
+    let freshStartRow;
     if (isEdit) {
       const firstMatchRow = _findFirstPoRow(sheet, startRow, oldPoNum);
 
@@ -1391,8 +1427,10 @@ function savePO(formData) {
       // Remove old rows and insert updated rows at same position
       _rewriteWithoutMatchingRows(sheet, startRow, PO_COL.PO_NUMBER, oldPoNum);
       _insertRowsAt(sheet, firstMatchRow, newRows);
+      freshStartRow = firstMatchRow;
     } else {
       // Append new rows
+      freshStartRow = sheet.getLastRow() + 1;
       _appendRows(sheet, newRows);
     }
 
@@ -1411,7 +1449,18 @@ function savePO(formData) {
 
     logAction('CREATE', APP_CONFIG.SHEETS.PO, poNumToSave, `Items: ${items.length}`, 'SUCCESS');
 
-    return buildResponse(true, { poNumber: poNumToSave }, msg);
+    // Read this PO's own just-written rows back (cheap — only its own
+    // block, not the whole sheet) and attach its status the same way
+    // getPOData does, so the client can patch it into an already-loaded
+    // list in place instead of a full reload.
+    const freshNumCols = PO_COL.BASE_RATE - PO_COL.PO_NUMBER + 1;
+    const freshRows = sheet.getRange(freshStartRow, PO_COL.PO_NUMBER, newRows.length, freshNumCols).getValues();
+    const freshPo = _buildPoRecordFromRows(freshRows);
+    if (freshPo) {
+      _attachPoStatus(freshPo, _aggregateBilledBaseQtyByPo());
+    }
+
+    return buildResponse(true, { poNumber: poNumToSave, po: freshPo }, msg);
   } catch (error) {
     Log.error('[savePO] Error:', error.message);
     logAction('ERROR', 'savePO', formData.poNumber, error.message, 'ERROR');

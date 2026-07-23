@@ -447,21 +447,35 @@
         let html = '';
         pageItems.forEach(p => {
           const idx = App.State.globalProduction.indexOf(p);
-          const key = String(p.rowIdx);
-          const checked = App.Selection.isSelected(App.State.selectedProduction, key) ? 'checked' : '';
+          html += this.rowHtml(p, idx);
+        });
 
-          const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
-          const processLabel = process ? process.processName : (p.processId || 'Uncategorized');
+        tbody.innerHTML = html;
 
-          const statusOptions = this.STATUS_OPTIONS
-            .map(s => `<option value="${s}" ${s === p.status ? 'selected' : ''}>${s}</option>`)
-            .join('');
+        App.Utils.renderPagination('productionPagination', filteredProduction.length, cur, rpp, 'production-page', 'Production Lots');
+        this.updateBulkButtons();
+      },
 
-          const colorBadges = (p.colorBreakdown && p.colorBreakdown.length > 0)
-            ? p.colorBreakdown.map(c => `<span class="badge bg-info text-dark me-1">${escapeHtml(c.color)}${c.size ? ` (${escapeHtml(c.size)})` : ''}: ${this.formatQty(c.qty)}</span>`).join('')
-            : (p.color ? `<span class="badge bg-info text-dark">${escapeHtml(p.color)}</span>` : '');
+      // Renders one <tr> for a Production Log record. Shared by renderTable's
+      // full rebuild and patchRowInPlace's single-row swap below — keeping
+      // them on one code path means an in-place patch can never drift from
+      // what a full reload would have rendered for that same row.
+      rowHtml(p, idx) {
+        const key = String(p.rowIdx);
+        const checked = App.Selection.isSelected(App.State.selectedProduction, key) ? 'checked' : '';
 
-          html += `<tr>
+        const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+        const processLabel = process ? process.processName : (p.processId || 'Uncategorized');
+
+        const statusOptions = this.STATUS_OPTIONS
+          .map(s => `<option value="${s}" ${s === p.status ? 'selected' : ''}>${s}</option>`)
+          .join('');
+
+        const colorBadges = (p.colorBreakdown && p.colorBreakdown.length > 0)
+          ? p.colorBreakdown.map(c => `<span class="badge bg-info text-dark me-1">${escapeHtml(c.color)}${c.size ? ` (${escapeHtml(c.size)})` : ''}: ${this.formatQty(c.qty)}</span>`).join('')
+          : (p.color ? `<span class="badge bg-info text-dark">${escapeHtml(p.color)}</span>` : '');
+
+        return `<tr data-row-key="${escapeHtml(key)}">
         <td class="text-center"><input type="checkbox" class="form-check-input production-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Production.onRowSelectChange()"></td>
         <td>${escapeHtml(p.date)}</td>
         <td><strong>${escapeHtml(processLabel)}</strong><br><span class="badge bg-secondary">${escapeHtml(p.lotNumber || '-')}</span></td>
@@ -479,12 +493,41 @@
           <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Production.delete('${p.rowIdx}', '${escapeHtml(p.productId)}', '${p.qty}')">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
+      // Patches one already-loaded row's data + its rendered <tr> after an
+      // Edit Lot save, instead of the old approach (loadData(): a full
+      // getProductionData round-trip + rebuilding every row's HTML), which
+      // flashed "Loading Production Logs..." over the whole table and reset
+      // scroll position on every single-row edit.
+      //
+      // Mutates the SAME row object already sitting in globalProduction (and
+      // therefore filteredProduction too — filterData() derives it via
+      // .filter(), which holds the same object references, not copies) so
+      // nothing else needs re-pointing; mirrors the in-place mutation
+      // updateStatus() above already does for the status field alone.
+      //
+      // Trade-off accepted for this: no re-sort/re-filter happens here, so if
+      // the edit changed a value the active Sort/Search depends on (e.g. its
+      // Date under "Sort by Date"), the row keeps its old position/visibility
+      // until the next natural full reload (tab switch, filter, refresh).
+      //
+      // Returns false — so the caller can fall back to loadData() — when the
+      // row isn't currently loaded (stale local state) or isn't on the
+      // currently displayed page (nothing in the DOM to patch).
+      patchRowInPlace(freshRow) {
+        const key = String(freshRow.rowIdx);
+        const existing = App.State.globalProduction.find(r => String(r.rowIdx) === key);
+        if (!existing) return false;
 
-        App.Utils.renderPagination('productionPagination', filteredProduction.length, cur, rpp, 'production-page', 'Production Lots');
-        this.updateBulkButtons();
+        Object.assign(existing, freshRow);
+
+        const tr = document.querySelector(`#productionTableBody tr[data-row-key="${key}"]`);
+        if (!tr) return false;
+
+        const idx = App.State.globalProduction.indexOf(existing);
+        tr.outerHTML = this.rowHtml(existing, idx);
+        return true;
       },
 
       toggleSelectAll(masterChk) {
@@ -3815,6 +3858,23 @@
         const form = document.getElementById('productionForm');
         if (form) form.reset();
 
+        // form.reset() restores field VALUES but NOT the disabled state, and
+        // openEditModal locks Size/Model/Process Type/Process on an existing
+        // lot (its process — and therefore its size/model/type — can't be
+        // changed once the lot exists). Nothing else ever re-enables the Size
+        // select: the cascade only re-gates Model/Type/Process off the value
+        // at each level (disabled = !size, etc.), while Size is the cascade's
+        // own entry point. So a Create opened right after an Edit would
+        // inherit a permanently-disabled Size dropdown, leaving the whole form
+        // dead (the cascade can never start). Re-enable all four here — before
+        // the populate + cascade below re-init their Select2 widgets, so those
+        // widgets inherit the enabled state — and let handleSizeChange('')
+        // re-disable Model/Type/Process appropriately for a blank Size.
+        ['productionSize', 'productionModel', 'productionProcessType', 'productionProcessId'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = false;
+        });
+
         await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded(), App.Color.ensureLoaded()]);
 
         document.getElementById('productionRowIdx').value = '';
@@ -4766,13 +4826,15 @@
           try {
             const response = await Api.call('saveProduction', formData);
             if (response.success) {
-              // Reload the underlying list BEFORE branching — both the
-              // "stay open, re-arm for next" and "stay open, same record"
-              // paths below read fresh App.State.globalProduction, and
-              // openEditModal indexes into it directly.
-              await App.Production.loadData();
-
               if (isNewLot) {
+                // A brand-new lot's sorted/paginated position can't be
+                // determined cheaply on the client, so still do a full
+                // reload here (see patchRowInPlace's doc comment for why an
+                // edit doesn't need to). Both branches below read fresh
+                // App.State.globalProduction, and openEditModal indexes
+                // into it directly.
+                await App.Production.loadData();
+
                 // Stay open and re-arm for the next lot instead of closing —
                 // operators log many lots back-to-back. The fieldset is
                 // disabled for the full duration of the re-arm (not just the
@@ -4788,16 +4850,27 @@
                 }
                 document.getElementById('productionSize')?.focus();
               } else {
-                // Edit mode "Save": stay open (Exit — App.Nav.exit — is the
-                // only way to close from here now) and re-run this SAME
-                // record through openEditModal instead of just leaving the
-                // form as-is — that's the one path already proven to
-                // correctly repaint every derived/computed bit of state
-                // (Lot Number, color matrix, Nav's dirty-snapshot and N-of-M
-                // position) from a saved record, so it reflects what was
-                // just saved instead of staying frozen at pre-save values.
-                // Re-derived by rowIdx (stable) rather than reusing the old
-                // positional `idx` — loadData() just rebuilt the array, and
+                // Edit mode "Save": patch just this one row's data + <tr>
+                // in place (see patchRowInPlace) instead of a full
+                // loadData() reload — falls back to a full reload if the
+                // row can't be patched (e.g. this tab wasn't the one
+                // showing when the edit was made, or the server didn't
+                // echo a row back).
+                const patched = response.data && response.data.row
+                  ? App.Production.patchRowInPlace(response.data.row)
+                  : false;
+                if (!patched) await App.Production.loadData();
+
+                // Stay open (Exit — App.Nav.exit — is the only way to
+                // close from here now) and re-run this SAME record through
+                // openEditModal instead of just leaving the form as-is —
+                // that's the one path already proven to correctly repaint
+                // every derived/computed bit of state (Lot Number, color
+                // matrix, Nav's dirty-snapshot and N-of-M position) from a
+                // saved record, so it reflects what was just saved instead
+                // of staying frozen at pre-save values. Re-derived by
+                // rowIdx (stable) rather than reusing the old positional
+                // `idx` — a fallback loadData() just rebuilt the array, and
                 // nothing guarantees this row landed at the same index.
                 const freshIdx = App.State.globalProduction.findIndex(r => String(r.rowIdx) === savedRowIdx);
                 if (freshIdx !== -1) {

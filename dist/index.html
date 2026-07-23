@@ -329,18 +329,6 @@
     color: var(--text-primary);
   }
 
-  [data-theme="dark"] .toast.bg-success {
-    background-color: #064e3b;
-    border-color: #065f46;
-    color: #a7f3d0;
-  }
-
-  [data-theme="dark"] .toast.bg-danger {
-    background-color: #450a0a;
-    border-color: #7f1d1d;
-    color: #fca5a5;
-  }
-
   [data-theme="dark"] .page-link {
     background-color: var(--bg-light);
     border-color: var(--border-color);
@@ -473,16 +461,19 @@
     border: 1px solid var(--border-color);
   }
 
-  /* Toasts: match new semantic colors */
+  /* Toasts: match new semantic colors. Solid/opaque on purpose — these
+     used to be rgba(...,0.12) "tinted glass" backgrounds, which read as
+     a see-through/washed-out notification against busy page content
+     behind it, so they were switched to fully opaque fills. */
   [data-theme="dark"] .toast.bg-success {
-    background-color: rgba(52, 211, 153, 0.12) !important;
-    border-color: rgba(52, 211, 153, 0.3) !important;
-    color: #6ee7b7 !important;
+    background-color: #064e3b !important;
+    border-color: #065f46 !important;
+    color: #a7f3d0 !important;
   }
 
   [data-theme="dark"] .toast.bg-danger {
-    background-color: rgba(248, 113, 113, 0.12) !important;
-    border-color: rgba(248, 113, 113, 0.3) !important;
+    background-color: #450a0a !important;
+    border-color: #7f1d1d !important;
     color: #fca5a5 !important;
   }
 
@@ -721,6 +712,156 @@
   .dark-mode-toggle svg {
     width: 16px;
     height: 16px;
+  }
+
+  /* Notification bell + history panel — every showToast() call is kept
+     here (App.Notify) so a 3s-autohide toast can still be reviewed later. */
+  .notif-wrap {
+    position: relative;
+  }
+
+  .notif-bell-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-base);
+    padding: 0;
+    position: relative;
+    font-size: 16px;
+  }
+
+  .notif-bell-btn:hover {
+    border-color: var(--secondary-color);
+    color: var(--secondary-color);
+    background-color: rgba(99, 102, 241, 0.08);
+    transform: translateY(-1px);
+  }
+
+  .notif-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--danger-color);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+  }
+
+  .notif-panel {
+    position: absolute;
+    top: 44px;
+    right: 0;
+    z-index: 99999;
+    width: 320px;
+    max-height: 420px;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    overflow: hidden;
+  }
+
+  .notif-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+
+  .notif-clear-btn {
+    border: none;
+    background: transparent;
+    color: var(--primary-color);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+
+  .notif-clear-btn:hover {
+    text-decoration: underline;
+  }
+
+  .notif-list {
+    overflow-y: auto;
+    max-height: 360px;
+  }
+
+  .notif-empty {
+    padding: 24px 12px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .notif-item {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px;
+  }
+
+  .notif-item:last-child {
+    border-bottom: none;
+  }
+
+  .notif-item-dot {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    margin-top: 5px;
+    border-radius: 50%;
+    background: var(--success-color);
+  }
+
+  .notif-item.notif-error .notif-item-dot {
+    background: var(--danger-color);
+  }
+
+  .notif-item-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .notif-item-msg {
+    color: var(--text-primary);
+    word-break: break-word;
+  }
+
+  .notif-item-time {
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 11px;
+  }
+
+  [data-theme="dark"] .notif-panel {
+    background-color: var(--bg-light);
+    border-color: var(--border-color);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+
+  [data-theme="dark"] .notif-item {
+    border-color: var(--border-color);
   }
 
   /* ─────────────────────────────────────────────────────────────────────
@@ -1963,7 +2104,8 @@
   }
 
   .toast {
-    background-color: var(--bg-light);
+    background-color: var(--bg-light) !important;
+    opacity: 1 !important;
     border: 1px solid var(--border-light);
     border-radius: var(--border-radius);
     box-shadow: var(--shadow-lg);
@@ -1974,16 +2116,20 @@
     pointer-events: auto;
   }
 
+  /* !important: Bootstrap's own .bg-success/.bg-danger utility classes
+     (also !important) would otherwise win the opaque-but-wrong-color
+     fight and paint these solid Bootstrap green/red instead of the
+     app's pastel notification colors. */
   .toast.bg-success {
-    background-color: #d4edda;
-    border-color: #c3e6cb;
-    color: #155724;
+    background-color: #d4edda !important;
+    border-color: #c3e6cb !important;
+    color: #155724 !important;
   }
 
   .toast.bg-danger {
-    background-color: #f8d7da;
-    border-color: #f5c6cb;
-    color: #721c24;
+    background-color: #f8d7da !important;
+    border-color: #f5c6cb !important;
+    color: #721c24 !important;
   }
 
   @keyframes slideInRight {
@@ -2630,8 +2776,8 @@
        Injected from Modals.html
        ═══════════════════════════════════════════════════════════════════════ -->
   <!-- Toast Notification -->
-<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1060;">
-  <div id="systemToast" class="toast align-items-center text-white border-0" role="alert" aria-live="assertive" aria-atomic="true">
+<div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1060;">
+  <div id="systemToast" class="toast align-items-center text-white border-0" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="3000">
     <div class="d-flex">
       <div class="toast-body" id="toastMessage">Notification</div>
       <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
@@ -2653,6 +2799,30 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-danger" id="confirmActionBtn">Yes, Proceed</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Prev/Next Unsaved-Changes Modal -->
+<!-- Shown by App.Nav.go() instead of the generic confirmModal when the
+     open edit form has unsaved changes — unlike confirmModal's plain
+     discard-or-cancel choice, stepping to another record can also save
+     first, so this offers a third path (see App.Nav.saveThenProceed). -->
+<div class="modal fade" id="navConfirmModal" tabindex="-1" aria-hidden="true" style="z-index: 1070;">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-warning">
+        <h5 class="modal-title text-dark">Unsaved Changes</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body fs-5">
+        You have unsaved changes in this form. What would you like to do before moving to the next record?
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-outline-danger" id="navDiscardBtn">Don't Save &amp; Proceed</button>
+        <button type="button" class="btn btn-primary" id="navSaveBtn">Save &amp; Proceed</button>
       </div>
     </div>
   </div>
@@ -3740,6 +3910,24 @@
             <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
           </svg>
         </button>
+
+        <!-- Notifications: bell shows a panel of past toast notifications
+             (App.Notify), since the toast itself auto-dismisses after 3s. -->
+        <div class="notif-wrap">
+          <button id="notif-bell-btn" class="notif-bell-btn" type="button" title="Notifications" aria-label="Notifications" aria-haspopup="true" aria-expanded="false" onclick="App.Notify.toggle()">
+            <i class="bi bi-bell"></i>
+            <span id="notif-badge" class="notif-badge" style="display:none;">0</span>
+          </button>
+          <div id="notif-panel" class="notif-panel" style="display:none;">
+            <div class="notif-panel-header">
+              <span>Notifications</span>
+              <button type="button" id="notif-clear-btn" class="notif-clear-btn" onclick="App.Notify.clear()">Clear all</button>
+            </div>
+            <div id="notif-list" class="notif-list">
+              <div class="notif-empty">No notifications yet.</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Enterprise Badge -->
@@ -10385,6 +10573,57 @@
         }, 0);
       });
 
+      // ── Select2 search box "seems disabled" (never actually receives
+      // keyboard focus on open) — two independent, compounding causes,
+      // both real and both required to be fixed for typing to work:
+      //
+      // Cause 1: Select2's own open() handler calls `$search.trigger('focus')`
+      // (once synchronously, once again via setTimeout(0)) to land keyboard
+      // focus in the search box the instant a dropdown opens. With every
+      // dropdownParent in this app pointed at document.body (see
+      // select2DropdownParent above), that dropdown is a freshly re-parented
+      // element the browser hasn't finished a layout/paint pass for yet at
+      // that exact point — confirmed by instrumenting the search field's own
+      // .focus(): it's genuinely called, but getBoundingClientRect() is all
+      // zeros and offsetParent is null at that moment, and .focus() on an
+      // element with no layout box is a silent no-op in every browser.
+      // setTimeout(0) isn't reliably scheduled AFTER that layout either.
+      // Fixed by re-attempting focus on a double requestAnimationFrame,
+      // which is guaranteed to run only after the next completed
+      // layout/paint.
+      //
+      // Cause 2: even with cause 1 fixed, a Select2 opened from INSIDE a
+      // Bootstrap modal still can't keep that focus. Bootstrap 5's modal
+      // FocusTrap forces focus straight back onto the modal the instant
+      // anything outside it receives focus — and since dropdownParent is
+      // document.body, the search field lives OUTSIDE the open `.modal`
+      // element by design (that's what fixes the scroll-position bug
+      // documented at select2DropdownParent). Bootstrap's own focus-trap
+      // listener only runs in the bubble phase, so intercepting the SAME
+      // 'focusin' event in the capture phase — which always fires first —
+      // and stopping it there keeps it from ever reaching Bootstrap's
+      // handler, without touching modal config or Select2 itself.
+      //
+      // Net effect of both bugs together, confirmed via instrumentation:
+      // the dropdown opens and shows results, but the search field never
+      // actually receives (or keeps) focus — every keystroke lands on
+      // nothing, which is exactly what reads to a user as "the search box
+      // is disabled" (reproduced on every Select2 in the app inside a
+      // modal, not just one module).
+      window.jQuery?.(document).on('select2:open', () => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const field = document.querySelector('.select2-container--open .select2-search__field');
+            if (field && document.activeElement !== field) field.focus();
+          });
+        });
+      });
+      document.addEventListener('focusin', (e) => {
+        if (e.target instanceof Element && e.target.closest('.select2-container, .select2-dropdown')) {
+          e.stopPropagation();
+        }
+      }, true);
+
       // Closes an open Select2 dropdown the moment ITS OWN scrollable
       // container (see select2DropdownParent — almost always a `.modal-body`
       // in this app) scrolls. See select2DropdownParent's comment for why:
@@ -10737,16 +10976,28 @@
         setDisabled('poSubmitBtn', true);
         try {
           const res = await Api.call('savePO', formData);
-          if (res?.success) await App.PO.loadData();
           if (res?.success && !isEdit) {
+            // A brand-new PO's sorted/paginated position can't be
+            // determined cheaply on the client — full reload here (see
+            // App.PO.patchRowInPlace's doc comment for why an edit doesn't
+            // need to).
+            await App.PO.loadData();
             App.PO.openCreateModal();
           } else if (res?.success && isEdit) {
-            // Save (edit mode): stay open on the SAME PO instead of closing
-            // — Exit (App.Nav.exit) is the only way to close from here now.
+            // Save (edit mode): patch just this one PO's data + <tr> in
+            // place instead of a full loadData() reload — falls back to a
+            // full reload if the PO can't be patched.
+            const patched = res.data && res.data.po
+              ? App.PO.patchRowInPlace(res.data.po)
+              : false;
+            if (!patched) await App.PO.loadData();
+
+            // Stay open on the SAME PO instead of closing — Exit
+            // (App.Nav.exit) is the only way to close from here now.
             // poNumber is server-assigned and never user-editable (no
             // `name="poNumber"` field exists on this form — only the hidden
             // pre-edit existingPoNumber), so it's a safe stable key to
-            // re-find this record by after the reload.
+            // re-find this record by.
             const freshIndex = App.State.globalPOs.findIndex(p => p.poNumber === formData.existingPoNumber);
             if (freshIndex !== -1) {
               App.PO.openEditModal(freshIndex);
@@ -10821,21 +11072,37 @@
               setDisabled('billSubmitBtn', true);
               try {
                 const res = await Api.call('saveBill', formData);
-                if (res?.success) {
-                  await App.Bill.loadData();
-                }
                 if (res?.success && !isEdit) {
+                  // A brand-new bill's sorted/paginated position can't be
+                  // determined cheaply on the client — full reload here
+                  // (see App.Bill.patchRowInPlace's doc comment for why an
+                  // edit doesn't need to).
+                  await App.Bill.loadData();
                   App.Bill.openReceiveModal();
                 } else if (res?.success && isEdit) {
-                  // Save (edit mode): stay open on the SAME bill instead of
-                  // closing — Exit (App.Nav.exit) is the only way to close
-                  // from here now. Re-derive the fresh index by (vendor,
-                  // billNumber) — the NEW values just saved, not the
-                  // pre-edit "existing*" hidden fields — since billKey (see
-                  // App.Bill) is a bill's only stable identity (no single-
-                  // column key) and either half of it may have just changed.
-                  // billNumber comes back from the server (res.data), which
-                  // ran it through _validateBillNumber server-side — trusting
+                  // Save (edit mode): patch just this one bill's data +
+                  // <tr> in place instead of a full loadData() reload —
+                  // keyed by the PRE-edit (vendor, billNumber), since
+                  // that's how the row is currently indexed in
+                  // globalBills/the DOM; patchRowInPlace then updates the
+                  // object (and its rendered key) to the post-save values.
+                  // Falls back to a full reload if the bill can't be
+                  // patched.
+                  const oldKey = App.Bill.billKey({ vendor: String(formData.existingVendor || '').trim(), billNumber: formData.existingBillNumber });
+                  const patched = res.data && res.data.bill
+                    ? App.Bill.patchRowInPlace(res.data.bill, oldKey)
+                    : false;
+                  if (!patched) await App.Bill.loadData();
+
+                  // Stay open on the SAME bill instead of closing — Exit
+                  // (App.Nav.exit) is the only way to close from here now.
+                  // Re-derive the fresh index by (vendor, billNumber) — the
+                  // NEW values just saved, not the pre-edit "existing*"
+                  // hidden fields — since billKey (see App.Bill) is a
+                  // bill's only stable identity (no single-column key) and
+                  // either half of it may have just changed. billNumber
+                  // comes back from the server (res.data), which ran it
+                  // through _validateBillNumber server-side — trusting
                   // that over the raw formData value in case validation
                   // normalized it; vendor gets the same trim saveBill's own
                   // sanitizeString applies, so the key matches what was
@@ -10884,19 +11151,32 @@
               setDisabled('returnSubmitBtn', true);
               try {
                 const res = await Api.call('saveReturn', formData);
-                if (res?.success) {
-                  await App.Return.loadData();
-                }
                 if (res?.success && !isEdit) {
+                  // A brand-new return's sorted/paginated position can't
+                  // be determined cheaply on the client — full reload here
+                  // (see App.Return.patchRowInPlace's doc comment for why
+                  // an edit doesn't need to).
+                  await App.Return.loadData();
                   App.Return.openReturnModal();
                 } else if (res?.success && isEdit) {
-                  // Save (edit mode): stay open on the SAME return instead
-                  // of closing — Exit (App.Nav.exit) is the only way to
-                  // close from here now. returnNumber is user-editable (and
-                  // optional — saveReturn auto-generates one when blank), so
-                  // trust the server's own returned value (res.data), not
-                  // the raw formData one, to re-find this record after
-                  // reload — saveReturn also enforces it's unique.
+                  // Save (edit mode): patch just this one return's data +
+                  // <tr> in place instead of a full loadData() reload —
+                  // keyed by the PRE-edit returnNumber (existingReturnNumber),
+                  // since that's how the row is currently indexed in
+                  // globalReturns/the DOM. Falls back to a full reload if
+                  // the return can't be patched.
+                  const patched = res.data && res.data.ret
+                    ? App.Return.patchRowInPlace(res.data.ret, formData.existingReturnNumber)
+                    : false;
+                  if (!patched) await App.Return.loadData();
+
+                  // Stay open on the SAME return instead of closing — Exit
+                  // (App.Nav.exit) is the only way to close from here now.
+                  // returnNumber is user-editable (and optional —
+                  // saveReturn auto-generates one when blank), so trust the
+                  // server's own returned value (res.data), not the raw
+                  // formData one, to re-find this record — saveReturn also
+                  // enforces it's unique.
                   const returnNumber = res.data?.returnNumber;
                   const freshIndex = App.State.globalReturns.findIndex(r => String(r.returnNumber) === String(returnNumber));
                   if (freshIndex !== -1) {
@@ -10962,18 +11242,37 @@
             }
 
             const isEdit = !!formData.originalName;
+            const savedName = formData.itemName?.trim() || '';
+            const savedSize = formData.itemSize?.trim() || '';
+
+            // A plain edit (name/size unchanged) can patch its one row in
+            // place — a rename/resize touches Stock's own key (and cascades
+            // into BOM/Process recipe references), so it still needs the
+            // full reload below to pick up everything that moved with it.
+            // See App.Item.patchRowInPlace's doc comment for the accepted
+            // trade-off: the Meta Data column (stock/pending/threshold) can
+            // stay stale here until Stock next reloads naturally, same class
+            // of staleness as every other module's patch path.
+            const isPlainEdit = isEdit &&
+              savedName.toLowerCase() === String(formData.originalName || '').trim().toLowerCase() &&
+              savedSize.toLowerCase() === String(formData.originalSize || '').trim().toLowerCase();
+
             if (res?.success) {
               const thresholdInput = document.getElementById('formItemThreshold');
               const thresholdVal = thresholdInput ? parseInt(thresholdInput.value, 10) : NaN;
               if (!isNaN(thresholdVal) && thresholdVal >= 0) {
-                const savedName = formData.itemName?.trim() || '';
-                const savedSize = formData.itemSize?.trim() || '';
                 try {
                   await Api.call('updateThreshold', savedName, savedSize, thresholdVal);
                 } catch (_) {}
               }
-              App.State.globalStock = [];
-              await App.Item.loadData();
+
+              const patched = isPlainEdit && res.data && res.data.item
+                ? App.Item.patchRowInPlace(res.data.item, formData.originalName, formData.originalSize)
+                : false;
+              if (!patched) {
+                App.State.globalStock = [];
+                await App.Item.loadData();
+              }
             }
             if (res?.success && !isEdit) {
               App.Item.openCreateModal();
@@ -10983,8 +11282,6 @@
               // here now. Item identity is (name, size) — both editable —
               // so re-open with the NEW values just saved (formData.itemName/
               // itemSize), not the pre-edit originalName/originalSize.
-              const savedName = formData.itemName?.trim() || '';
-              const savedSize = formData.itemSize?.trim() || '';
               App.Item.openEditModal(savedName, savedSize);
             } else {
               safeModalHide('itemModal');
@@ -11495,15 +11792,23 @@
               pageItems.every(po => App.Selection.isSelected(App.State.selectedPOs, String(po.poNumber)));
           }
 
-          tbody.innerHTML = pageItems.map(po => {
-            const index = App.State.globalPOs.indexOf(po);
-            const itemsPreview = formatItemsPreview(po.items);
-            const key = String(po.poNumber);
-            const checkedAttr = App.Selection.isSelected(App.State.selectedPOs, key) ? 'checked' : '';
-            const statusInfo = this.getStatusBadge(po.status);
+          tbody.innerHTML = pageItems.map(po => this.rowHtml(po)).join('');
 
-            return `
-            <tr>
+          App.Utils.renderPagination('poPagination', filteredPOs.length, cur, rpp, 'po-page', 'Purchase Orders');
+          this.updateBulkButtons();
+        },
+
+        // Renders one <tr> for a PO. Shared by renderTable's full rebuild
+        // and patchRowInPlace's single-row swap below.
+        rowHtml(po) {
+          const index = App.State.globalPOs.indexOf(po);
+          const itemsPreview = formatItemsPreview(po.items);
+          const key = String(po.poNumber);
+          const checkedAttr = App.Selection.isSelected(App.State.selectedPOs, key) ? 'checked' : '';
+          const statusInfo = this.getStatusBadge(po.status);
+
+          return `
+            <tr data-po-key="${escapeHtml(key)}">
               <td class="text-center">
                 <input type="checkbox" class="form-check-input po-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.PO.onRowSelectChange()">
               </td>
@@ -11521,10 +11826,33 @@
                 <button class="btn btn-sm btn-danger           btn-action w-100"      data-action="po-delete" data-po-number="${escapeHtml(po.poNumber)}">Delete</button>
               </td>
             </tr>`;
-          }).join('');
+        },
 
-          App.Utils.renderPagination('poPagination', filteredPOs.length, cur, rpp, 'po-page', 'Purchase Orders');
-          this.updateBulkButtons();
+        // Patches one already-loaded PO's data + its rendered <tr> after an
+        // edit save, instead of a full loadData() reload — see
+        // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+        // for the full rationale/trade-offs this mirrors. Mutates the SAME PO
+        // object already in globalPOs (and therefore filteredPOs too, since
+        // it's built via [...globalPOs]/.filter() — same object references,
+        // not copies). Returns false — caller should fall back to loadData()
+        // — if the PO isn't currently loaded or isn't on the displayed page.
+        patchRowInPlace(freshPo) {
+          const key = String(freshPo.poNumber);
+          const existing = App.State.globalPOs.find(p => String(p.poNumber) === key);
+          if (!existing) return false;
+
+          Object.assign(existing, freshPo);
+          // status is server-derived from billing and can shift on an edit
+          // (date/qty changes affect which bills match it) — keep the
+          // status-count bar in sync the same way loadData() does. Purely a
+          // client-side array scan, no server call.
+          this.updateStatusBar();
+
+          const tr = document.querySelector(`#poTableBody tr[data-po-key="${key}"]`);
+          if (!tr) return false;
+
+          tr.outerHTML = this.rowHtml(existing);
+          return true;
         },
 
         toggleSelectAll(masterChk) {
@@ -12826,21 +13154,37 @@
               pageItems.every(bill => App.Selection.isSelected(App.State.selectedBills, this.billKey(bill)));
           }
 
-          tbody.innerHTML = pageItems.map(bill => {
-            const index = App.State.globalBills.indexOf(bill);
-            const poNums = bill.poNumbers?.length ? bill.poNumbers : (bill.poNumber ? [bill.poNumber] : []);
-            const poBadge = poNums.map(p =>
-              p === 'DIRECT'
-                ? '<span class="badge bg-secondary shadow-sm">Direct</span>'
-                : `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">PO-${escapeHtml(String(p))}</span>`
-            ).join(' ') || '<span class="badge bg-secondary">—</span>';
+          tbody.innerHTML = pageItems.map(bill => this.rowHtml(bill)).join('');
 
-            const itemsPreview = formatItemsPreview(bill.items);
-            const key = this.billKey(bill);
-            const checkedAttr = App.Selection.isSelected(App.State.selectedBills, key) ? 'checked' : '';
+          App.Utils.renderPagination('billPagination', filteredBills.length, cur, rpp, 'bill-page', 'Bills');
+          this.updateBulkButtons();
+        },
 
-            return `
-            <tr>
+        // Builds a stable string key for a bill row (Vendor + Bill Number) —
+        // bill numbers are only unique per-vendor, so selection/delete/print
+        // must key on the pair, not the bill number alone. Mirrors
+        // App.Stock.stockKey's "name|size" convention.
+        billKey(bill) {
+          return `${bill.vendor || ''}|${bill.billNumber || ''}`;
+        },
+
+        // Renders one <tr> for a bill. Shared by renderTable's full rebuild
+        // and patchRowInPlace's single-row swap below.
+        rowHtml(bill) {
+          const index = App.State.globalBills.indexOf(bill);
+          const poNums = bill.poNumbers?.length ? bill.poNumbers : (bill.poNumber ? [bill.poNumber] : []);
+          const poBadge = poNums.map(p =>
+            p === 'DIRECT'
+              ? '<span class="badge bg-secondary shadow-sm">Direct</span>'
+              : `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">PO-${escapeHtml(String(p))}</span>`
+          ).join(' ') || '<span class="badge bg-secondary">—</span>';
+
+          const itemsPreview = formatItemsPreview(bill.items);
+          const key = this.billKey(bill);
+          const checkedAttr = App.Selection.isSelected(App.State.selectedBills, key) ? 'checked' : '';
+
+          return `
+            <tr data-bill-key="${escapeHtml(key)}">
               <td class="text-center">
                 <input type="checkbox" class="form-check-input bill-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.Bill.onRowSelectChange()">
               </td>
@@ -12864,18 +13208,31 @@
                         data-bill-number="${escapeHtml(bill.billNumber || '')}">Delete</button>
               </td>
             </tr>`;
-          }).join('');
-
-          App.Utils.renderPagination('billPagination', filteredBills.length, cur, rpp, 'bill-page', 'Bills');
-          this.updateBulkButtons();
         },
 
-        // Builds a stable string key for a bill row (Vendor + Bill Number) —
-        // bill numbers are only unique per-vendor, so selection/delete/print
-        // must key on the pair, not the bill number alone. Mirrors
-        // App.Stock.stockKey's "name|size" convention.
-        billKey(bill) {
-          return `${bill.vendor || ''}|${bill.billNumber || ''}`;
+        // Patches one already-loaded bill's data + its rendered <tr> after
+        // an edit save, instead of a full loadData() reload — see
+        // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+        // for the full rationale/trade-offs this mirrors. Mutates the SAME
+        // bill object already in globalBills (and filteredBills too — same
+        // object references, not copies). freshBill's key (vendor +
+        // billNumber, the NEW post-save values) may differ from the row's
+        // pre-edit key if either was just changed on this edit — deleting the
+        // old key's attribute first ensures a stale data-bill-key never
+        // lingers on the DOM node. Returns false — caller should fall back to
+        // loadData() — if the bill isn't currently loaded or isn't on the
+        // displayed page.
+        patchRowInPlace(freshBill, oldKey) {
+          const existing = App.State.globalBills.find(b => this.billKey(b) === oldKey);
+          if (!existing) return false;
+
+          Object.assign(existing, freshBill);
+
+          const tr = document.querySelector(`#billTableBody tr[data-bill-key="${CSS.escape(oldKey)}"]`);
+          if (!tr) return false;
+
+          tr.outerHTML = this.rowHtml(existing);
+          return true;
         },
 
         toggleSelectAll(masterChk) {
@@ -14358,28 +14715,42 @@
           const stockMap = this._getStockMap();
 
           tbody.innerHTML = pageItems
-            .map(item => {
-              const vendorsHtml = (item.vendors || [])
-                .map(
-                  v => `
+            .map(item => this.rowHtml(item, pendingMap, stockMap))
+            .join('');
+
+          this.renderPagination(filteredItems.length);
+        },
+
+        // Renders one <tr> for an item. Shared by renderTable's full
+        // rebuild and patchRowInPlace's single-row swap below. pendingMap/
+        // stockMap are optional — patchRowInPlace recomputes them itself
+        // (cheap, purely derived from already-loaded client state) so a
+        // single-row patch never needs the caller to have them on hand.
+        rowHtml(item, pendingMap, stockMap) {
+          if (!pendingMap) pendingMap = App.Utils.getPendingByItem();
+          if (!stockMap) stockMap = this._getStockMap();
+
+          const vendorsHtml = (item.vendors || [])
+            .map(
+              v => `
             <span class="badge border border-secondary text-dark me-1 mb-1 fs-6 fw-normal">
               <i class="text-secondary">${escapeHtml(v.vendor)}:</i>
               <strong>${formatCurrency(v.rate)}</strong>
             </span>`
-                )
-                .join('');
+            )
+            .join('');
 
-              const { parts: metaParts } = this.getMetaInfo(item, pendingMap, stockMap);
+          const { parts: metaParts } = this.getMetaInfo(item, pendingMap, stockMap);
 
-              const encodedName = encodeURIComponent(item.name || '');
-              const encodedSize = encodeURIComponent(item.size || '');
-              const key = this.itemKey(item);
+          const encodedName = encodeURIComponent(item.name || '');
+          const encodedSize = encodeURIComponent(item.size || '');
+          const key = this.itemKey(item);
 
-              const isSelected = App.Selection.isSelected(App.State.selectedItems, key);
-              const checkedAttr = isSelected ? 'checked' : '';
+          const isSelected = App.Selection.isSelected(App.State.selectedItems, key);
+          const checkedAttr = isSelected ? 'checked' : '';
 
-              return `
-            <tr class="item-row-clickable" style="cursor:pointer;" data-row-name="${encodedName}" data-row-size="${encodedSize}" title="Click to view Item Ledger">
+          return `
+            <tr class="item-row-clickable" style="cursor:pointer;" data-row-name="${encodedName}" data-row-size="${encodedSize}" data-item-key="${escapeHtml(key)}" title="Click to view Item Ledger">
               <td class="text-center">
                 <input type="checkbox" class="form-check-input item-select-chk"
                        data-key="${escapeHtml(key)}"
@@ -14402,10 +14773,29 @@
                         data-name="${encodedName}" data-size="${encodedSize}">Delete</button>
               </td>
             </tr>`;
-            })
-            .join('');
+        },
 
-          this.renderPagination(filteredItems.length);
+        // Patches one already-loaded item's data + its rendered <tr> after
+        // an edit save, instead of a full loadData() reload — see
+        // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+        // for the full rationale/trade-offs this mirrors. itemKey (name +
+        // size) is user-editable on an edit, so this is keyed by the
+        // PRE-edit (name, size) — how the row is currently indexed in
+        // globalItems/the DOM — not the post-save freshItem's own key.
+        // Returns false — caller should fall back to loadData() — if the
+        // item isn't currently loaded or isn't on the displayed page.
+        patchRowInPlace(freshItem, oldName, oldSize) {
+          const oldKey = this.itemKey({ name: oldName, size: oldSize });
+          const existing = App.State.globalItems.find(it => this.itemKey(it) === oldKey);
+          if (!existing) return false;
+
+          Object.assign(existing, freshItem);
+
+          const tr = document.querySelector(`#itemTableBody tr[data-item-key="${CSS.escape(oldKey)}"]`);
+          if (!tr) return false;
+
+          tr.outerHTML = this.rowHtml(existing);
+          return true;
         },
 
         renderPagination(totalItems) {
@@ -15742,43 +16132,55 @@
 
         let html = '';
         pageItems.forEach(bom => {
-          const idx = App.State.globalBOMs.indexOf(bom);
-          const key = String(bom.productId);
-          const checked = App.Selection.isSelected(App.State.selectedBOMs, key) ? 'checked' : '';
+          html += this.rowHtml(bom, dragEnabled);
+        });
 
-          // Build a flat list of component lines, with a small group badge when
-          // the BOM spans more than one process group.
-          const groupOrder = [];
-          const groupMap = {};
-          bom.components.forEach(c => {
-            const groupName = c.processGroup || 'General';
-            if (!groupMap[groupName]) { groupMap[groupName] = []; groupOrder.push(groupName); }
-            groupMap[groupName].push(c);
-          });
+        tbody.innerHTML = html;
 
-          const multiGroup = groupOrder.length > 1;
-          const componentLines = bom.components.map(c => {
-            const groupBadge = multiGroup
-              ? `<span class="badge bg-secondary me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.processGroup || 'General')}</span>`
-              : '';
-            const colorBadge = c.color
-              ? `<span class="badge bg-info text-dark me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.color)}</span>`
-              : '';
-            return `${groupBadge}${colorBadge}• ${escapeHtml(c.itemName)} [${escapeHtml(c.size || '-')}] (${escapeHtml(String(c.qtyPerProduct))} qty @ ${formatCurrency(c.rate)} from ${escapeHtml(c.vendor || 'Custom')})`;
-          });
+        App.Utils.renderPagination('bomPagination', filteredBOMs.length, cur, rpp, 'bom-page', 'Products');
+        this.updateBulkButtons();
+      },
 
-          const PREVIEW_LIMIT = 3;
-          const needsToggle = componentLines.length > PREVIEW_LIMIT;
-          const previewId = `bom_cpreview_${key}`;
+      // Renders one <tr> for a BOM product. Shared by renderTable's full
+      // rebuild and patchRowInPlace's single-row swap below.
+      rowHtml(bom, dragEnabled) {
+        const idx = App.State.globalBOMs.indexOf(bom);
+        const key = String(bom.productId);
+        const checked = App.Selection.isSelected(App.State.selectedBOMs, key) ? 'checked' : '';
 
-          let componentsCell;
-          if (!needsToggle) {
-            componentsCell = componentLines.join('<br>');
-          } else {
-            const visibleHtml = componentLines.slice(0, PREVIEW_LIMIT).join('<br>');
-            const allHtml = componentLines.join('<br>');
-            const remaining = componentLines.length - PREVIEW_LIMIT;
-            componentsCell = `
+        // Build a flat list of component lines, with a small group badge when
+        // the BOM spans more than one process group.
+        const groupOrder = [];
+        const groupMap = {};
+        bom.components.forEach(c => {
+          const groupName = c.processGroup || 'General';
+          if (!groupMap[groupName]) { groupMap[groupName] = []; groupOrder.push(groupName); }
+          groupMap[groupName].push(c);
+        });
+
+        const multiGroup = groupOrder.length > 1;
+        const componentLines = bom.components.map(c => {
+          const groupBadge = multiGroup
+            ? `<span class="badge bg-secondary me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.processGroup || 'General')}</span>`
+            : '';
+          const colorBadge = c.color
+            ? `<span class="badge bg-info text-dark me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.color)}</span>`
+            : '';
+          return `${groupBadge}${colorBadge}• ${escapeHtml(c.itemName)} [${escapeHtml(c.size || '-')}] (${escapeHtml(String(c.qtyPerProduct))} qty @ ${formatCurrency(c.rate)} from ${escapeHtml(c.vendor || 'Custom')})`;
+        });
+
+        const PREVIEW_LIMIT = 3;
+        const needsToggle = componentLines.length > PREVIEW_LIMIT;
+        const previewId = `bom_cpreview_${key}`;
+
+        let componentsCell;
+        if (!needsToggle) {
+          componentsCell = componentLines.join('<br>');
+        } else {
+          const visibleHtml = componentLines.slice(0, PREVIEW_LIMIT).join('<br>');
+          const allHtml = componentLines.join('<br>');
+          const remaining = componentLines.length - PREVIEW_LIMIT;
+          componentsCell = `
           <div class="bom-preview-collapsed">
             ${visibleHtml}
             <br><a href="#" class="text-primary small fw-bold mt-1 d-inline-block" onclick="event.preventDefault();App.BOM.toggleComponents('${key}',true)">&#9660; Show ${remaining} more</a>
@@ -15787,16 +16189,16 @@
             ${allHtml}
             <br><a href="#" class="text-muted small fw-bold mt-1 d-inline-block" onclick="event.preventDefault();App.BOM.toggleComponents('${key}',false)">&#9650; Show less</a>
           </div>`;
-          }
+        }
 
-          const rowAttrs = dragEnabled
-            ? `draggable="true" ondragstart="App.BOM.onDragStart(event,'${escapeHtml(bom.productId)}')" ondragover="App.BOM.onDragOver(event)" ondrop="App.BOM.onDrop(event,'${escapeHtml(bom.productId)}')" ondragend="App.BOM.onDragEnd(event)"`
-            : '';
-          const handleCell = dragEnabled
-            ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
-            : '<td></td>';
+        const rowAttrs = dragEnabled
+          ? `draggable="true" ondragstart="App.BOM.onDragStart(event,'${escapeHtml(bom.productId)}')" ondragover="App.BOM.onDragOver(event)" ondrop="App.BOM.onDrop(event,'${escapeHtml(bom.productId)}')" ondragend="App.BOM.onDragEnd(event)"`
+          : '';
+        const handleCell = dragEnabled
+          ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
+          : '<td></td>';
 
-          html += `<tr ${rowAttrs}>
+        return `<tr ${rowAttrs} data-bom-key="${escapeHtml(key)}">
         ${handleCell}
         <td class="text-center"><input type="checkbox" class="form-check-input bom-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.BOM.onRowSelectChange()"></td>
         <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(bom.productId)}</span></td>
@@ -15813,12 +16215,34 @@
           <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.BOM.delete('${escapeHtml(bom.productId)}')">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
+      // Patches one already-loaded product's data + its rendered <tr> after
+      // an edit save, instead of a full loadData() reload — see
+      // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+      // for the full rationale/trade-offs this mirrors. productId is
+      // server-assigned and never user-editable, so this is a safe stable
+      // key. Any expanded "Show more" component preview on this row resets
+      // to collapsed (its state lives in the DOM, not JS state) — cosmetic,
+      // same as a fresh render. Drag-and-drop's dragEnabled flag isn't
+      // known here (only renderTable computes it from the search box), so
+      // this re-derives it the same way. Returns false — caller should fall
+      // back to loadData() — if the product isn't currently loaded or isn't
+      // on the displayed page (e.g. mid-search).
+      patchRowInPlace(freshProduct) {
+        const key = String(freshProduct.productId);
+        const existing = App.State.globalBOMs.find(b => String(b.productId) === key);
+        if (!existing) return false;
 
-        App.Utils.renderPagination('bomPagination', filteredBOMs.length, cur, rpp, 'bom-page', 'Products');
-        this.updateBulkButtons();
+        Object.assign(existing, freshProduct);
+
+        const tr = document.querySelector(`#bomTableBody tr[data-bom-key="${key}"]`);
+        if (!tr) return false;
+
+        const searchEl = document.getElementById('searchBOM');
+        const dragEnabled = !(searchEl && searchEl.value.trim());
+        tr.outerHTML = this.rowHtml(existing, dragEnabled);
+        return true;
       },
 
       // Drag-and-drop manual reorder (default unfiltered view only — see
@@ -17109,14 +17533,25 @@
           try {
             const response = await Api.call('saveBOM', formData, App.BOM.getToken());
             if (response.success) {
-              await App.BOM.loadData();
               if (isEdit) {
-                // Save (edit mode): stay open on the SAME BOM instead of
-                // closing — Exit (App.Nav.exit) is the only way to close
-                // from here now. productId is server-assigned and never
-                // user-editable (no visible input for it, only the hidden
-                // bomProductId + a readonly display field), so it's a safe
-                // stable key to re-find this record by after the reload.
+                // Save (edit mode): patch just this one product's data +
+                // <tr> in place instead of a full loadData() reload —
+                // falls back to a full reload if the product can't be
+                // patched.
+                const patched = response.data && response.data.product
+                  ? App.BOM.patchRowInPlace(response.data.product)
+                  : false;
+                if (!patched) await App.BOM.loadData();
+                if (App.Production && App.Production.populateProductSelect) {
+                  App.Production.populateProductSelect();
+                }
+
+                // Stay open on the SAME BOM instead of closing — Exit
+                // (App.Nav.exit) is the only way to close from here now.
+                // productId is server-assigned and never user-editable (no
+                // visible input for it, only the hidden bomProductId + a
+                // readonly display field), so it's a safe stable key to
+                // re-find this record by.
                 const freshIdx = App.State.globalBOMs.findIndex(b => b.productId === formData.productId);
                 if (freshIdx !== -1) {
                   App.BOM.openEditModal(freshIdx);
@@ -17125,6 +17560,11 @@
                   if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
                 }
               } else {
+                // A brand-new product's manual drag-and-drop display order
+                // position can't be determined cheaply on the client —
+                // full reload here (see App.BOM.patchRowInPlace's doc
+                // comment for why an edit doesn't need to).
+                await App.BOM.loadData();
                 await App.BOM.openCreateModal();
               }
             }
@@ -18962,28 +19402,50 @@
             pageItems.every(item => App.Selection.isSelected(App.State.selectedStock, this.stockKey(item)));
         }
 
-        tbody.innerHTML = pageItems.map(item => {
-          const statusBadge = item.isLowStock
-            ? '<span class="badge bg-danger px-2 py-1 shadow-sm">Low Stock</span>'
-            : '<span class="badge bg-success px-2 py-1 shadow-sm">Well Stocked</span>';
+        tbody.innerHTML = pageItems.map(item => this.rowHtml(item)).join('');
 
-          const rowClass = item.isLowStock ? 'low-stock-row' : '';
-          const key = this.stockKey(item);
-          const checked = App.Selection.isSelected(App.State.selectedStock, key) ? 'checked' : '';
-          const encName = encodeURIComponent(item.name);
-          const encSize = encodeURIComponent(item.size || '');
-          const deadChecked = item.deadStock ? 'checked' : '';
-          const deadRowStyle = item.deadStock ? 'opacity: 0.6;' : '';
+        App.Utils.renderPagination('stockPagination', filteredStock.length, cur, rpp, 'stock-page', 'Items');
+        this.updateBulkButtons();
+      },
 
-          return `
-      <tr class="${rowClass}" style="${deadRowStyle}">
+      // The two bits of a stock row that a Current Stock / threshold edit
+      // rewrites. Kept as their own renderers so rowHtml (full rebuild) and
+      // patchRowInPlace (single-cell repaint) always produce identical markup
+      // — the same renderSpan() trick editPoolStockCell uses.
+      currentStockSpanHtml(item) {
+        const encName = encodeURIComponent(item.name);
+        const encSize = encodeURIComponent(item.size || '');
+        return `<span class="stock-current-display" data-qty="${item.currentStock}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
+                onclick="App.Stock.editStockCell(this, '${encName}', '${encSize}')">${item.currentStock}</span>`;
+      },
+
+      statusBadgeHtml(item) {
+        return item.isLowStock
+          ? '<span class="badge bg-danger px-2 py-1 shadow-sm">Low Stock</span>'
+          : '<span class="badge bg-success px-2 py-1 shadow-sm">Well Stocked</span>';
+      },
+
+      // Renders one <tr> for a stock row. Used by renderTable's full rebuild;
+      // the cells an edit can change carry data-stock-field markers so
+      // patchRowInPlace can repaint just those without touching the rest of
+      // the row.
+      rowHtml(item) {
+        const rowClass = item.isLowStock ? 'low-stock-row' : '';
+        const key = this.stockKey(item);
+        const checked = App.Selection.isSelected(App.State.selectedStock, key) ? 'checked' : '';
+        const encName = encodeURIComponent(item.name);
+        const encSize = encodeURIComponent(item.size || '');
+        const deadChecked = item.deadStock ? 'checked' : '';
+        const deadRowStyle = item.deadStock ? 'opacity: 0.6;' : '';
+
+        return `
+      <tr class="${rowClass}" style="${deadRowStyle}" data-stock-key="${escapeHtml(key)}">
         <td class="text-center"><input type="checkbox" class="form-check-input stock-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Stock.onRowSelectChange()"></td>
         <td><strong class="text-dark">${escapeHtml(item.name)}</strong></td>
         <td><span class="badge bg-secondary">${escapeHtml(item.size || 'GENERAL')}</span></td>
-        <td class="text-center fw-bold">${item.initialStock}</td>
-        <td class="text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}">
-          <span class="stock-current-display" data-qty="${item.currentStock}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
-                onclick="App.Stock.editStockCell(this, '${encName}', '${encSize}')">${item.currentStock}</span>
+        <td class="text-center fw-bold" data-stock-field="initial">${item.initialStock}</td>
+        <td class="text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}" data-stock-field="current">
+          ${this.currentStockSpanHtml(item)}
         </td>
         <td class="text-center">
           <input type="number"
@@ -18995,7 +19457,7 @@
                  onchange="App.Stock.saveThreshold(this)"
                  style="width: 80px; font-weight: bold; border-color: #ced4da;">
         </td>
-        <td class="text-center">${statusBadge}</td>
+        <td class="text-center" data-stock-field="status">${this.statusBadgeHtml(item)}</td>
         <td class="text-center">
           <div class="form-check d-flex justify-content-center mb-0">
             <input type="checkbox" class="form-check-input dead-stock-chk" ${deadChecked}
@@ -19006,15 +19468,105 @@
         </td>
         <td class="text-center">
           <button type="button" class="btn btn-outline-warning btn-sm" title="Correct stock manually"
-                  onclick="App.Stock.openAdjustModal('${escapeHtml(item.name).replace(/'/g, "\\'")}', '${escapeHtml(item.size || '').replace(/'/g, "\\'")}', ${item.currentStock})">
+                  data-enc-name="${encName}" data-enc-size="${encSize}"
+                  onclick="App.Stock.openAdjustModalFromRow(this)">
             <i class="bi bi-pencil-square"></i>
           </button>
         </td>
       </tr>`;
-        }).join('');
+      },
 
-        App.Utils.renderPagination('stockPagination', filteredStock.length, cur, rpp, 'stock-page', 'Items');
-        this.updateBulkButtons();
+      // Applies a stock edit (Current Stock and/or threshold) to the loaded
+      // client state and repaints ONLY the cells that edit can change — no
+      // full loadData()/renderTable(), and not even a whole-<tr> swap. Same
+      // approach as the Warehouse Pool table's editPoolStockCell: the row's
+      // existing DOM nodes stay put, so the page you're on, your scroll
+      // position, the active search, any checkbox selection and the focus/
+      // hover state of everything else in the row all survive the edit —
+      // you never have to hunt the item down again.
+      //
+      // Safe to patch in place because nothing this edit touches can move
+      // the row: the list order is load order, and applyDeadSort only ever
+      // reorders on the Dead Stock flag, which isn't changed here. The Low
+      // Stock alerts panel IS derived from these numbers, so it's re-rendered
+      // too (cheap — it's a single card, not the table).
+      //
+      // Returns false — caller should fall back to loadData() — if the item
+      // isn't loaded or its row isn't on the displayed page (e.g. it's on
+      // another page or filtered out).
+      patchRowInPlace(name, size, changes) {
+        const matches = (i) => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size || '');
+        const item = (App.State.globalStock || []).find(matches);
+        if (!item) return false;
+
+        Object.assign(item, changes);
+        item.isLowStock = Number(item.currentStock) < Number(item.threshold);
+
+        // filteredStock normally holds the SAME object references as
+        // globalStock (filterData only spreads/filters), so this is usually a
+        // no-op — kept as a guard for any path that ever repopulates it with
+        // copies, mirroring the existing toggleDeadStock patch.
+        const filteredItem = (App.State.filteredStock || []).find(matches);
+        if (filteredItem && filteredItem !== item) {
+          Object.assign(filteredItem, changes);
+          filteredItem.isLowStock = item.isLowStock;
+        }
+
+        this.renderAlerts();
+
+        const tr = document.querySelector(`#stockTableBody tr[data-stock-key="${CSS.escape(this.stockKey(item))}"]`);
+        if (!tr) return false;
+
+        // classList.toggle rather than reassigning className so the row keeps
+        // any other class, and the inline dead-stock opacity is left alone
+        // (this edit can't change the Dead Stock flag).
+        tr.classList.toggle('low-stock-row', !!item.isLowStock);
+
+        const initialCell = tr.querySelector('[data-stock-field="initial"]');
+        if (initialCell) initialCell.textContent = item.initialStock;
+
+        // innerHTML (not textContent) because this cell may currently hold
+        // the inline editor's <input> — this is what puts the display span
+        // back, exactly as editPoolStockCell does.
+        const currentCell = tr.querySelector('[data-stock-field="current"]');
+        if (currentCell) {
+          currentCell.className = `text-center fw-bold ${item.isLowStock ? 'text-danger' : 'text-success'}`;
+          currentCell.innerHTML = this.currentStockSpanHtml(item);
+        }
+
+        const statusCell = tr.querySelector('[data-stock-field="status"]');
+        if (statusCell) statusCell.innerHTML = this.statusBadgeHtml(item);
+
+        // The threshold <input> is never re-created (that would drop focus
+        // mid-tab-through) — only its value is synced, and it's re-enabled
+        // here since saveThreshold disables it for the duration of the call.
+        const thresholdInput = tr.querySelector('.threshold-input');
+        if (thresholdInput) {
+          if (String(thresholdInput.value) !== String(item.threshold)) thresholdInput.value = item.threshold;
+          thresholdInput.disabled = false;
+        }
+
+        return true;
+      },
+
+      // Reflects a successful adjustStockManually(name, size, newQty) in the
+      // loaded data + the single rendered row. Initial Stock moves with it
+      // because the server back-solves it so recalculateStock() still derives
+      // the corrected Current Stock (see adjustStockManually in
+      // module_stock.js): it writes newInitial = newCurrent - billed +
+      // consumed, and since the loaded row already satisfies oldCurrent =
+      // oldInitial + billed - consumed, that's exactly oldInitial + the
+      // delta — derivable here without another round trip.
+      applyStockChangeLocally(name, size, newQty) {
+        const item = (App.State.globalStock || []).find(i =>
+          App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size || ''));
+        if (!item) return false;
+
+        const delta = newQty - (Number(item.currentStock) || 0);
+        return this.patchRowInPlace(name, size, {
+          currentStock: newQty,
+          initialStock: (Number(item.initialStock) || 0) + delta
+        });
       },
 
       // Click-to-edit Current Stock cell — same interaction as the Warehouse
@@ -19045,18 +19597,11 @@
         const name = decodeURIComponent(encName || '');
         const size = decodeURIComponent(encSize || '');
 
-        // Patches both state arrays (same pattern as toggleDeadStock) and
-        // re-renders — Current Stock drives isLowStock, which in turn drives
-        // this row's color/badge and the whole Alerts panel, so a full
-        // renderTable()/renderAlerts() is simpler and safer than hand-
-        // patching every derived bit of UI.
+        // Patches state + repaints just this row (see patchRowInPlace), so
+        // the table doesn't jump back to page 1 / lose the search. Falls
+        // back to a full render if the row can't be located.
         const applyLocally = (qty) => {
-          const item = App.State.globalStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
-          if (item) { item.currentStock = qty; item.isLowStock = qty < item.threshold; }
-          const filteredItem = App.State.filteredStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
-          if (filteredItem) { filteredItem.currentStock = qty; filteredItem.isLowStock = qty < filteredItem.threshold; }
-          this.renderAlerts();
-          this.renderTable();
+          if (!this.applyStockChangeLocally(name, size, qty)) this.renderTable();
         };
 
         let settled = false;
@@ -19343,8 +19888,12 @@
           const res = await Api.call('updateThreshold', name, size, thresholdVal);
           if (res?.success) {
             App.Utils.showToast('Threshold updated successfully.');
-            // Refresh stock data to recalculate isLowStock status and alert lists
-            await this.loadData();
+            // Recalculates isLowStock + the alert list for this one row
+            // rather than reloading the whole table (see patchRowInPlace),
+            // so editing thresholds down a list doesn't reset your place.
+            if (!this.patchRowInPlace(name, size, { threshold: thresholdVal })) {
+              await this.loadData();
+            }
           } else {
             App.Utils.showToast(res?.message || 'Failed to update threshold.', true);
             inputEl.disabled = false;
@@ -19359,6 +19908,21 @@
         const form = document.getElementById('stockImportForm');
         if (form) form.reset();
         safeModalShow('importStockModal');
+      },
+
+      // Row-button entry point for the "Correct stock manually" modal. Reads
+      // the qty from the loaded data rather than from a number baked into the
+      // button's onclick, so a cell-level patch (see patchRowInPlace, which
+      // deliberately doesn't rebuild the row's buttons) can never leave this
+      // button carrying a stale "old value". Name/size travel as encoded data
+      // attributes, which also sidesteps quoting names containing apostrophes.
+      openAdjustModalFromRow(btn) {
+        if (!btn) return;
+        const name = decodeURIComponent(btn.getAttribute('data-enc-name') || '');
+        const size = decodeURIComponent(btn.getAttribute('data-enc-size') || '');
+        const item = (App.State.globalStock || []).find(i =>
+          App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+        this.openAdjustModal(name, size, item ? item.currentStock : 0);
       },
 
       openAdjustModal(name, size, currentStock) {
@@ -19398,7 +19962,10 @@
           App.Utils.showToast(res?.message || 'Stock adjusted.', !res?.success);
           if (res?.success) {
             safeModalHide('adjustStockModal');
-            await this.loadData();
+            // Patch just this row instead of reloading the whole table —
+            // see patchRowInPlace. Full reload only if it can't be patched
+            // (row not loaded / not on the displayed page).
+            if (!this.applyStockChangeLocally(name, size, newValue)) await this.loadData();
           }
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to adjust stock.', true);
@@ -20094,21 +20661,35 @@
         let html = '';
         pageItems.forEach(p => {
           const idx = App.State.globalProduction.indexOf(p);
-          const key = String(p.rowIdx);
-          const checked = App.Selection.isSelected(App.State.selectedProduction, key) ? 'checked' : '';
+          html += this.rowHtml(p, idx);
+        });
 
-          const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
-          const processLabel = process ? process.processName : (p.processId || 'Uncategorized');
+        tbody.innerHTML = html;
 
-          const statusOptions = this.STATUS_OPTIONS
-            .map(s => `<option value="${s}" ${s === p.status ? 'selected' : ''}>${s}</option>`)
-            .join('');
+        App.Utils.renderPagination('productionPagination', filteredProduction.length, cur, rpp, 'production-page', 'Production Lots');
+        this.updateBulkButtons();
+      },
 
-          const colorBadges = (p.colorBreakdown && p.colorBreakdown.length > 0)
-            ? p.colorBreakdown.map(c => `<span class="badge bg-info text-dark me-1">${escapeHtml(c.color)}${c.size ? ` (${escapeHtml(c.size)})` : ''}: ${this.formatQty(c.qty)}</span>`).join('')
-            : (p.color ? `<span class="badge bg-info text-dark">${escapeHtml(p.color)}</span>` : '');
+      // Renders one <tr> for a Production Log record. Shared by renderTable's
+      // full rebuild and patchRowInPlace's single-row swap below — keeping
+      // them on one code path means an in-place patch can never drift from
+      // what a full reload would have rendered for that same row.
+      rowHtml(p, idx) {
+        const key = String(p.rowIdx);
+        const checked = App.Selection.isSelected(App.State.selectedProduction, key) ? 'checked' : '';
 
-          html += `<tr>
+        const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+        const processLabel = process ? process.processName : (p.processId || 'Uncategorized');
+
+        const statusOptions = this.STATUS_OPTIONS
+          .map(s => `<option value="${s}" ${s === p.status ? 'selected' : ''}>${s}</option>`)
+          .join('');
+
+        const colorBadges = (p.colorBreakdown && p.colorBreakdown.length > 0)
+          ? p.colorBreakdown.map(c => `<span class="badge bg-info text-dark me-1">${escapeHtml(c.color)}${c.size ? ` (${escapeHtml(c.size)})` : ''}: ${this.formatQty(c.qty)}</span>`).join('')
+          : (p.color ? `<span class="badge bg-info text-dark">${escapeHtml(p.color)}</span>` : '');
+
+        return `<tr data-row-key="${escapeHtml(key)}">
         <td class="text-center"><input type="checkbox" class="form-check-input production-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Production.onRowSelectChange()"></td>
         <td>${escapeHtml(p.date)}</td>
         <td><strong>${escapeHtml(processLabel)}</strong><br><span class="badge bg-secondary">${escapeHtml(p.lotNumber || '-')}</span></td>
@@ -20126,12 +20707,41 @@
           <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Production.delete('${p.rowIdx}', '${escapeHtml(p.productId)}', '${p.qty}')">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
+      // Patches one already-loaded row's data + its rendered <tr> after an
+      // Edit Lot save, instead of the old approach (loadData(): a full
+      // getProductionData round-trip + rebuilding every row's HTML), which
+      // flashed "Loading Production Logs..." over the whole table and reset
+      // scroll position on every single-row edit.
+      //
+      // Mutates the SAME row object already sitting in globalProduction (and
+      // therefore filteredProduction too — filterData() derives it via
+      // .filter(), which holds the same object references, not copies) so
+      // nothing else needs re-pointing; mirrors the in-place mutation
+      // updateStatus() above already does for the status field alone.
+      //
+      // Trade-off accepted for this: no re-sort/re-filter happens here, so if
+      // the edit changed a value the active Sort/Search depends on (e.g. its
+      // Date under "Sort by Date"), the row keeps its old position/visibility
+      // until the next natural full reload (tab switch, filter, refresh).
+      //
+      // Returns false — so the caller can fall back to loadData() — when the
+      // row isn't currently loaded (stale local state) or isn't on the
+      // currently displayed page (nothing in the DOM to patch).
+      patchRowInPlace(freshRow) {
+        const key = String(freshRow.rowIdx);
+        const existing = App.State.globalProduction.find(r => String(r.rowIdx) === key);
+        if (!existing) return false;
 
-        App.Utils.renderPagination('productionPagination', filteredProduction.length, cur, rpp, 'production-page', 'Production Lots');
-        this.updateBulkButtons();
+        Object.assign(existing, freshRow);
+
+        const tr = document.querySelector(`#productionTableBody tr[data-row-key="${key}"]`);
+        if (!tr) return false;
+
+        const idx = App.State.globalProduction.indexOf(existing);
+        tr.outerHTML = this.rowHtml(existing, idx);
+        return true;
       },
 
       toggleSelectAll(masterChk) {
@@ -23462,6 +24072,23 @@
         const form = document.getElementById('productionForm');
         if (form) form.reset();
 
+        // form.reset() restores field VALUES but NOT the disabled state, and
+        // openEditModal locks Size/Model/Process Type/Process on an existing
+        // lot (its process — and therefore its size/model/type — can't be
+        // changed once the lot exists). Nothing else ever re-enables the Size
+        // select: the cascade only re-gates Model/Type/Process off the value
+        // at each level (disabled = !size, etc.), while Size is the cascade's
+        // own entry point. So a Create opened right after an Edit would
+        // inherit a permanently-disabled Size dropdown, leaving the whole form
+        // dead (the cascade can never start). Re-enable all four here — before
+        // the populate + cascade below re-init their Select2 widgets, so those
+        // widgets inherit the enabled state — and let handleSizeChange('')
+        // re-disable Model/Type/Process appropriately for a blank Size.
+        ['productionSize', 'productionModel', 'productionProcessType', 'productionProcessId'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = false;
+        });
+
         await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded(), App.Color.ensureLoaded()]);
 
         document.getElementById('productionRowIdx').value = '';
@@ -24413,13 +25040,15 @@
           try {
             const response = await Api.call('saveProduction', formData);
             if (response.success) {
-              // Reload the underlying list BEFORE branching — both the
-              // "stay open, re-arm for next" and "stay open, same record"
-              // paths below read fresh App.State.globalProduction, and
-              // openEditModal indexes into it directly.
-              await App.Production.loadData();
-
               if (isNewLot) {
+                // A brand-new lot's sorted/paginated position can't be
+                // determined cheaply on the client, so still do a full
+                // reload here (see patchRowInPlace's doc comment for why an
+                // edit doesn't need to). Both branches below read fresh
+                // App.State.globalProduction, and openEditModal indexes
+                // into it directly.
+                await App.Production.loadData();
+
                 // Stay open and re-arm for the next lot instead of closing —
                 // operators log many lots back-to-back. The fieldset is
                 // disabled for the full duration of the re-arm (not just the
@@ -24435,16 +25064,27 @@
                 }
                 document.getElementById('productionSize')?.focus();
               } else {
-                // Edit mode "Save": stay open (Exit — App.Nav.exit — is the
-                // only way to close from here now) and re-run this SAME
-                // record through openEditModal instead of just leaving the
-                // form as-is — that's the one path already proven to
-                // correctly repaint every derived/computed bit of state
-                // (Lot Number, color matrix, Nav's dirty-snapshot and N-of-M
-                // position) from a saved record, so it reflects what was
-                // just saved instead of staying frozen at pre-save values.
-                // Re-derived by rowIdx (stable) rather than reusing the old
-                // positional `idx` — loadData() just rebuilt the array, and
+                // Edit mode "Save": patch just this one row's data + <tr>
+                // in place (see patchRowInPlace) instead of a full
+                // loadData() reload — falls back to a full reload if the
+                // row can't be patched (e.g. this tab wasn't the one
+                // showing when the edit was made, or the server didn't
+                // echo a row back).
+                const patched = response.data && response.data.row
+                  ? App.Production.patchRowInPlace(response.data.row)
+                  : false;
+                if (!patched) await App.Production.loadData();
+
+                // Stay open (Exit — App.Nav.exit — is the only way to
+                // close from here now) and re-run this SAME record through
+                // openEditModal instead of just leaving the form as-is —
+                // that's the one path already proven to correctly repaint
+                // every derived/computed bit of state (Lot Number, color
+                // matrix, Nav's dirty-snapshot and N-of-M position) from a
+                // saved record, so it reflects what was just saved instead
+                // of staying frozen at pre-save values. Re-derived by
+                // rowIdx (stable) rather than reusing the old positional
+                // `idx` — a fallback loadData() just rebuilt the array, and
                 // nothing guarantees this row landed at the same index.
                 const freshIdx = App.State.globalProduction.findIndex(r => String(r.rowIdx) === savedRowIdx);
                 if (freshIdx !== -1) {
@@ -24770,15 +25410,27 @@
             if (collapsed.has(keyPrefix.slice(0, -1))) hiddenByCollapse = true;
           }
           if (hiddenByCollapse) return;
-          const idx = App.State.globalProcesses.indexOf(p);
-          const checked = App.Selection.isSelected(App.State.selectedProcesses, p.processId) ? 'checked' : '';
-          const rowAttrs = dragEnabled
-            ? `draggable="true" ondragstart="App.Process.onDragStart(event,'${escapeHtml(p.processId)}')" ondragover="App.Process.onDragOver(event)" ondrop="App.Process.onDrop(event,'${escapeHtml(p.processId)}')" ondragend="App.Process.onDragEnd(event)"`
-            : '';
-          const handleCell = dragEnabled
-            ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
-            : '<td></td>';
-          html += `<tr ${rowAttrs}>
+          html += this.rowHtml(p, dragEnabled);
+        });
+
+        tbody.innerHTML = html;
+        this.updateBulkButtons();
+      },
+
+      // Renders one <tr> for a process (no group headers — those are
+      // built inline in renderTable, which is the only caller that needs
+      // them). Shared by renderTable's full rebuild and patchRowInPlace's
+      // single-row swap below.
+      rowHtml(p, dragEnabled) {
+        const idx = App.State.globalProcesses.indexOf(p);
+        const checked = App.Selection.isSelected(App.State.selectedProcesses, p.processId) ? 'checked' : '';
+        const rowAttrs = dragEnabled
+          ? `draggable="true" ondragstart="App.Process.onDragStart(event,'${escapeHtml(p.processId)}')" ondragover="App.Process.onDragOver(event)" ondrop="App.Process.onDrop(event,'${escapeHtml(p.processId)}')" ondragend="App.Process.onDragEnd(event)"`
+          : '';
+        const handleCell = dragEnabled
+          ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
+          : '<td></td>';
+        return `<tr ${rowAttrs} data-process-key="${escapeHtml(p.processId)}">
         ${handleCell}
         <td class="text-center"><input type="checkbox" class="form-check-input process-select-chk" data-key="${escapeHtml(p.processId)}" ${checked} onchange="App.Process.onRowSelectChange()"></td>
         <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(p.processId)}</span></td>
@@ -24795,10 +25447,49 @@
           <button class="btn btn-sm btn-danger btn-action" onclick="App.Process.delete('${escapeHtml(p.processId)}')">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
-        this.updateBulkButtons();
+      // Patches one already-loaded process's data + its rendered <tr> after
+      // an edit save, instead of a full loadData() reload — see
+      // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+      // for the full rationale/trade-offs this mirrors. processId is
+      // server-assigned and never user-editable, so this is a safe stable
+      // key.
+      //
+      // Only swaps the single <tr> in place when the table is in its flat,
+      // ungrouped, unfiltered view — group headers (see renderTable's tiers/
+      // lastValues walk) are inline with data rows and depend on each row's
+      // position relative to its neighbors, so a change to whatever field
+      // the active "Group by" dimensions key off of could move this row to
+      // a different group entirely. In that case (or search-filtered), this
+      // still mutates the in-memory record and does a full
+      // renderTable() — a client-side re-render from already-correct data,
+      // NOT a server reload — so the group/search UI stays consistent.
+      //
+      // Returns false only when the process isn't currently loaded at all
+      // (caller falls back to loadData()); a grouped/filtered re-render is
+      // reported as a successful patch since it never hit the network.
+      patchRowInPlace(freshProcess) {
+        const key = String(freshProcess.processId);
+        const existing = App.State.globalProcesses.find(p => String(p.processId) === key);
+        if (!existing) return false;
+
+        Object.assign(existing, freshProcess);
+
+        const tiers = App.State.processGroupOrder.filter(dim => dim && App.Process.GROUP_DIMENSIONS[dim]);
+        const searchEl = document.getElementById('searchProcess');
+        const isSearchFiltered = !!(searchEl && searchEl.value.trim());
+
+        if (tiers.length > 0 || isSearchFiltered) {
+          this.renderTable();
+          return true;
+        }
+
+        const tr = document.querySelector(`#processTableBody tr[data-process-key="${key}"]`);
+        if (!tr) { this.renderTable(); return true; }
+
+        tr.outerHTML = this.rowHtml(existing, true);
+        return true;
       },
 
       // Drag-and-drop manual reorder (flat/ungrouped view only — see
@@ -26587,8 +27278,6 @@
           try {
             const response = await Api.call('saveProcess', formData);
             if (response.success) {
-              await App.Process.loadData();
-
               // A saved Color Sub-Group changes the known-colors list Warehouse
               // Pool uses to render placeholder rows (App.Stock.computeLeafRowsForProcess,
               // fed by getAllProcessColorGroups) — refresh it now instead of
@@ -26601,12 +27290,22 @@
               }
 
               if (isEdit) {
-                // Save (edit mode): stay open on the SAME process instead of
-                // closing — Exit (App.Nav.exit) is the only way to close
-                // from here now. processId is server-assigned and never
-                // user-editable (duplicateProcess explicitly clears it to
-                // signal "this is really a create"), so it's a safe stable
-                // key to re-find this record by after the reload.
+                // Save (edit mode): patch just this one process's data +
+                // <tr> in place instead of a full loadData() reload — see
+                // App.Process.patchRowInPlace's doc comment for how it
+                // handles the grouped/filtered table views. Falls back to
+                // a full reload if the process can't be patched.
+                const patched = response.data && response.data.process
+                  ? App.Process.patchRowInPlace(response.data.process)
+                  : false;
+                if (!patched) await App.Process.loadData();
+
+                // Stay open on the SAME process instead of closing — Exit
+                // (App.Nav.exit) is the only way to close from here now.
+                // processId is server-assigned and never user-editable
+                // (duplicateProcess explicitly clears it to signal "this is
+                // really a create"), so it's a safe stable key to re-find
+                // this record by.
                 const freshIdx = App.State.globalProcesses.findIndex(p => p.processId === formData.processId);
                 if (freshIdx !== -1) {
                   App.Process.openEditModal(freshIdx);
@@ -26615,6 +27314,11 @@
                   if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
                 }
               } else {
+                // A brand-new process's manual drag-and-drop display order
+                // position can't be determined cheaply on the client —
+                // full reload here (see App.Process.patchRowInPlace's doc
+                // comment for why an edit doesn't need to).
+                await App.Process.loadData();
                 await App.Process.openCreateModal();
               }
             }
@@ -26825,11 +27529,24 @@
 
         let html = '';
         pageItems.forEach(d => {
-          const idx = App.State.globalDispatch.indexOf(d);
-          const key = String(d.rowIdx);
-          const checked = App.Selection.isSelected(App.State.selectedDispatch, key) ? 'checked' : '';
+          html += this.rowHtml(d);
+        });
 
-          html += `<tr>
+        tbody.innerHTML = html;
+
+        App.Utils.renderPagination('dispatchPagination', filteredDispatch.length, cur, rpp, 'dispatch-page', 'Dispatch Records');
+        this.updateDispatchBulkButtons();
+      },
+
+      // Renders one <tr> for a dispatch record. Shared by
+      // renderDispatchTable's full rebuild and patchRowInPlace's
+      // single-row swap below.
+      rowHtml(d) {
+        const idx = App.State.globalDispatch.indexOf(d);
+        const key = String(d.rowIdx);
+        const checked = App.Selection.isSelected(App.State.selectedDispatch, key) ? 'checked' : '';
+
+        return `<tr data-row-key="${escapeHtml(key)}">
         <td class="text-center">
           <input type="checkbox" class="form-check-input dispatch-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Dispatch.onDispatchRowSelectChange()">
         </td>
@@ -26848,12 +27565,28 @@
           <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Dispatch.delete('${d.rowIdx}', '${escapeHtml(d.dispatchNumber)}', '${d.qty}')">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
+      // Patches one already-loaded dispatch record's data + its rendered
+      // <tr> after an edit save, instead of a full loadDispatchData()
+      // reload — see App.Production.patchRowInPlace's doc comment
+      // (Script_Production.html) for the full rationale/trade-offs this
+      // mirrors. rowIdx (the physical sheet row) is stable across an
+      // in-place edit, so it's a safe key. Returns false — caller should
+      // fall back to loadDispatchData() — if the record isn't currently
+      // loaded or isn't on the displayed page.
+      patchRowInPlace(freshRow) {
+        const key = String(freshRow.rowIdx);
+        const existing = App.State.globalDispatch.find(d => String(d.rowIdx) === key);
+        if (!existing) return false;
 
-        App.Utils.renderPagination('dispatchPagination', filteredDispatch.length, cur, rpp, 'dispatch-page', 'Dispatch Records');
-        this.updateDispatchBulkButtons();
+        Object.assign(existing, freshRow);
+
+        const tr = document.querySelector(`#dispatchTableBody tr[data-row-key="${key}"]`);
+        if (!tr) return false;
+
+        tr.outerHTML = this.rowHtml(existing);
+        return true;
       },
 
       toggleSelectAllDispatch(masterChk) {
@@ -27433,13 +28166,22 @@
           try {
             const res = await Api.call('saveDispatch', formData);
             if (res.success) {
-              await App.Dispatch.loadDispatchData();
               await App.Dispatch.loadReadyData();
+
               if (isEdit) {
-                // Save (edit mode): stay open on the SAME dispatch instead
-                // of closing — Exit (App.Nav.exit) is the only way to close
-                // from here now. rowIdx is the sheet row number, stable
-                // across a reload for an in-place edit.
+                // Save (edit mode): patch just this one record's data +
+                // <tr> in place instead of a full loadDispatchData()
+                // reload — falls back to a full reload if the record
+                // can't be patched.
+                const patched = res.data && res.data.row
+                  ? App.Dispatch.patchRowInPlace(res.data.row)
+                  : false;
+                if (!patched) await App.Dispatch.loadDispatchData();
+
+                // Stay open on the SAME dispatch instead of closing — Exit
+                // (App.Nav.exit) is the only way to close from here now.
+                // rowIdx is the sheet row number, stable across an
+                // in-place edit.
                 const freshIdx = App.State.globalDispatch.findIndex(d => String(d.rowIdx) === String(formData.dispatchRowIdx));
                 if (freshIdx !== -1) {
                   App.Dispatch.openEditDispatchModal(freshIdx);
@@ -27447,6 +28189,11 @@
                   safeModalHide('dispatchModal');
                 }
               } else {
+                // A brand-new record's sorted/paginated position can't be
+                // determined cheaply on the client — full reload here (see
+                // App.Dispatch.patchRowInPlace's doc comment for why an
+                // edit doesn't need to).
+                await App.Dispatch.loadDispatchData();
                 App.Dispatch.openCreateDispatchModal('');
               }
             }
@@ -27550,18 +28297,26 @@
               pageItems.every(ret => App.Selection.isSelected(App.State.selectedReturns, String(ret.returnNumber)));
           }
 
-          tbody.innerHTML = pageItems.map(ret => {
-            const index = App.State.globalReturns.indexOf(ret);
-            const billBadge = ret.billNumber
-              ? `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">${escapeHtml(ret.billNumber)}</span>`
-              : '<span class="badge bg-secondary">—</span>';
+          tbody.innerHTML = pageItems.map(ret => this.rowHtml(ret)).join('');
 
-            const itemsPreview = formatItemsPreview(ret.items);
-            const key = String(ret.returnNumber);
-            const checkedAttr = App.Selection.isSelected(App.State.selectedReturns, key) ? 'checked' : '';
+          App.Utils.renderPagination('returnPagination', filteredReturns.length, cur, rpp, 'return-page', 'Returns');
+          this.updateBulkButtons();
+        },
 
-            return `
-            <tr>
+        // Renders one <tr> for a return. Shared by renderTable's full
+        // rebuild and patchRowInPlace's single-row swap below.
+        rowHtml(ret) {
+          const index = App.State.globalReturns.indexOf(ret);
+          const billBadge = ret.billNumber
+            ? `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">${escapeHtml(ret.billNumber)}</span>`
+            : '<span class="badge bg-secondary">—</span>';
+
+          const itemsPreview = formatItemsPreview(ret.items);
+          const key = String(ret.returnNumber);
+          const checkedAttr = App.Selection.isSelected(App.State.selectedReturns, key) ? 'checked' : '';
+
+          return `
+            <tr data-return-key="${escapeHtml(key)}">
               <td class="text-center">
                 <input type="checkbox" class="form-check-input return-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.Return.onRowSelectChange()">
               </td>
@@ -27584,10 +28339,28 @@
                         data-return-number="${escapeHtml(ret.returnNumber || '')}">Delete</button>
               </td>
             </tr>`;
-          }).join('');
+        },
 
-          App.Utils.renderPagination('returnPagination', filteredReturns.length, cur, rpp, 'return-page', 'Returns');
-          this.updateBulkButtons();
+        // Patches one already-loaded return's data + its rendered <tr>
+        // after an edit save, instead of a full loadData() reload — see
+        // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+        // for the full rationale/trade-offs this mirrors. returnNumber is
+        // user-editable (optional — server auto-generates when blank), so
+        // this is keyed by the PRE-edit number (oldReturnNumber), same as
+        // App.Bill.patchRowInPlace's oldKey. Returns false — caller should
+        // fall back to loadData() — if the return isn't currently loaded or
+        // isn't on the displayed page.
+        patchRowInPlace(freshReturn, oldReturnNumber) {
+          const existing = App.State.globalReturns.find(r => String(r.returnNumber) === String(oldReturnNumber));
+          if (!existing) return false;
+
+          Object.assign(existing, freshReturn);
+
+          const tr = document.querySelector(`#returnTableBody tr[data-return-key="${CSS.escape(String(oldReturnNumber))}"]`);
+          if (!tr) return false;
+
+          tr.outerHTML = this.rowHtml(existing);
+          return true;
         },
 
         toggleSelectAll(masterChk) {
@@ -29564,8 +30337,20 @@
 
         let html = '';
         pageItems.forEach(c => {
-          const checked = App.Selection.isSelected(App.State.selectedClients, c.name) ? 'checked' : '';
-          html += `<tr>
+          html += this.clientRowHtml(c);
+        });
+
+        tbody.innerHTML = html;
+
+        App.Utils.renderPagination('clientsPagination', filteredClients.length, cur, rpp, 'client-page', 'Clients');
+        this.updateClientBulkButtons();
+      },
+
+      // Renders one <tr> for a client. Shared by renderClientsTable's full
+      // rebuild and patchClientRowInPlace's single-row swap below.
+      clientRowHtml(c) {
+        const checked = App.Selection.isSelected(App.State.selectedClients, c.name) ? 'checked' : '';
+        return `<tr data-client-key="${escapeHtml(c.name)}">
         <td class="text-center">
           <input type="checkbox" class="form-check-input client-select-chk" data-key="${escapeHtml(c.name)}" ${checked} onchange="App.Client.onClientRowSelectChange()">
         </td>
@@ -29579,12 +30364,28 @@
           <button class="btn btn-sm btn-outline-danger btn-action w-100" data-client-name="${escapeHtml(c.name)}" onclick="App.Client.deleteClient(this.dataset.clientName)">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
+      // Patches one already-loaded client's data + its rendered <tr> after
+      // an edit save, instead of a full loadClientsData() reload — see
+      // App.Production.patchRowInPlace's doc comment (Script_Production.html)
+      // for the full rationale/trade-offs this mirrors. name is
+      // user-editable on an edit (a rename), so this is keyed by the
+      // PRE-edit name — how the row is currently indexed in
+      // globalClients/the DOM — not the post-save freshClient's own name.
+      // Returns false — caller should fall back to loadClientsData() — if
+      // the client isn't currently loaded or isn't on the displayed page.
+      patchClientRowInPlace(freshClient, oldName) {
+        const existing = App.State.globalClients.find(c => c.name === oldName);
+        if (!existing) return false;
 
-        App.Utils.renderPagination('clientsPagination', filteredClients.length, cur, rpp, 'client-page', 'Clients');
-        this.updateClientBulkButtons();
+        Object.assign(existing, freshClient);
+
+        const tr = document.querySelector(`#clientsTableBody tr[data-client-key="${CSS.escape(oldName)}"]`);
+        if (!tr) return false;
+
+        tr.outerHTML = this.clientRowHtml(existing);
+        return true;
       },
 
       toggleSelectAllClients(masterChk) {
@@ -29778,14 +30579,26 @@
 
         let html = '';
         pageItems.forEach(o => {
-          const idx = App.State.globalOrders.indexOf(o);
-          const checked = App.Selection.isSelected(App.State.selectedOrders, o.orderNumber) ? 'checked' : '';
-          const productsSummary = (o.lines || [])
-            .map(l => `${escapeHtml(l.productName)} <span class="text-muted">x${App.Production.formatQty(l.qty)}</span>`)
-            .join('<br>');
-          const { label, badgeClass } = this.calculatePIDisplayStatus(o);
+          html += this.orderRowHtml(o);
+        });
 
-          html += `<tr>
+        tbody.innerHTML = html;
+
+        App.Utils.renderPagination('clientOrdersPagination', filteredOrders.length, cur, rpp, 'order-page', 'PI / Estimates');
+        this.updateOrderBulkButtons();
+      },
+
+      // Renders one <tr> for a PI/Estimate. Shared by renderOrdersTable's
+      // full rebuild and patchOrderRowInPlace's single-row swap below.
+      orderRowHtml(o) {
+        const idx = App.State.globalOrders.indexOf(o);
+        const checked = App.Selection.isSelected(App.State.selectedOrders, o.orderNumber) ? 'checked' : '';
+        const productsSummary = (o.lines || [])
+          .map(l => `${escapeHtml(l.productName)} <span class="text-muted">x${App.Production.formatQty(l.qty)}</span>`)
+          .join('<br>');
+        const { label, badgeClass } = this.calculatePIDisplayStatus(o);
+
+        return `<tr data-order-key="${escapeHtml(o.orderNumber)}">
         <td class="text-center">
           <input type="checkbox" class="form-check-input order-select-chk" data-key="${escapeHtml(o.orderNumber)}" ${checked} onchange="App.Client.onOrderRowSelectChange()">
         </td>
@@ -29800,12 +30613,27 @@
           <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Client.deleteOrder('${escapeHtml(o.orderNumber)}')">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
+      // Patches one already-loaded PI/Estimate's data + its rendered <tr>
+      // after an edit save, instead of a full loadOrdersData() reload —
+      // see App.Production.patchRowInPlace's doc comment (Script_Production.html)
+      // for the full rationale/trade-offs this mirrors. orderNumber is
+      // server-assigned and never user-editable, so this is a safe stable
+      // key. Returns false — caller should fall back to loadOrdersData() —
+      // if the order isn't currently loaded or isn't on the displayed page.
+      patchOrderRowInPlace(freshOrder) {
+        const key = String(freshOrder.orderNumber);
+        const existing = App.State.globalOrders.find(o => String(o.orderNumber) === key);
+        if (!existing) return false;
 
-        App.Utils.renderPagination('clientOrdersPagination', filteredOrders.length, cur, rpp, 'order-page', 'PI / Estimates');
-        this.updateOrderBulkButtons();
+        Object.assign(existing, freshOrder);
+
+        const tr = document.querySelector(`#clientOrdersTableBody tr[data-order-key="${key}"]`);
+        if (!tr) return false;
+
+        tr.outerHTML = this.orderRowHtml(existing);
+        return true;
       },
 
       toggleSelectAllOrders(masterChk) {
@@ -30391,15 +31219,30 @@
           try {
             const res = await Api.call('saveClient', formData);
             if (res.success) {
-              await App.Client.loadClientsData();
               if (isEdit) {
-                // Save (edit mode): stay open on the SAME client instead of
-                // closing — Exit (App.Nav.exit) is the only way to close
-                // from here now. Client name is editable (rename cascades
-                // server-side), so re-open with the NEW value just saved,
-                // not the pre-edit originalClientName.
+                // Save (edit mode): patch just this one client's data +
+                // <tr> in place instead of a full loadClientsData()
+                // reload — keyed by the PRE-edit name (originalClientName),
+                // since that's how the row is currently indexed in
+                // globalClients/the DOM. Falls back to a full reload if
+                // the client can't be patched.
+                const patched = res.data && res.data.client
+                  ? App.Client.patchClientRowInPlace(res.data.client, formData.originalClientName)
+                  : false;
+                if (!patched) await App.Client.loadClientsData();
+
+                // Stay open on the SAME client instead of closing — Exit
+                // (App.Nav.exit) is the only way to close from here now.
+                // Client name is editable (rename cascades server-side), so
+                // re-open with the NEW value just saved, not the pre-edit
+                // originalClientName.
                 App.Client.openEditClientModal(formData.clientName);
               } else {
+                // A brand-new client's alphabetically-sorted position can't
+                // be determined cheaply on the client — full reload here
+                // (see App.Client.patchClientRowInPlace's doc comment for
+                // why an edit doesn't need to).
+                await App.Client.loadClientsData();
                 App.Client.openCreateClientModal();
               }
             }
@@ -30426,15 +31269,23 @@
           try {
             const res = await Api.call('saveClientOrder', formData);
             if (res.success) {
-              await App.Client.loadOrdersData();
               if (typeof App.Dispatch !== 'undefined') await App.Dispatch.loadReadyData();
+
               if (isEdit) {
-                // Save (edit mode): stay open on the SAME order instead of
-                // closing — Exit (App.Nav.exit) is the only way to close
-                // from here now. orderNumber is server-assigned and never
-                // user-editable (blank until the server generates one on
-                // first create), so it's a safe stable key to re-find this
-                // record by after the reload.
+                // Save (edit mode): patch just this one order's data +
+                // <tr> in place instead of a full loadOrdersData() reload
+                // — falls back to a full reload if the order can't be
+                // patched.
+                const patched = res.data && res.data.order
+                  ? App.Client.patchOrderRowInPlace(res.data.order)
+                  : false;
+                if (!patched) await App.Client.loadOrdersData();
+
+                // Stay open on the SAME order instead of closing — Exit
+                // (App.Nav.exit) is the only way to close from here now.
+                // orderNumber is server-assigned and never user-editable
+                // (blank until the server generates one on first create),
+                // so it's a safe stable key to re-find this record by.
                 const freshIdx = App.State.globalOrders.findIndex(o => String(o.orderNumber) === String(formData.orderNumber));
                 if (freshIdx !== -1) {
                   App.Client.openEditOrderModal(freshIdx);
@@ -30442,6 +31293,11 @@
                   safeModalHide('clientOrderModal');
                 }
               } else {
+                // A brand-new order's newest-first sorted position can't
+                // be determined cheaply on the client — full reload here
+                // (see App.Client.patchOrderRowInPlace's doc comment for
+                // why an edit doesn't need to).
+                await App.Client.loadOrdersData();
                 App.Client.openCreateOrderModal();
               }
             }

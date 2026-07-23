@@ -402,6 +402,18 @@ console.log('\n=== Test 6: editing a lot preserves its Color ===');
   assert(!!updated, 'edited row still found');
   assert(updated.qty === 7, 'qty updated to 7 (got ' + (updated && updated.qty) + ')');
   assert(updated.color === 'Red', 'color preserved as Red after edit (got "' + (updated && updated.color) + '")');
+
+  // saveProduction's response now echoes the freshly-written row back
+  // (see _mapProductionRow) so the client can patch it into an already-
+  // loaded table in place instead of re-fetching/re-rendering the whole
+  // list on every save — the echoed row must match what a full reload
+  // (getProductionData) would have returned for the same rowIdx.
+  const echoed = editRes.data && editRes.data.row;
+  assert(!!echoed, 'saveProduction echoes back the fresh row in response.data.row');
+  assert(echoed.rowIdx === redLot.rowIdx, 'echoed row has the correct rowIdx (got ' + (echoed && echoed.rowIdx) + ')');
+  assert(echoed.qty === 7, 'echoed row has the updated qty 7 (got ' + (echoed && echoed.qty) + ')');
+  assert(echoed.color === 'Red', 'echoed row has the updated color (got "' + (echoed && echoed.color) + '")');
+  assert(JSON.stringify(echoed) === JSON.stringify(updated), 'echoed row matches what a full reload would return for this rowIdx');
 }
 
 // ─────────────────────────────────────────────────────────────────────────

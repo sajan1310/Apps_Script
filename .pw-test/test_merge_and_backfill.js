@@ -166,6 +166,7 @@ const ctx = vm.createContext(sandbox);
 const files = [
   'config.js',
   'utils.js',
+  'module_units.js',
   'module_items.js',
   'module_stock.js',
   'module_bill.js',

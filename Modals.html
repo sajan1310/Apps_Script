@@ -1,6 +1,6 @@
 <!-- Toast Notification -->
-<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1060;">
-  <div id="systemToast" class="toast align-items-center text-white border-0" role="alert" aria-live="assertive" aria-atomic="true">
+<div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1060;">
+  <div id="systemToast" class="toast align-items-center text-white border-0" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="3000">
     <div class="d-flex">
       <div class="toast-body" id="toastMessage">Notification</div>
       <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
@@ -22,6 +22,30 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-danger" id="confirmActionBtn">Yes, Proceed</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Prev/Next Unsaved-Changes Modal -->
+<!-- Shown by App.Nav.go() instead of the generic confirmModal when the
+     open edit form has unsaved changes — unlike confirmModal's plain
+     discard-or-cancel choice, stepping to another record can also save
+     first, so this offers a third path (see App.Nav.saveThenProceed). -->
+<div class="modal fade" id="navConfirmModal" tabindex="-1" aria-hidden="true" style="z-index: 1070;">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-warning">
+        <h5 class="modal-title text-dark">Unsaved Changes</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body fs-5">
+        You have unsaved changes in this form. What would you like to do before moving to the next record?
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-outline-danger" id="navDiscardBtn">Don't Save &amp; Proceed</button>
+        <button type="button" class="btn btn-primary" id="navSaveBtn">Save &amp; Proceed</button>
       </div>
     </div>
   </div>

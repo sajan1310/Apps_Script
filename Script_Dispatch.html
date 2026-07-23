@@ -194,11 +194,24 @@
 
         let html = '';
         pageItems.forEach(d => {
-          const idx = App.State.globalDispatch.indexOf(d);
-          const key = String(d.rowIdx);
-          const checked = App.Selection.isSelected(App.State.selectedDispatch, key) ? 'checked' : '';
+          html += this.rowHtml(d);
+        });
 
-          html += `<tr>
+        tbody.innerHTML = html;
+
+        App.Utils.renderPagination('dispatchPagination', filteredDispatch.length, cur, rpp, 'dispatch-page', 'Dispatch Records');
+        this.updateDispatchBulkButtons();
+      },
+
+      // Renders one <tr> for a dispatch record. Shared by
+      // renderDispatchTable's full rebuild and patchRowInPlace's
+      // single-row swap below.
+      rowHtml(d) {
+        const idx = App.State.globalDispatch.indexOf(d);
+        const key = String(d.rowIdx);
+        const checked = App.Selection.isSelected(App.State.selectedDispatch, key) ? 'checked' : '';
+
+        return `<tr data-row-key="${escapeHtml(key)}">
         <td class="text-center">
           <input type="checkbox" class="form-check-input dispatch-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Dispatch.onDispatchRowSelectChange()">
         </td>
@@ -217,12 +230,28 @@
           <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Dispatch.delete('${d.rowIdx}', '${escapeHtml(d.dispatchNumber)}', '${d.qty}')">Delete</button>
         </td>
       </tr>`;
-        });
+      },
 
-        tbody.innerHTML = html;
+      // Patches one already-loaded dispatch record's data + its rendered
+      // <tr> after an edit save, instead of a full loadDispatchData()
+      // reload — see App.Production.patchRowInPlace's doc comment
+      // (Script_Production.html) for the full rationale/trade-offs this
+      // mirrors. rowIdx (the physical sheet row) is stable across an
+      // in-place edit, so it's a safe key. Returns false — caller should
+      // fall back to loadDispatchData() — if the record isn't currently
+      // loaded or isn't on the displayed page.
+      patchRowInPlace(freshRow) {
+        const key = String(freshRow.rowIdx);
+        const existing = App.State.globalDispatch.find(d => String(d.rowIdx) === key);
+        if (!existing) return false;
 
-        App.Utils.renderPagination('dispatchPagination', filteredDispatch.length, cur, rpp, 'dispatch-page', 'Dispatch Records');
-        this.updateDispatchBulkButtons();
+        Object.assign(existing, freshRow);
+
+        const tr = document.querySelector(`#dispatchTableBody tr[data-row-key="${key}"]`);
+        if (!tr) return false;
+
+        tr.outerHTML = this.rowHtml(existing);
+        return true;
       },
 
       toggleSelectAllDispatch(masterChk) {
@@ -802,13 +831,22 @@
           try {
             const res = await Api.call('saveDispatch', formData);
             if (res.success) {
-              await App.Dispatch.loadDispatchData();
               await App.Dispatch.loadReadyData();
+
               if (isEdit) {
-                // Save (edit mode): stay open on the SAME dispatch instead
-                // of closing — Exit (App.Nav.exit) is the only way to close
-                // from here now. rowIdx is the sheet row number, stable
-                // across a reload for an in-place edit.
+                // Save (edit mode): patch just this one record's data +
+                // <tr> in place instead of a full loadDispatchData()
+                // reload — falls back to a full reload if the record
+                // can't be patched.
+                const patched = res.data && res.data.row
+                  ? App.Dispatch.patchRowInPlace(res.data.row)
+                  : false;
+                if (!patched) await App.Dispatch.loadDispatchData();
+
+                // Stay open on the SAME dispatch instead of closing — Exit
+                // (App.Nav.exit) is the only way to close from here now.
+                // rowIdx is the sheet row number, stable across an
+                // in-place edit.
                 const freshIdx = App.State.globalDispatch.findIndex(d => String(d.rowIdx) === String(formData.dispatchRowIdx));
                 if (freshIdx !== -1) {
                   App.Dispatch.openEditDispatchModal(freshIdx);
@@ -816,6 +854,11 @@
                   safeModalHide('dispatchModal');
                 }
               } else {
+                // A brand-new record's sorted/paginated position can't be
+                // determined cheaply on the client — full reload here (see
+                // App.Dispatch.patchRowInPlace's doc comment for why an
+                // edit doesn't need to).
+                await App.Dispatch.loadDispatchData();
                 App.Dispatch.openCreateDispatchModal('');
               }
             }

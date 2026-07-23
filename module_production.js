@@ -321,6 +321,74 @@ function _generateLotNumber(sheet, lotPrefix) {
 }
 
 /**
+ * Maps one raw Production sheet row (as returned by getRange().getValues())
+ * into the record shape the client expects, given its 2-indexed sheet row
+ * number. Shared by getProductionData's bulk read and saveProduction's
+ * single fresh-row read-back (used to patch just the saved row into the
+ * client's table in place instead of a full list reload).
+ * @private
+ */
+function _mapProductionRow(row, rowIdx) {
+  const rawDate = row[PRODUCTION_COL.DATE - 1];
+  const dateStr = rawDate instanceof Date ? toSafeDateString(rawDate) : String(rawDate || '');
+
+  let componentsConsumed = [];
+  const componentsRaw = String(row[PRODUCTION_COL.COMPONENTS_CONSUMED - 1] || '').trim();
+  if (componentsRaw) {
+    try {
+      const parsed = JSON.parse(componentsRaw);
+      if (Array.isArray(parsed)) componentsConsumed = parsed;
+    } catch (e) {
+      Log.error('[_mapProductionRow] Invalid componentsConsumed JSON on row', rowIdx, ':', e.message);
+    }
+  }
+
+  let customComponents = [];
+  const customComponentsRaw = String(row[PRODUCTION_COL.CUSTOM_COMPONENTS - 1] || '').trim();
+  if (customComponentsRaw) {
+    try {
+      const parsed = JSON.parse(customComponentsRaw);
+      if (Array.isArray(parsed)) customComponents = parsed;
+    } catch (e) {
+      Log.error('[_mapProductionRow] Invalid customComponents JSON on row', rowIdx, ':', e.message);
+    }
+  }
+
+  let colorBreakdown = [];
+  const colorBreakdownRaw = String(row[PRODUCTION_COL.COLOR_BREAKDOWN - 1] || '').trim();
+  if (colorBreakdownRaw) {
+    try {
+      const parsed = JSON.parse(colorBreakdownRaw);
+      if (Array.isArray(parsed)) colorBreakdown = parsed;
+    } catch (e) {
+      Log.error('[_mapProductionRow] Invalid colorBreakdown JSON on row', rowIdx, ':', e.message);
+    }
+  }
+
+  return {
+    rowIdx: rowIdx,
+    date: dateStr,
+    dateRaw: rawDate instanceof Date ? rawDate.toISOString() : null,
+    productId: String(row[PRODUCTION_COL.PRODUCT_ID - 1] || '').trim(),
+    productName: String(row[PRODUCTION_COL.PRODUCT_NAME - 1] || '').trim(),
+    qty: Number(row[PRODUCTION_COL.QTY - 1]) || 0,
+    assignedBy: String(row[PRODUCTION_COL.ASSIGNED_BY - 1] || '').trim(),
+    assignedTo: String(row[PRODUCTION_COL.ASSIGNED_TO - 1] || '').trim(),
+    status: String(row[PRODUCTION_COL.STATUS - 1] || '').trim(),
+    remarks: String(row[PRODUCTION_COL.REMARKS - 1] || '').trim(),
+    customComponents: customComponents,
+    sheetRemarks: String(row[PRODUCTION_COL.SHEET_REMARKS - 1] || '').trim(),
+    processId: String(row[PRODUCTION_COL.PROCESS_ID - 1] || '').trim(),
+    lotNumber: String(row[PRODUCTION_COL.LOT_NUMBER - 1] || '').trim(),
+    contractorPayable: Number(row[PRODUCTION_COL.CONTRACTOR_PAYABLE - 1]) || 0,
+    outputItemName: String(row[PRODUCTION_COL.OUTPUT_ITEM_NAME - 1] || '').trim(),
+    componentsConsumed: componentsConsumed,
+    color: String(row[PRODUCTION_COL.COLOR - 1] || '').trim(),
+    colorBreakdown: colorBreakdown
+  };
+}
+
+/**
  * Retrieves all production lots from the sheet.
  * Includes the physical sheet row index (rowIdx) for edit/delete targeting.
  */
@@ -353,66 +421,10 @@ function getProductionData() {
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
-      const rawDate = row[PRODUCTION_COL.DATE - 1];
-      const dateStr = rawDate instanceof Date ? toSafeDateString(rawDate) : String(rawDate || '');
-
       const processId = String(row[PRODUCTION_COL.PROCESS_ID - 1] || '').trim();
       if (!processId) continue;
 
-      let componentsConsumed = [];
-      const componentsRaw = String(row[PRODUCTION_COL.COMPONENTS_CONSUMED - 1] || '').trim();
-      if (componentsRaw) {
-        try {
-          const parsed = JSON.parse(componentsRaw);
-          if (Array.isArray(parsed)) componentsConsumed = parsed;
-        } catch (e) {
-          Log.error('[getProductionData] Invalid componentsConsumed JSON on row', i + 2, ':', e.message);
-        }
-      }
-
-      let customComponents = [];
-      const customComponentsRaw = String(row[PRODUCTION_COL.CUSTOM_COMPONENTS - 1] || '').trim();
-      if (customComponentsRaw) {
-        try {
-          const parsed = JSON.parse(customComponentsRaw);
-          if (Array.isArray(parsed)) customComponents = parsed;
-        } catch (e) {
-          Log.error('[getProductionData] Invalid customComponents JSON on row', i + 2, ':', e.message);
-        }
-      }
-
-      let colorBreakdown = [];
-      const colorBreakdownRaw = String(row[PRODUCTION_COL.COLOR_BREAKDOWN - 1] || '').trim();
-      if (colorBreakdownRaw) {
-        try {
-          const parsed = JSON.parse(colorBreakdownRaw);
-          if (Array.isArray(parsed)) colorBreakdown = parsed;
-        } catch (e) {
-          Log.error('[getProductionData] Invalid colorBreakdown JSON on row', i + 2, ':', e.message);
-        }
-      }
-
-      records.push({
-        rowIdx: i + 2, // 2-indexed row position for direct sheet operations
-        date: dateStr,
-        dateRaw: rawDate instanceof Date ? rawDate.toISOString() : null,
-        productId: String(row[PRODUCTION_COL.PRODUCT_ID - 1] || '').trim(),
-        productName: String(row[PRODUCTION_COL.PRODUCT_NAME - 1] || '').trim(),
-        qty: Number(row[PRODUCTION_COL.QTY - 1]) || 0,
-        assignedBy: String(row[PRODUCTION_COL.ASSIGNED_BY - 1] || '').trim(),
-        assignedTo: String(row[PRODUCTION_COL.ASSIGNED_TO - 1] || '').trim(),
-        status: String(row[PRODUCTION_COL.STATUS - 1] || '').trim(),
-        remarks: String(row[PRODUCTION_COL.REMARKS - 1] || '').trim(),
-        customComponents: customComponents,
-        sheetRemarks: String(row[PRODUCTION_COL.SHEET_REMARKS - 1] || '').trim(),
-        processId: processId,
-        lotNumber: String(row[PRODUCTION_COL.LOT_NUMBER - 1] || '').trim(),
-        contractorPayable: Number(row[PRODUCTION_COL.CONTRACTOR_PAYABLE - 1]) || 0,
-        outputItemName: String(row[PRODUCTION_COL.OUTPUT_ITEM_NAME - 1] || '').trim(),
-        componentsConsumed: componentsConsumed,
-        color: String(row[PRODUCTION_COL.COLOR - 1] || '').trim(),
-        colorBreakdown: colorBreakdown
-      });
+      records.push(_mapProductionRow(row, i + 2));
     }
     
     // Sort production lots by date descending, then rowIdx descending (newest
@@ -960,11 +972,13 @@ function saveProduction(formData) {
       sheet.getRange(targetRow, PRODUCTION_COL.PROCESS_ID, 1, 5).setValues([[processId, lotNumber, 0, contractorRate, contractorPayable]]);
       sheet.getRange(targetRow, PRODUCTION_COL.OUTPUT_ITEM_NAME, 1, 4).setValues([[process.outputItemName, componentsJson, color, colorBreakdownJson]]);
     } else {
-      // Append row, then fill in the process columns on the newly created row
+      // Append row, then fill in the process columns on the newly created row.
+      // Reassigns the outer targetRow (rather than a block-scoped local) so
+      // the fresh-row read-back below works the same for both edit and create.
       sheet.appendRow(rowData);
-      const newRow = sheet.getLastRow();
-      sheet.getRange(newRow, PRODUCTION_COL.PROCESS_ID, 1, 5).setValues([[processId, lotNumber, 0, contractorRate, contractorPayable]]);
-      sheet.getRange(newRow, PRODUCTION_COL.OUTPUT_ITEM_NAME, 1, 4).setValues([[process.outputItemName, componentsJson, color, colorBreakdownJson]]);
+      targetRow = sheet.getLastRow();
+      sheet.getRange(targetRow, PRODUCTION_COL.PROCESS_ID, 1, 5).setValues([[processId, lotNumber, 0, contractorRate, contractorPayable]]);
+      sheet.getRange(targetRow, PRODUCTION_COL.OUTPUT_ITEM_NAME, 1, 4).setValues([[process.outputItemName, componentsJson, color, colorBreakdownJson]]);
     }
 
     // recalculateStock() rebuilds the whole Stock sheet from every ITEM-sourced
@@ -988,7 +1002,15 @@ function saveProduction(formData) {
 
     const baseMsg = isEdit ? 'Production log updated successfully.' : 'Production log saved successfully.';
     const successMsg = poolWarning ? `${baseMsg} Warning: ${poolWarning} Warehouse Pool stock will now show negative for this item.` : baseMsg;
-    return buildResponse(true, { lotNumber: lotNumber }, successMsg);
+
+    // Read the just-written row back and map it through the same logic
+    // getProductionData uses, so the client can patch this one row into its
+    // already-loaded list in place instead of re-fetching/re-rendering the
+    // whole Production table on every save.
+    const freshRowValues = sheet.getRange(targetRow, 1, 1, Math.max(sheet.getLastColumn(), PRODUCTION_COL.COLOR_BREAKDOWN)).getValues()[0];
+    const freshRow = _mapProductionRow(freshRowValues, targetRow);
+
+    return buildResponse(true, { lotNumber: lotNumber, row: freshRow }, successMsg);
   } catch (error) {
     Log.error('[saveProduction] Error:', error.message);
     logAction('ERROR', 'saveProduction', formData.processId || 'NEW', error.message, 'ERROR');
