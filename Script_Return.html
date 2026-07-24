@@ -48,7 +48,7 @@
 
             if (term) {
               const itemsText = (ret.items || []).map(it => `${it.name || ''} ${it.size || ''} ${it.narration || ''}`).join(' ');
-              const haystack = `${ret.returnNumber || ''} ${ret.billNumber || ''} ${ret.vendor || ''} ${itemsText}`;
+              const haystack = `${ret.returnNumber || ''} ${ret.billNumber || ''} ${ret.vendor || ''} ${ret.returnDate || ''} ${itemsText}`;
               if (!App.Utils.matchesKeywords(haystack, term)) return false;
             }
             return true;
@@ -589,7 +589,7 @@
               const itemsText = (w.items || []).map(it =>
                 `${it.name || ''} ${it.size || ''} ${it.reason || ''}`
               ).join(' ');
-              const haystack = `${w.wastageId || ''} ${w.vendor || ''} ${itemsText} ${w.remarks || ''}`;
+              const haystack = `${w.wastageId || ''} ${w.vendor || ''} ${w.date || ''} ${itemsText} ${w.remarks || ''}`;
               if (!App.Utils.matchesKeywords(haystack, term)) return false;
             }
             return true;
@@ -936,7 +936,7 @@
             if (dateFilter && dateToInputValue(iss.dateRaw, iss.date) !== dateFilter) return false;
             if (term) {
               const itemsText = (iss.items || []).map(it => `${it.name || ''} ${it.size || ''}`).join(' ');
-              const haystack = `${iss.issueId || ''} ${iss.issuedTo || ''} ${iss.reference || ''} ${itemsText} ${iss.remarks || ''}`;
+              const haystack = `${iss.issueId || ''} ${iss.issuedTo || ''} ${iss.reference || ''} ${iss.date || ''} ${itemsText} ${iss.remarks || ''}`;
               if (!App.Utils.matchesKeywords(haystack, term)) return false;
             }
             return true;

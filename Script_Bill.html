@@ -94,7 +94,7 @@
             if (term) {
               const poSearch = (bill.poNumbers?.length ? bill.poNumbers : [bill.poNumber || '']).join(' ');
               const itemsText = (bill.items || []).map(it => `${it.name || ''} ${it.size || ''} ${it.narration || ''}`).join(' ');
-              const haystack = `${bill.billNumber || ''} ${poSearch} ${bill.vendor || ''} ${itemsText}`;
+              const haystack = `${bill.billNumber || ''} ${poSearch} ${bill.vendor || ''} ${bill.billDate || ''} ${itemsText}`;
               if (!App.Utils.matchesKeywords(haystack, term)) return false;
             }
             return true;

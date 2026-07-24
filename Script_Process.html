@@ -181,7 +181,7 @@
           App.State.filteredProcesses = App.State.globalProcesses;
         } else {
           App.State.filteredProcesses = App.State.globalProcesses.filter(p => {
-            const haystack = [p.processId, p.processName, p.lotPrefix, p.remarks].join(' ');
+            const haystack = [p.processId, p.processName, p.lotPrefix, p.remarks, p.processType, p.outputItemName, p.active ? 'Active' : 'Inactive'].join(' ');
             return App.Utils.matchesKeywords(haystack, term);
           });
         }

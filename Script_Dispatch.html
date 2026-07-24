@@ -130,7 +130,7 @@
       filterDispatch(searchTerm) {
         const term = String(searchTerm || '').toLowerCase().trim();
         App.State.filteredDispatch = term
-          ? App.State.globalDispatch.filter(d => App.Utils.matchesKeywords(`${d.dispatchNumber} ${d.orderNumber} ${d.clientName} ${d.productId} ${d.productName}`, term))
+          ? App.State.globalDispatch.filter(d => App.Utils.matchesKeywords(`${d.dispatchNumber} ${d.orderNumber} ${d.clientName} ${d.productId} ${d.productName} ${d.dispatchDate || ''} ${d.transport || ''} ${d.invoiceNumber || ''} ${d.grNumber || ''} ${d.logisticsContractor || ''}`, term))
           : App.State.globalDispatch;
         this.sortFilteredDispatch();
         App.State.dispatchCurrentPage = 1;

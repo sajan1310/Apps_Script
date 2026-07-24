@@ -36,7 +36,7 @@
         const term = String(searchTerm || '').toLowerCase().trim();
         App.State.filteredVendors = term
           ? App.State.globalVendors.filter(v =>
-            App.Utils.matchesKeywords(`${v.name} ${v.contact} ${v.gstin}`, term)
+            App.Utils.matchesKeywords(`${v.name} ${v.contact} ${v.gstin} ${v.address || ''}`, term)
           )
           : App.State.globalVendors;
         App.State.vendorCurrentPage = 1;

@@ -66,7 +66,7 @@
       filterClients(searchTerm) {
         const term = String(searchTerm || '').toLowerCase().trim();
         App.State.filteredClients = term
-          ? App.State.globalClients.filter(c => App.Utils.matchesKeywords(`${c.name} ${c.contact} ${c.gstin}`, term))
+          ? App.State.globalClients.filter(c => App.Utils.matchesKeywords(`${c.name} ${c.contact} ${c.gstin} ${c.address || ''}`, term))
           : App.State.globalClients;
         App.State.clientCurrentPage = 1;
         this.renderClientsTable();
@@ -283,7 +283,7 @@
         App.State.filteredOrders = term
           ? App.State.globalOrders.filter(o => {
             const productsText = (o.lines || []).map(l => `${l.productId} ${l.productName}`).join(' ');
-            return App.Utils.matchesKeywords(`${o.orderNumber} ${o.clientName} ${productsText}`, term);
+            return App.Utils.matchesKeywords(`${o.orderNumber} ${o.clientName} ${o.orderDate || ''} ${productsText}`, term);
           })
           : App.State.globalOrders;
         App.State.orderCurrentPage = 1;
@@ -933,7 +933,7 @@
         const term = String(searchTerm || '').toLowerCase().trim();
         App.State.filteredPendingOrders = term
           ? (App.State.allPendingOrders || []).filter(p =>
-            App.Utils.matchesKeywords(`${p.orderNumber} ${p.clientName} ${p.productId} ${p.productName}`, term))
+            App.Utils.matchesKeywords(`${p.orderNumber} ${p.clientName} ${p.productId} ${p.productName} ${p.orderDate || ''} ${p.label || ''}`, term))
           : (App.State.allPendingOrders || []);
 
         this.renderPendingOrdersTable();

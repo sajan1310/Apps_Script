@@ -427,7 +427,8 @@
             base = term
               ? App.State.globalItems.filter(item => {
                 const vendorNames = (item.vendors || []).map(v => v.vendor || '').join(' ');
-                return App.Utils.matchesKeywords(`${item.name || ''} ${item.size || ''} ${vendorNames}`, term);
+                const haystack = `${item.name || ''} ${item.size || ''} ${item.narration || ''} ${item.remarks || ''} ${item.specification || ''} ${vendorNames}`;
+                return App.Utils.matchesKeywords(haystack, term);
               })
               : [...App.State.globalItems];
           }
@@ -1386,7 +1387,7 @@
 
           const rows = used.length
             ? used.map(r => this._processRowHtml(r)).join('')
-            : `<tr id="itemProcEmptyRow"><td colspan="5" class="text-muted small text-center py-3">Not yet used in any process — search below to add one.</td></tr>`;
+            : `<tr id="itemProcEmptyRow"><td colspan="6" class="text-muted small text-center py-3">Not yet used in any process — search below to add one.</td></tr>`;
 
           body.innerHTML = `
             <div class="small text-muted mb-2">
@@ -1394,38 +1395,46 @@
               Qty is per unit of process output. Changes apply to <strong>new lots only</strong> —
               completed lots keep the components they recorded.
             </div>
+            <div class="mb-2">
+              <input type="text" class="form-control form-control-sm item-proc-search"
+                     placeholder="Search processes by name, ID, or type..."
+                     oninput="App.Item.filterProcessRows(this.value)">
+              <span id="itemProcSearchNote" class="small text-muted"></span>
+            </div>
             <div class="table-responsive">
               <table class="table table-sm table-bordered bg-white shadow-sm mb-0">
                 <thead class="table-light">
                   <tr>
+                    <th style="width:4%;" class="text-center">
+                      <input type="checkbox" class="form-check-input" id="itemProcSelectAll"
+                             onclick="App.Item.toggleSelectAllProcessRows(this)"
+                             title="Select all currently visible processes">
+                    </th>
                     <th>Process</th>
-                    <th style="width:16%;">Qty / Unit</th>
-                    <th style="width:15%;">Unit</th>
-                    <th style="width:23%;">Remarks</th>
+                    <th style="width:15%;">Qty / Unit</th>
+                    <th style="width:14%;">Unit</th>
+                    <th style="width:21%;">Remarks</th>
                     <th style="width:8%;"></th>
                   </tr>
                 </thead>
                 <tbody id="itemProcessesTableBody">${rows}</tbody>
               </table>
             </div>
+            <!-- Hidden until at least one row is checked (see updateProcessBulkBar)
+                 — bulk-acts on whatever's selected, which subsumes "apply to
+                 everything" as the special case of selecting all of them. -->
+            <div id="itemProcBulkBar" class="d-flex flex-wrap align-items-center gap-2 mt-2 p-2 bg-light border rounded d-none">
+              <span id="itemProcBulkCount" class="small fw-bold"></span>
+              <input type="number" class="form-control form-control-sm item-proc-bulk-qty" step="any" min="0.0001"
+                     style="width:110px;" placeholder="Qty">
+              <button type="button" class="btn btn-outline-secondary btn-sm" onclick="App.Item.applyBulkProcessQty()">Set Qty</button>
+              <button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Item.removeSelectedProcessRows()">Remove Selected</button>
+            </div>
             <div class="d-flex flex-wrap align-items-end gap-2 mt-2">
               <div style="min-width:220px;">
                 <label class="form-label small mb-1">Add a process</label>
-                <!-- Searchable Select2 (see _refreshAddProcessPicker) — this
-                     doubles as the "search process" control, since the main
-                     list above only ever shows processes already in use. -->
                 <select id="itemProcAddSelect" class="form-select form-select-sm"></select>
               </div>
-              <div>
-                <label class="form-label small mb-1">Set qty for all listed</label>
-                <!-- Class, not id, deliberately: App.Nav._serialize keys its
-                     dirty snapshot off id/name, and this input is rendered
-                     AFTER Nav.register() snapshots the modal, so an id here
-                     would make every item modal look dirty. -->
-                <input type="number" class="form-control form-control-sm item-proc-bulk-qty" step="any" min="0.0001"
-                       style="width:110px;" placeholder="e.g. 0.3">
-              </div>
-              <button type="button" class="btn btn-outline-secondary btn-sm" onclick="App.Item.applyBulkProcessQty()">Apply</button>
               <div class="ms-auto text-end">
                 <span id="itemProcDirtyHint" class="small text-warning fw-bold me-2" style="display:none;">Unsaved recipe changes</span>
                 <button type="button" id="itemProcSaveBtn" class="btn btn-outline-info text-dark btn-sm fw-bold border-2"
@@ -1435,6 +1444,7 @@
 
           this._refreshAddProcessPicker();
           this._updateProcessCount();
+          this.updateProcessBulkBar();
         },
 
         // "Currently in N processes" — N is the number of process rows the
@@ -1468,6 +1478,7 @@
           const variantRow = (r.colorVariants || []).length
             ? `<tr class="table-light" data-variant-for="${escapeHtml(r.processId)}">
                  <td></td>
+                 <td></td>
                  <td colspan="4" class="small text-muted py-1">
                    <i class="bi bi-palette me-1"></i>Colour-specific (edit in the Process tab):
                    ${r.colorVariants.map(v =>
@@ -1478,6 +1489,11 @@
             : '';
 
           return `<tr data-process-id="${escapeHtml(r.processId)}">
+              <td class="text-center align-middle">
+                <input type="checkbox" class="form-check-input item-proc-select-chk"
+                       onchange="App.Item.updateProcessBulkBar()"
+                       aria-label="Select ${escapeHtml(r.processName)} for bulk actions">
+              </td>
               <td class="align-middle">
                 ${escapeHtml(r.processName)}${inactiveBadge}
                 <div class="small text-muted">${escapeHtml(r.processId)}${r.processType ? ' · ' + escapeHtml(r.processType) : ''}</div>
@@ -1523,9 +1539,12 @@
         // (dashes + an Add button) without touching its color-variant
         // sibling row or any other row in the table.
         _setRowCommonState(row, inRecipe, opts = {}) {
-          const firstTd = row.querySelector('td');
+          // Preserve the leading checkbox + process-name cells (the first
+          // 2 <td>s) — only the qty/unit/remarks/action cells past them
+          // are state-dependent and get rebuilt.
+          const keepCells = Array.from(row.querySelectorAll('td')).slice(0, 2);
           row.innerHTML = '';
-          if (firstTd) row.appendChild(firstTd);
+          keepCells.forEach(td => row.appendChild(td));
           row.insertAdjacentHTML('beforeend', this._commonCellsHtml(inRecipe, opts));
           if (inRecipe) row.querySelector('.item-proc-qty')?.focus();
         },
@@ -1542,6 +1561,7 @@
           // must then fill in themselves.
           this._setRowCommonState(row, true, { qty: '1' });
           this.markProcessesDirty();
+          this._reapplyProcessSearch();
         },
 
         // "✕" on a row: if it has colour-specific entries to preserve,
@@ -1549,10 +1569,18 @@
         // outright — deleting it here and having it reappear after Save
         // (colour rows alone still count as "used") would be confusing.
         // A row with no colour rows is removed entirely and freed back up
-        // in the "Add a process" picker.
+        // in the "Add a process" picker. Shared with removeSelectedProcessRows
+        // (the bulk version) via _removeOneProcessRow.
         removeProcessRow(btn) {
           const row = btn.closest('tr[data-process-id]');
           if (!row) return;
+          this._removeOneProcessRow(row);
+          this.markProcessesDirty();
+          this._refreshAddProcessPicker();
+          this._reapplyProcessSearch();
+        },
+
+        _removeOneProcessRow(row) {
           const pid = row.dataset.processId;
           const variantRow = row.nextElementSibling;
           const hasVariant = variantRow && variantRow.dataset.variantFor === pid;
@@ -1563,16 +1591,130 @@
             row.remove();
             this._maybeShowEmptyProcessMessage();
           }
-          this.markProcessesDirty();
-          this._refreshAddProcessPicker();
         },
 
         _maybeShowEmptyProcessMessage() {
           const tbody = document.getElementById('itemProcessesTableBody');
           if (tbody && !tbody.querySelector('tr[data-process-id]')) {
             tbody.innerHTML =
-              '<tr id="itemProcEmptyRow"><td colspan="5" class="text-muted small text-center py-3">Not yet used in any process — search below to add one.</td></tr>';
+              '<tr id="itemProcEmptyRow"><td colspan="6" class="text-muted small text-center py-3">Not yet used in any process — search below to add one.</td></tr>';
           }
+        },
+
+        // ── Search (filter the visible list) and bulk selection ──────────
+        // With items commonly used in 50+ processes, browsing needs two
+        // more tools beyond "only show used ones": a way to jump straight to
+        // a row by name, and a way to act on many rows at once instead of
+        // one ✕ at a time.
+
+        // Filters the rendered rows by keyword match against process name/
+        // ID/type — display:none, not removal, so _collectProcessRows (which
+        // reads every tr[data-process-id] regardless of visibility) still
+        // sees every row's true state when Save runs. A row hidden by a new
+        // search term is also unchecked, so a bulk action can never silently
+        // act on something the user can no longer see.
+        filterProcessRows(term) {
+          const q = String(term || '').trim();
+          const tbody = document.getElementById('itemProcessesTableBody');
+          if (!tbody) return;
+
+          const allRows = $$('tr[data-process-id]', tbody);
+          let visibleCount = 0;
+
+          allRows.forEach(row => {
+            const meta = this._processesMeta[row.dataset.processId] || {};
+            const haystack = `${meta.processName || ''} ${row.dataset.processId || ''} ${meta.processType || ''}`;
+            const match = !q || App.Utils.matchesKeywords(haystack, q);
+            row.style.display = match ? '' : 'none';
+
+            const variantRow = row.nextElementSibling;
+            if (variantRow && variantRow.dataset.variantFor === row.dataset.processId) {
+              variantRow.style.display = match ? '' : 'none';
+            }
+
+            if (match) {
+              visibleCount++;
+            } else {
+              const chk = $('.item-proc-select-chk', row);
+              if (chk) chk.checked = false;
+            }
+          });
+
+          const note = document.getElementById('itemProcSearchNote');
+          if (note) note.textContent = q ? ` Showing ${visibleCount} of ${allRows.length}.` : '';
+
+          this.updateProcessBulkBar();
+        },
+
+        // Re-runs whatever search term is currently in the box, so
+        // visibility/selection/bulk-bar/select-all stay correct after a row
+        // is added, removed, or downgraded — without touching the term
+        // itself. NOT used right after _addProcessRow: a stale filter could
+        // hide the row the user just deliberately added, so that path clears
+        // the term instead (see _addProcessRow).
+        _reapplyProcessSearch() {
+          const input = $('#itemProcessesBody .item-proc-search');
+          this.filterProcessRows(input ? input.value : '');
+        },
+
+        toggleSelectAllProcessRows(masterChk) {
+          const checked = masterChk.checked;
+          $$('#itemProcessesTableBody tr[data-process-id]').forEach(row => {
+            if (row.style.display === 'none') return;   // leave filtered-out rows alone
+            const chk = $('.item-proc-select-chk', row);
+            if (chk) chk.checked = checked;
+          });
+          this.updateProcessBulkBar();
+        },
+
+        // Keeps the header checkbox's checked/indeterminate state honest
+        // against only the currently VISIBLE rows — a row hidden by a search
+        // term shouldn't count toward "are all of them selected".
+        _updateProcessSelectAllState() {
+          const master = document.getElementById('itemProcSelectAll');
+          if (!master) return;
+          const visibleChecks = $$('#itemProcessesTableBody tr[data-process-id]')
+            .filter(row => row.style.display !== 'none')
+            .map(row => $('.item-proc-select-chk', row))
+            .filter(Boolean);
+          const checkedCount = visibleChecks.filter(c => c.checked).length;
+          master.checked = visibleChecks.length > 0 && checkedCount === visibleChecks.length;
+          master.indeterminate = checkedCount > 0 && checkedCount < visibleChecks.length;
+        },
+
+        // Shows/hides the bulk-action bar and keeps its count + the header
+        // checkbox in sync — called on every row checkbox change, and after
+        // any mutation that can change what's selected or visible.
+        updateProcessBulkBar() {
+          this._updateProcessSelectAllState();
+          const count = $$('#itemProcessesTableBody .item-proc-select-chk:checked').length;
+          const bar = document.getElementById('itemProcBulkBar');
+          const label = document.getElementById('itemProcBulkCount');
+          if (label) label.textContent = `${count} selected`;
+          if (bar) bar.classList.toggle('d-none', count === 0);
+        },
+
+        _getSelectedProcessRows() {
+          return $$('#itemProcessesTableBody .item-proc-select-chk:checked')
+            .map(chk => chk.closest('tr[data-process-id]'))
+            .filter(Boolean);
+        },
+
+        removeSelectedProcessRows() {
+          const rows = this._getSelectedProcessRows();
+          if (!rows.length) return;
+          const names = rows.map(row => this._processesMeta?.[row.dataset.processId]?.processName || row.dataset.processId);
+
+          App.Utils.confirmAction(
+            `Remove the item from ${rows.length} selected process${rows.length === 1 ? '' : 'es'} (${names.join(', ')})? ` +
+            `This isn't saved until you click "Save Process Recipes" — completed lots keep the components they already recorded.`,
+            () => {
+              rows.forEach(row => this._removeOneProcessRow(row));
+              this.markProcessesDirty();
+              this._refreshAddProcessPicker();
+              this._reapplyProcessSearch();
+            }
+          );
         },
 
         // Adds a brand-new row for a process the item wasn't in at all
@@ -1603,14 +1745,18 @@
 
           tbody.querySelector(`tr[data-process-id="${CSS.escape(processId)}"] .item-proc-qty`)?.focus();
           this.markProcessesDirty();
+
+          // Clear (not reapply) any active filter term — a stale search
+          // could otherwise hide the row the user just deliberately added.
+          const searchInput = $('#itemProcessesBody .item-proc-search');
+          if (searchInput) searchInput.value = '';
+          this.filterProcessRows('');
         },
 
         // Rebuilds the "Add a process" Select2 from whichever active
         // processes DON'T currently have a row in the table — called after
         // every render, add and remove so the pool never offers a process
-        // that's already listed above it. This search box IS the "search
-        // process" feature: the main list deliberately no longer browses
-        // every process, only the ones actually in use.
+        // that's already listed above it.
         _refreshAddProcessPicker() {
           const selectEl = document.getElementById('itemProcAddSelect');
           if (!selectEl || !window.jQuery?.fn?.select2) return;
@@ -1653,8 +1799,15 @@
           if ($select.data('select2')) $select.select2('destroy');
         },
 
+        // Bulk-set qty for whatever's currently checked (see the
+        // itemProcBulkBar toolbar) — "apply to everything" is just the
+        // special case of ticking the header select-all first, so there's
+        // no separate "apply to all" control to keep in sync with this one.
+        // A selected row that's currently colour-only (no common entry yet)
+        // is promoted into the common recipe with this qty rather than
+        // silently skipped, matching what "+ Add" already does for one row.
         applyBulkProcessQty() {
-          const input = $('#itemProcessesBody .item-proc-bulk-qty');
+          const input = $('#itemProcBulkBar .item-proc-bulk-qty');
           const raw = input?.value?.trim();
           const qty = toNumber(raw);
           if (!raw || !(qty > 0)) {
@@ -1663,16 +1816,25 @@
             return;
           }
 
-          const qtyInputs = $$('#itemProcessesTableBody .item-proc-qty');
-          if (!qtyInputs.length) {
-            App.Utils.showToast('No processes are listed yet — add one first.', true);
+          const rows = this._getSelectedProcessRows();
+          if (!rows.length) {
+            App.Utils.showToast('No processes are selected.', true);
             return;
           }
-          qtyInputs.forEach(qtyInput => { qtyInput.value = raw; });
+
+          rows.forEach(row => {
+            const qtyInput = $('.item-proc-qty', row);
+            if (qtyInput) {
+              qtyInput.value = raw;
+            } else {
+              this._setRowCommonState(row, true, { qty: raw });
+            }
+          });
 
           if (input) input.value = '';
           this.markProcessesDirty();
-          App.Utils.showToast(`Qty ${raw} applied to ${qtyInputs.length} process${qtyInputs.length === 1 ? '' : 'es'}. Not saved yet.`);
+          this._reapplyProcessSearch();
+          App.Utils.showToast(`Qty ${raw} applied to ${rows.length} selected process${rows.length === 1 ? '' : 'es'}. Not saved yet.`);
         },
 
         markProcessesDirty() {
@@ -2460,7 +2622,7 @@
             const haystack = [
               bom.productId,
               bom.productName,
-              ...bom.components.map(c => `${c.itemName} ${c.vendor} ${c.processId} ${c.processGroup}`)
+              ...bom.components.map(c => `${c.itemName} ${c.size || ''} ${c.color || ''} ${c.vendor} ${c.processId} ${c.processGroup}`)
             ].join(' ');
             return App.Utils.matchesKeywords(haystack, term);
           });

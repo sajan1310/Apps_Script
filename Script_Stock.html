@@ -860,7 +860,7 @@
         if (!rows.length) rows.push(this._placeholderBucket(process));
 
         if (!term) return rows;
-        const processMatches = App.Utils.matchesKeywords([process.processName, process.outputItemName].join(' '), term);
+        const processMatches = App.Utils.matchesKeywords([process.processName, process.outputItemName, process.active ? 'Active' : 'Inactive'].join(' '), term);
         if (processMatches) return rows;
         return rows.filter(r => App.Utils.matchesKeywords([r.outputItemName, r.productTag, r.color].join(' '), term));
       },

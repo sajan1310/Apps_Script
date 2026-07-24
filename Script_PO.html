@@ -221,7 +221,7 @@
 
             if (term) {
               const itemsText = (po.items || []).map(it => `${it.name || ''} ${it.size || ''} ${it.narration || ''}`).join(' ');
-              const haystack = `${po.vendor || ''} ${po.poNumber || ''} ${itemsText}`;
+              const haystack = `${po.vendor || ''} ${po.poNumber || ''} ${po.poDate || ''} ${po.status || ''} ${itemsText}`;
               if (!App.Utils.matchesKeywords(haystack, term)) return false;
             }
             return true;
@@ -348,7 +348,7 @@
           const term = String(searchTerm || '').toLowerCase().trim();
           App.State.filteredPendingPOs = term
             ? (App.State.allPendingPOs || []).filter(p =>
-              App.Utils.matchesKeywords(`${p.poNumber} ${p.vendor} ${p.itemName}`, term))
+              App.Utils.matchesKeywords(`${p.poNumber} ${p.vendor} ${p.itemName} ${p.size || ''} ${p.poDate || ''} ${p.label || ''}`, term))
             : (App.State.allPendingPOs || []);
 
           this.renderPendingPOsTable();
