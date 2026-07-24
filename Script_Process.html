@@ -1525,7 +1525,12 @@
       // it when loading an existing process's recipe; called with no args to
       // add a blank group for the operator to configure. initialAxis pre-fills
       // the "Group" field (see collectColorAxisLabels/refreshColorAxisOptions).
-      addColorGroup(initialColorName = '', components = [], initialAxis = '') {
+      // prevColorHint seeds the "what color did this card used to represent"
+      // baseline (data-prev-color) that _retargetRowColor matches against —
+      // normally that's just initialColorName, but duplicateColorGroup passes
+      // the SOURCE card's color instead, since the copied rows still literally
+      // carry the source's name until the operator picks this card's own color.
+      addColorGroup(initialColorName = '', components = [], initialAxis = '', prevColorHint = '') {
         const container = document.getElementById('processColorGroupsContainer');
         if (!container) return;
 
@@ -1548,7 +1553,7 @@
       <div class="card border-secondary-subtle shadow-sm mb-3 proc-colorgroup-card" id="${groupId}">
         <div class="card-header bg-white d-flex align-items-center gap-2 flex-wrap">
           <label class="fw-bold mb-0 text-secondary">Color / Sub-Group:</label>
-          <select class="form-select form-select-sm proc-colorgroup-select" style="max-width:220px;">
+          <select class="form-select form-select-sm proc-colorgroup-select" style="max-width:220px;" data-prev-color="${escapeHtml(prevColorHint || initialColorName)}">
             <option value="">Choose or type a name...</option>
             ${colorOptionsHtml}
           </select>
@@ -1616,8 +1621,13 @@
         // mudguard) — carry the Group label over so it lands in the same
         // checkbox group instead of the operator having to retype it.
         const axisValue = (sourceCard.querySelector('.proc-colorgroup-axis')?.value || '').trim();
+        // The copied rows still literally carry the SOURCE color's name
+        // (e.g. "SEAT---RED-WHITE") until the operator picks this new card's
+        // own color — seed the retarget baseline with it so that first pick
+        // correctly swaps the copied rows instead of finding nothing to match.
+        const sourceColor = (sourceCard.querySelector('.proc-colorgroup-select')?.value || '').trim();
 
-        this.addColorGroup('', components, axisValue);
+        this.addColorGroup('', components, axisValue, sourceColor);
       },
 
       removeColorGroup(groupId) {
@@ -1666,54 +1676,51 @@
       },
 
       // Fired when a color sub-group's Color picker changes. Each row's item
-      // is checked for a Color Master name embedded in it (e.g. "Frame Decal
-      // - Red") and, if a same-named item exists under the new color (same
-      // size), re-pointed at it — turning the "look it up again in every
-      // sub-group" chore the operator described into an automatic swap. Rows
-      // with no recognizable color token, or no matching variant, are left
-      // exactly as they are: most components in a recipe are color-agnostic
-      // hardware shared across every color.
+      // is checked for THIS CARD'S OWN previous color embedded in it (e.g.
+      // "Frame Decal - Red") and, if a same-named item exists under the new
+      // color (same size), re-pointed at it — turning the "look it up again
+      // in every sub-group" chore the operator described into an automatic
+      // swap. Rows with no recognizable color token, or no matching variant,
+      // are left exactly as they are: most components in a recipe are
+      // color-agnostic hardware shared across every color.
       handleColorGroupChange(card) {
         const tbody = card?.querySelector('.proc-colorgroup-body');
         const colorSelect = card?.querySelector('.proc-colorgroup-select');
         if (!tbody || !colorSelect || !colorSelect.value) return;
 
         const newColor = colorSelect.value;
-        const colorNames = (App.State.globalColors || []).map(c => c.name).filter(Boolean);
-        if (!colorNames.length) return;
+        const oldColor = (colorSelect.dataset.prevColor || '').trim();
+        colorSelect.dataset.prevColor = newColor;
+        if (!oldColor || App.Utils.sameText(oldColor, newColor)) return;
 
-        Array.from(tbody.querySelectorAll('tr')).forEach(row => this._retargetRowColor(row, newColor, colorNames, tbody));
+        Array.from(tbody.querySelectorAll('tr')).forEach(row => this._retargetRowColor(row, oldColor, newColor, tbody));
       },
 
       // Swaps a single row's item for the same-named item under newColor,
       // when one exists in Item Master at the same size. No-ops (leaves the
-      // row untouched) for Pool-sourced rows, rows with no item picked, items
-      // with no recognizable color token, or when no matching variant exists.
-      _retargetRowColor(row, newColor, colorNames, tbody) {
+      // row untouched) for Pool-sourced rows, rows with no item picked, or
+      // rows whose item name doesn't literally contain oldColor, or when no
+      // matching variant exists.
+      _retargetRowColor(row, oldColor, newColor, tbody) {
         if (row.querySelector('.proc-comp-source')?.value === 'POOL') return;
 
         const itemSelect = row.querySelector('.proc-comp-item-select');
         const currentName = itemSelect?.options[itemSelect.selectedIndex]?.dataset.name;
         if (!currentName) return;
 
-        // Prefer the LONGEST matching Color Master name, not just the first
-        // one found in App.State.globalColors' (arbitrary, creation) order.
-        // A compound item name like "...-BLUE-WHITE" also whole-word-matches
-        // the shorter "Blue" and "White" entries whenever those are ALSO
-        // registered on their own (a very normal setup once both a plain
-        // base color and the hyphenated axis-pair convention exist side by
-        // side) — picking one of those instead of the correct "Blue-White"
-        // only replaces part of the compound, leaving a mangled candidate
-        // name (e.g. "...-Purple-White-WHITE") that never matches anything
-        // in Item Master, so the swap silently no-ops. The longest match is
-        // always the most specific one and never worse than a shorter match
-        // would have been.
-        const foundColor = colorNames
-          .filter(c => c.toLowerCase() !== newColor.toLowerCase() && new RegExp(`\\b${this._escapeRegExp(c)}\\b`, 'i').test(currentName))
-          .sort((a, b) => b.length - a.length)[0];
-        if (!foundColor) return;
+        // Match the card's OWN previous color specifically, not "whichever
+        // registered Color Master name happens to appear anywhere in the
+        // name" — a compound item name like "SEAT---RED-WHITE" also
+        // whole-word-matches the unrelated "White" entry (a fixed secondary
+        // color, not part of this axis), and a longest-match tie-break used
+        // to pick that instead, replacing the wrong half and mangling the
+        // candidate into something that never exists in Item Master (so the
+        // swap silently no-op'd). Knowing exactly which token this card WAS
+        // makes the match unambiguous.
+        const re = new RegExp(`\\b${this._escapeRegExp(oldColor)}\\b`, 'i');
+        if (!re.test(currentName)) return;
 
-        const candidateName = currentName.replace(new RegExp(`\\b${this._escapeRegExp(foundColor)}\\b`, 'i'), newColor);
+        const candidateName = currentName.replace(re, newColor);
         if (candidateName === currentName) return;
 
         const size = row.querySelector('.proc-comp-size')?.value || '';
