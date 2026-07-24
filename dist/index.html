@@ -15570,15 +15570,13 @@
             .filter(r => r.inRecipe || (r.colorVariants || []).length)
             .sort((a, b) => (a.sequence - b.sequence) || a.processName.localeCompare(b.processName));
 
-          const usedCount = records.filter(r => r.inRecipe).length;
-
           const rows = used.length
             ? used.map(r => this._processRowHtml(r)).join('')
             : `<tr id="itemProcEmptyRow"><td colspan="5" class="text-muted small text-center py-3">Not yet used in any process — search below to add one.</td></tr>`;
 
           body.innerHTML = `
             <div class="small text-muted mb-2">
-              Currently in <strong id="itemProcUsedCount">${usedCount}</strong> process${usedCount === 1 ? '' : 'es'}.
+              Currently in <strong id="itemProcCount"></strong>.
               Qty is per unit of process output. Changes apply to <strong>new lots only</strong> —
               completed lots keep the components they recorded.
             </div>
@@ -15622,6 +15620,21 @@
             </div>`;
 
           this._refreshAddProcessPicker();
+          this._updateProcessCount();
+        },
+
+        // "Currently in N processes" — N is the number of process rows the
+        // table is actually showing (each row = one process the item is used
+        // in, whether via a common-recipe entry or colour-only rows), so the
+        // headline count and the visible list can never disagree. Owning both
+        // the number and its pluralisation here keeps a later single-number
+        // patch from leaving a stale "2 process". Called after render and
+        // after every add/remove/downgrade (via markProcessesDirty).
+        _updateProcessCount() {
+          const el = document.getElementById('itemProcCount');
+          if (!el) return;
+          const n = $$('#itemProcessesTableBody tr[data-process-id]').length;
+          el.textContent = `${n} process${n === 1 ? '' : 'es'}`;
         },
 
         // Builds one process's <tr> (+ its color-variant info <tr>, if any).
@@ -15749,9 +15762,12 @@
         },
 
         // Adds a brand-new row for a process the item wasn't in at all
-        // (picked from the "Add a process" search) — qty defaults to 1,
-        // same convention as ticking used to default to before this became
-        // a search-to-add flow.
+        // (picked from the "Add a process" search) — qty defaults to 1, the
+        // same fallback _saveProcessComponentsForProcess uses on the process
+        // side. Reuses _processRowHtml so an added row is byte-identical to a
+        // freshly-loaded one; the picker only ever offers processes with no
+        // row present, and any process carrying colour variants is always
+        // already present, so colorVariants is [] here in practice.
         _addProcessRow(processId) {
           const meta = this._processesMeta[processId];
           const tbody = document.getElementById('itemProcessesTableBody');
@@ -15759,21 +15775,19 @@
 
           document.getElementById('itemProcEmptyRow')?.remove();
 
-          const inactiveBadge = meta.active
-            ? ''
-            : ' <span class="badge bg-secondary ms-1" title="This process is marked inactive in Process Master">Inactive</span>';
-          const commonCellsHtml = this._commonCellsHtml(true, { qty: '1' });
+          tbody.insertAdjacentHTML('beforeend', this._processRowHtml({
+            processId,
+            processName: meta.processName,
+            processType: meta.processType,
+            active: meta.active,
+            inRecipe: true,
+            qtyPerUnit: 1,
+            unit: '',
+            remarks: '',
+            colorVariants: meta.colorVariants || []
+          }));
 
-          tbody.insertAdjacentHTML('beforeend', `
-            <tr data-process-id="${escapeHtml(processId)}">
-              <td class="align-middle">
-                ${escapeHtml(meta.processName)}${inactiveBadge}
-                <div class="small text-muted">${escapeHtml(processId)}${meta.processType ? ' · ' + escapeHtml(meta.processType) : ''}</div>
-              </td>
-              ${commonCellsHtml}
-            </tr>`);
-
-          tbody.lastElementChild?.querySelector('.item-proc-qty')?.focus();
+          tbody.querySelector(`tr[data-process-id="${CSS.escape(processId)}"] .item-proc-qty`)?.focus();
           this.markProcessesDirty();
         },
 
@@ -15852,10 +15866,7 @@
           if (btn) btn.disabled = false;
           const hint = document.getElementById('itemProcDirtyHint');
           if (hint) hint.style.display = '';
-
-          const count = $$('#itemProcessesTableBody .item-proc-qty').length;
-          const label = document.getElementById('itemProcUsedCount');
-          if (label) label.textContent = count;
+          this._updateProcessCount();
         },
 
         // Reads the rendered rows back into mapping objects. A row's
