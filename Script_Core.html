@@ -2807,6 +2807,17 @@
             setDisabled('itemSubmitBtn', false);
           }
         });
+
+      // The "Used in Processes" add-a-process picker is a Select2 parented
+      // to document.body (see select2DropdownParent) so its dropdown keeps
+      // rendering correctly regardless of .modal-body scroll — but that
+      // also means it survives the modal closing unless explicitly torn
+      // down here, leaking a detached dropdown element every time the item
+      // modal is opened and closed (same class of leak _destroyDriftTargetSelects
+      // guards against for the Reference Integrity modal).
+      document.getElementById('itemModal')?.addEventListener('hidden.bs.modal', () => {
+        App.Item.destroyAddProcessSelect2();
+      });
     }
 
     document.addEventListener('DOMContentLoaded', async () => {

@@ -1197,6 +1197,7 @@
           this._processesItem = null;
           this._processesBaseline = {};
           this._processesMeta = {};
+          this.destroyAddProcessSelect2();
           const processSection = document.getElementById('itemProcessesSection');
           if (processSection) processSection.style.display = 'none';
           const processBody = document.getElementById('itemProcessesBody');
@@ -1309,8 +1310,6 @@
         // (name, sequence, active, colour variants), keyed by processId.
         _processesMeta: {},
 
-        _showInactiveProcesses: false,
-
         async loadProcessesForItem(name, size) {
           const section = document.getElementById('itemProcessesSection');
           const body = document.getElementById('itemProcessesBody');
@@ -1318,7 +1317,6 @@
 
           section.style.display = '';
           this._processesItem = { name: name || '', size: size || '' };
-          this._showInactiveProcesses = false;
           body.innerHTML =
             '<div class="text-muted small py-2">' +
             '<span class="spinner-border spinner-border-sm me-2"></span>Loading process recipes…</div>';
@@ -1344,6 +1342,8 @@
           const body = document.getElementById('itemProcessesBody');
           if (!body) return;
 
+          this.destroyAddProcessSelect2();
+
           this._processesBaseline = {};
           this._processesMeta = {};
           (records || []).forEach(r => {
@@ -1353,8 +1353,9 @@
               unit: r.unit || '',
               remarks: r.remarks || ''
             };
-            // Everything the inactive-filter re-render needs that isn't in
-            // the rendered inputs.
+            // Everything a freshly-added or re-enabled row needs that isn't
+            // in the rendered inputs — also doubles as the pool the "Add a
+            // process" picker searches (see _refreshAddProcessPicker).
             this._processesMeta[r.processId] = {
               processName: r.processName,
               sequence: r.sequence,
@@ -1371,177 +1372,271 @@
             return;
           }
 
+          // Only processes this item is ACTUALLY used in — browsing every
+          // process in the system to spot the handful that matter was
+          // exactly the "mindless scrolling" this view existed to save.
+          // A process wired to consume this item on the Process tab
+          // reappears here automatically next load (getProcessesForItem
+          // always recomputes live from Process Components), and one that
+          // stops using it silently drops off the same way — nothing here
+          // needs to track that transition itself.
+          const used = records
+            .filter(r => r.inRecipe || (r.colorVariants || []).length)
+            .sort((a, b) => (a.sequence - b.sequence) || a.processName.localeCompare(b.processName));
+
           const usedCount = records.filter(r => r.inRecipe).length;
 
-          // An inactive process is only worth a row when the item is
-          // actually in it (or the user asked to see the rest) — otherwise
-          // retired processes bury the live ones.
-          const visible = records.filter(r =>
-            r.active || r.inRecipe || (r.colorVariants || []).length || this._showInactiveProcesses);
-          const hiddenCount = records.length - visible.length;
-
-          const rows = visible.map(r => {
-            const inactiveBadge = r.active
-              ? ''
-              : ' <span class="badge bg-secondary ms-1" title="This process is marked inactive in Process Master">Inactive</span>';
-
-            const qty = r.inRecipe ? String(r.qtyPerUnit) : '';
-            const disabled = r.inRecipe ? '' : ' disabled';
-
-            const variantRow = (r.colorVariants || []).length
-              ? `<tr class="table-light">
-                   <td></td>
-                   <td colspan="4" class="small text-muted py-1">
-                     <i class="bi bi-palette me-1"></i>Colour-specific (edit in the Process tab):
-                     ${r.colorVariants.map(v =>
-                       `${escapeHtml(v.colorGroup)}${v.colorAxis ? ` <span class="opacity-75">(${escapeHtml(v.colorAxis)})</span>` : ''} &rarr; ${escapeHtml(String(v.qtyPerUnit))}${v.unit ? ' ' + escapeHtml(v.unit) : ''}`
-                     ).join(' &nbsp;·&nbsp; ')}
-                   </td>
-                 </tr>`
-              : '';
-
-            return `<tr data-process-id="${escapeHtml(r.processId)}">
-                <td class="text-center align-middle">
-                  <input type="checkbox" class="form-check-input item-proc-check"${r.inRecipe ? ' checked' : ''}
-                         onchange="App.Item.onProcessToggle(this)"
-                         aria-label="Use this item in ${escapeHtml(r.processName)}">
-                </td>
-                <td class="align-middle">
-                  ${escapeHtml(r.processName)}${inactiveBadge}
-                  <div class="small text-muted">${escapeHtml(r.processId)}${r.processType ? ' · ' + escapeHtml(r.processType) : ''}</div>
-                </td>
-                <td>
-                  <input type="number" class="form-control form-control-sm item-proc-qty" step="any" min="0.0001"
-                         value="${escapeHtml(qty)}" placeholder="0"${disabled}
-                         onchange="App.Item.markProcessesDirty()"
-                         aria-label="Qty per unit for ${escapeHtml(r.processName)}">
-                </td>
-                <td>
-                  <input type="text" class="form-control form-control-sm item-proc-unit" list="unitList"
-                         value="${escapeHtml(r.unit || '')}" placeholder="Base Unit"${disabled}
-                         onchange="App.Item.markProcessesDirty()"
-                         title="Leave blank to use the item's own Base Unit"
-                         aria-label="Unit for ${escapeHtml(r.processName)}">
-                </td>
-                <td>
-                  <input type="text" class="form-control form-control-sm item-proc-remarks" maxlength="500"
-                         value="${escapeHtml(r.remarks || '')}"${disabled}
-                         onchange="App.Item.markProcessesDirty()"
-                         aria-label="Remarks for ${escapeHtml(r.processName)}">
-                </td>
-              </tr>${variantRow}`;
-          }).join('');
-
-          const inactiveToggle = (hiddenCount > 0 || this._showInactiveProcesses)
-            ? `<button type="button" class="btn btn-link btn-sm p-0 mt-2" onclick="App.Item.toggleInactiveProcesses()">
-                 ${this._showInactiveProcesses
-                   ? 'Hide inactive processes'
-                   : `Show ${hiddenCount} inactive process${hiddenCount === 1 ? '' : 'es'}`}
-               </button>`
-            : '';
+          const rows = used.length
+            ? used.map(r => this._processRowHtml(r)).join('')
+            : `<tr id="itemProcEmptyRow"><td colspan="5" class="text-muted small text-center py-3">Not yet used in any process — search below to add one.</td></tr>`;
 
           body.innerHTML = `
-            <div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-2">
-              <div class="small text-muted">
-                Currently in <strong id="itemProcUsedCount">${usedCount}</strong> of ${records.length} process${records.length === 1 ? '' : 'es'}.
-                Qty is per unit of process output. Changes apply to <strong>new lots only</strong> —
-                completed lots keep the components they recorded.
-              </div>
-              <div class="d-flex align-items-end gap-2">
-                <div>
-                  <label class="form-label small mb-1">Set qty for all ticked</label>
-                  <!-- Class, not id, deliberately: App.Nav._serialize keys
-                       its dirty snapshot off id/name, and this input is
-                       rendered AFTER Nav.register() snapshots the modal, so
-                       an id here would make every item modal look dirty. -->
-                  <input type="number" class="form-control form-control-sm item-proc-bulk-qty" step="any" min="0.0001"
-                         style="width:110px;" placeholder="e.g. 0.3">
-                </div>
-                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="App.Item.applyBulkProcessQty()">Apply</button>
-              </div>
+            <div class="small text-muted mb-2">
+              Currently in <strong id="itemProcUsedCount">${usedCount}</strong> process${usedCount === 1 ? '' : 'es'}.
+              Qty is per unit of process output. Changes apply to <strong>new lots only</strong> —
+              completed lots keep the components they recorded.
             </div>
             <div class="table-responsive">
               <table class="table table-sm table-bordered bg-white shadow-sm mb-0">
                 <thead class="table-light">
                   <tr>
-                    <th style="width:5%;" class="text-center"><i class="bi bi-check2" title="In this process's recipe"></i></th>
                     <th>Process</th>
                     <th style="width:16%;">Qty / Unit</th>
-                    <th style="width:16%;">Unit</th>
-                    <th style="width:24%;">Remarks</th>
+                    <th style="width:15%;">Unit</th>
+                    <th style="width:23%;">Remarks</th>
+                    <th style="width:8%;"></th>
                   </tr>
                 </thead>
                 <tbody id="itemProcessesTableBody">${rows}</tbody>
               </table>
             </div>
-            <div class="d-flex justify-content-between align-items-center mt-2">
-              <div>${inactiveToggle}</div>
+            <div class="d-flex flex-wrap align-items-end gap-2 mt-2">
+              <div style="min-width:220px;">
+                <label class="form-label small mb-1">Add a process</label>
+                <!-- Searchable Select2 (see _refreshAddProcessPicker) — this
+                     doubles as the "search process" control, since the main
+                     list above only ever shows processes already in use. -->
+                <select id="itemProcAddSelect" class="form-select form-select-sm"></select>
+              </div>
               <div>
+                <label class="form-label small mb-1">Set qty for all listed</label>
+                <!-- Class, not id, deliberately: App.Nav._serialize keys its
+                     dirty snapshot off id/name, and this input is rendered
+                     AFTER Nav.register() snapshots the modal, so an id here
+                     would make every item modal look dirty. -->
+                <input type="number" class="form-control form-control-sm item-proc-bulk-qty" step="any" min="0.0001"
+                       style="width:110px;" placeholder="e.g. 0.3">
+              </div>
+              <button type="button" class="btn btn-outline-secondary btn-sm" onclick="App.Item.applyBulkProcessQty()">Apply</button>
+              <div class="ms-auto text-end">
                 <span id="itemProcDirtyHint" class="small text-warning fw-bold me-2" style="display:none;">Unsaved recipe changes</span>
                 <button type="button" id="itemProcSaveBtn" class="btn btn-outline-info text-dark btn-sm fw-bold border-2"
                         onclick="App.Item.saveProcessMappings()" disabled>Save Process Recipes</button>
               </div>
             </div>`;
+
+          this._refreshAddProcessPicker();
         },
 
-        toggleInactiveProcesses() {
-          // Re-render from the baseline rather than the server: an unsaved
-          // edit in a visible row must survive showing/hiding the inactive
-          // ones. Collect the live form state first, then repaint from it.
-          const current = this._collectProcessRows({ includeUnchanged: true });
-          const byId = {};
-          current.forEach(r => { byId[r.processId] = r; });
+        // Builds one process's <tr> (+ its color-variant info <tr>, if any).
+        // Shared by the initial render and _addProcessRow so both produce
+        // byte-identical markup for the editable cells.
+        _processRowHtml(r) {
+          const inactiveBadge = r.active
+            ? ''
+            : ' <span class="badge bg-secondary ms-1" title="This process is marked inactive in Process Master">Inactive</span>';
 
-          this._showInactiveProcesses = !this._showInactiveProcesses;
-
-          const merged = Object.keys(this._processesBaseline).map(pid => {
-            const base = this._processesBaseline[pid];
-            const live = byId[pid];
-            const meta = this._processesMeta?.[pid] || {};
-            return {
-              processId: pid,
-              processName: meta.processName || pid,
-              sequence: meta.sequence || 0,
-              active: meta.active !== false,
-              processType: meta.processType || '',
-              colorVariants: meta.colorVariants || [],
-              inRecipe: live ? live.inRecipe : base.inRecipe,
-              qtyPerUnit: live ? live.qtyPerUnit : base.qtyPerUnit,
-              unit: live ? live.unit : base.unit,
-              remarks: live ? live.remarks : base.remarks
-            };
-          }).sort((a, b) => (a.sequence - b.sequence) || a.processName.localeCompare(b.processName));
-
-          const savedBaseline = this._processesBaseline;
-          this.renderProcessesSection(merged);
-          // renderProcessesSection resets the baseline from what it drew —
-          // restore the real server baseline so the dirty diff stays honest.
-          this._processesBaseline = savedBaseline;
-          if (current.some(r => this._processRowChanged(r))) this.markProcessesDirty();
-        },
-
-        onProcessToggle(checkbox) {
-          const row = checkbox.closest('tr');
-          if (!row) return;
-          const on = checkbox.checked;
-
-          ['.item-proc-qty', '.item-proc-unit', '.item-proc-remarks'].forEach(sel => {
-            const input = $(sel, row);
-            if (!input) return;
-            input.disabled = !on;
-            if (!on) input.value = '';
+          const commonCellsHtml = this._commonCellsHtml(r.inRecipe, {
+            qty: r.inRecipe ? String(r.qtyPerUnit) : '',
+            unit: r.unit || '',
+            remarks: r.remarks || ''
           });
 
-          // Ticking a process with no qty yet: 1 per unit is the same
-          // default _saveProcessComponentsForProcess falls back to, and is
-          // right far more often than a blank the user must then fill in.
-          if (on) {
-            const qty = $('.item-proc-qty', row);
-            if (qty && !qty.value) qty.value = '1';
-            qty?.focus();
-          }
+          const variantRow = (r.colorVariants || []).length
+            ? `<tr class="table-light" data-variant-for="${escapeHtml(r.processId)}">
+                 <td></td>
+                 <td colspan="4" class="small text-muted py-1">
+                   <i class="bi bi-palette me-1"></i>Colour-specific (edit in the Process tab):
+                   ${r.colorVariants.map(v =>
+                     `${escapeHtml(v.colorGroup)}${v.colorAxis ? ` <span class="opacity-75">(${escapeHtml(v.colorAxis)})</span>` : ''} &rarr; ${escapeHtml(String(v.qtyPerUnit))}${v.unit ? ' ' + escapeHtml(v.unit) : ''}`
+                   ).join(' &nbsp;·&nbsp; ')}
+                 </td>
+               </tr>`
+            : '';
 
+          return `<tr data-process-id="${escapeHtml(r.processId)}">
+              <td class="align-middle">
+                ${escapeHtml(r.processName)}${inactiveBadge}
+                <div class="small text-muted">${escapeHtml(r.processId)}${r.processType ? ' · ' + escapeHtml(r.processType) : ''}</div>
+              </td>
+              ${commonCellsHtml}
+            </tr>${variantRow}`;
+        },
+
+        // The qty/unit/remarks/action <td>s for one row, in either state.
+        // Pulled out so adding a row, removing a row, and downgrading a row
+        // to "colour-only" all produce the exact same markup as a fresh load.
+        _commonCellsHtml(inRecipe, { qty = '', unit = '', remarks = '' } = {}) {
+          if (inRecipe) {
+            return `
+              <td class="item-proc-qty-cell">
+                <input type="number" class="form-control form-control-sm item-proc-qty" step="any" min="0.0001"
+                       value="${escapeHtml(qty)}" placeholder="0" onchange="App.Item.markProcessesDirty()">
+              </td>
+              <td class="item-proc-unit-cell">
+                <input type="text" class="form-control form-control-sm item-proc-unit" list="unitList"
+                       value="${escapeHtml(unit)}" placeholder="Base Unit" onchange="App.Item.markProcessesDirty()"
+                       title="Leave blank to use the item's own Base Unit">
+              </td>
+              <td class="item-proc-remarks-cell">
+                <input type="text" class="form-control form-control-sm item-proc-remarks" maxlength="500"
+                       value="${escapeHtml(remarks)}" onchange="App.Item.markProcessesDirty()">
+              </td>
+              <td class="text-center align-middle item-proc-action-cell">
+                <button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Item.removeProcessRow(this)" title="Remove from this process">&#10005;</button>
+              </td>`;
+          }
+          return `
+            <td class="item-proc-qty-cell"><span class="text-muted small">&mdash;</span></td>
+            <td class="item-proc-unit-cell"><span class="text-muted small">&mdash;</span></td>
+            <td class="item-proc-remarks-cell"><span class="text-muted small">Not in the common recipe</span></td>
+            <td class="text-center align-middle item-proc-action-cell">
+              <button type="button" class="btn btn-outline-info btn-sm" onclick="App.Item.addCommonToProcessRow(this)" title="Add to this process's common recipe">+ Add</button>
+            </td>`;
+        },
+
+        // Flips one already-rendered row between "in the common recipe"
+        // (editable qty/unit/remarks + remove button) and "colour-only"
+        // (dashes + an Add button) without touching its color-variant
+        // sibling row or any other row in the table.
+        _setRowCommonState(row, inRecipe, opts = {}) {
+          const firstTd = row.querySelector('td');
+          row.innerHTML = '';
+          if (firstTd) row.appendChild(firstTd);
+          row.insertAdjacentHTML('beforeend', this._commonCellsHtml(inRecipe, opts));
+          if (inRecipe) row.querySelector('.item-proc-qty')?.focus();
+        },
+
+        // "+ Add" on a colour-only row: this process already has a row
+        // (because it has colour-specific entries) but no process-wide
+        // (COMMON) one yet — this creates that COMMON entry in place,
+        // leaving the colour rows exactly as they are.
+        addCommonToProcessRow(btn) {
+          const row = btn.closest('tr[data-process-id]');
+          if (!row) return;
+          // Same default _saveProcessComponentsForProcess falls back to on
+          // the process side — right far more often than a blank the user
+          // must then fill in themselves.
+          this._setRowCommonState(row, true, { qty: '1' });
           this.markProcessesDirty();
+        },
+
+        // "✕" on a row: if it has colour-specific entries to preserve,
+        // downgrade it to the colour-only display instead of deleting it
+        // outright — deleting it here and having it reappear after Save
+        // (colour rows alone still count as "used") would be confusing.
+        // A row with no colour rows is removed entirely and freed back up
+        // in the "Add a process" picker.
+        removeProcessRow(btn) {
+          const row = btn.closest('tr[data-process-id]');
+          if (!row) return;
+          const pid = row.dataset.processId;
+          const variantRow = row.nextElementSibling;
+          const hasVariant = variantRow && variantRow.dataset.variantFor === pid;
+
+          if (hasVariant) {
+            this._setRowCommonState(row, false);
+          } else {
+            row.remove();
+            this._maybeShowEmptyProcessMessage();
+          }
+          this.markProcessesDirty();
+          this._refreshAddProcessPicker();
+        },
+
+        _maybeShowEmptyProcessMessage() {
+          const tbody = document.getElementById('itemProcessesTableBody');
+          if (tbody && !tbody.querySelector('tr[data-process-id]')) {
+            tbody.innerHTML =
+              '<tr id="itemProcEmptyRow"><td colspan="5" class="text-muted small text-center py-3">Not yet used in any process — search below to add one.</td></tr>';
+          }
+        },
+
+        // Adds a brand-new row for a process the item wasn't in at all
+        // (picked from the "Add a process" search) — qty defaults to 1,
+        // same convention as ticking used to default to before this became
+        // a search-to-add flow.
+        _addProcessRow(processId) {
+          const meta = this._processesMeta[processId];
+          const tbody = document.getElementById('itemProcessesTableBody');
+          if (!meta || !tbody) return;
+
+          document.getElementById('itemProcEmptyRow')?.remove();
+
+          const inactiveBadge = meta.active
+            ? ''
+            : ' <span class="badge bg-secondary ms-1" title="This process is marked inactive in Process Master">Inactive</span>';
+          const commonCellsHtml = this._commonCellsHtml(true, { qty: '1' });
+
+          tbody.insertAdjacentHTML('beforeend', `
+            <tr data-process-id="${escapeHtml(processId)}">
+              <td class="align-middle">
+                ${escapeHtml(meta.processName)}${inactiveBadge}
+                <div class="small text-muted">${escapeHtml(processId)}${meta.processType ? ' · ' + escapeHtml(meta.processType) : ''}</div>
+              </td>
+              ${commonCellsHtml}
+            </tr>`);
+
+          tbody.lastElementChild?.querySelector('.item-proc-qty')?.focus();
+          this.markProcessesDirty();
+        },
+
+        // Rebuilds the "Add a process" Select2 from whichever active
+        // processes DON'T currently have a row in the table — called after
+        // every render, add and remove so the pool never offers a process
+        // that's already listed above it. This search box IS the "search
+        // process" feature: the main list deliberately no longer browses
+        // every process, only the ones actually in use.
+        _refreshAddProcessPicker() {
+          const selectEl = document.getElementById('itemProcAddSelect');
+          if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+          const $select = window.jQuery(selectEl);
+          if ($select.data('select2')) $select.select2('destroy');
+          selectEl.innerHTML = '';
+
+          const present = new Set(
+            $$('#itemProcessesTableBody tr[data-process-id]').map(tr => tr.dataset.processId)
+          );
+          const options = Object.keys(this._processesMeta)
+            .filter(pid => !present.has(pid) && this._processesMeta[pid].active)
+            .map(pid => ({ id: pid, text: this._processesMeta[pid].processName }))
+            .sort((a, b) => a.text.localeCompare(b.text));
+
+          $select.select2({
+            placeholder: options.length ? 'Search to add a process…' : 'Every active process is already listed',
+            width: '100%',
+            allowClear: true,
+            matcher: App.Utils.select2Matcher,
+            dropdownParent: App.Utils.select2DropdownParent($select),
+            data: options
+          });
+
+          // Namespaced so repeated destroy/rebuild cycles never stack
+          // duplicate handlers onto the same underlying <select>.
+          $select.off('select2:select.itemProcAdd').on('select2:select.itemProcAdd', (e) => {
+            const pid = e.params.data.id;
+            this._addProcessRow(pid);
+            $select.val(null).trigger('change');
+            this._refreshAddProcessPicker();
+          });
+        },
+
+        destroyAddProcessSelect2() {
+          const selectEl = document.getElementById('itemProcAddSelect');
+          if (!selectEl || !window.jQuery?.fn?.select2) return;
+          const $select = window.jQuery(selectEl);
+          if ($select.data('select2')) $select.select2('destroy');
         },
 
         applyBulkProcessQty() {
@@ -1554,22 +1649,16 @@
             return;
           }
 
-          let applied = 0;
-          $$('#itemProcessesTableBody tr[data-process-id]').forEach(row => {
-            if (!$('.item-proc-check', row)?.checked) return;
-            const qtyInput = $('.item-proc-qty', row);
-            if (!qtyInput) return;
-            qtyInput.value = raw;
-            applied++;
-          });
-
-          if (!applied) {
-            App.Utils.showToast('No processes are ticked.', true);
+          const qtyInputs = $$('#itemProcessesTableBody .item-proc-qty');
+          if (!qtyInputs.length) {
+            App.Utils.showToast('No processes are listed yet — add one first.', true);
             return;
           }
+          qtyInputs.forEach(qtyInput => { qtyInput.value = raw; });
+
           if (input) input.value = '';
           this.markProcessesDirty();
-          App.Utils.showToast(`Qty ${raw} applied to ${applied} process${applied === 1 ? '' : 'es'}. Not saved yet.`);
+          App.Utils.showToast(`Qty ${raw} applied to ${qtyInputs.length} process${qtyInputs.length === 1 ? '' : 'es'}. Not saved yet.`);
         },
 
         markProcessesDirty() {
@@ -1578,28 +1667,44 @@
           const hint = document.getElementById('itemProcDirtyHint');
           if (hint) hint.style.display = '';
 
-          const count = $$('#itemProcessesTableBody .item-proc-check:checked').length;
+          const count = $$('#itemProcessesTableBody .item-proc-qty').length;
           const label = document.getElementById('itemProcUsedCount');
           if (label) label.textContent = count;
         },
 
-        // Reads the rendered rows back into mapping objects. Rows for
-        // processes hidden by the inactive filter are simply absent, which
-        // is exactly right — saveItemProcessMappings leaves any process not
-        // in the list untouched.
+        // Reads the rendered rows back into mapping objects. A row's
+        // presence with an editable qty input = inRecipe true; a row still
+        // present but downgraded to "colour-only" (dashes) = inRecipe
+        // false; a row removed entirely also resolves to inRecipe false via
+        // the baseline sweep below. A process with no row at all is simply
+        // absent — saveItemProcessMappings leaves any process not in the
+        // submitted list completely untouched.
         _collectProcessRows({ includeUnchanged = false } = {}) {
-          const out = [];
+          const present = {};
           $$('#itemProcessesTableBody tr[data-process-id]').forEach(row => {
             const processId = row.dataset.processId;
-            const inRecipe = !!$('.item-proc-check', row)?.checked;
-            const entry = {
+            const qtyInput = $('.item-proc-qty', row);
+            const inRecipe = !!qtyInput;
+            present[processId] = {
               processId,
               inRecipe,
-              qtyPerUnit: inRecipe ? toNumber($('.item-proc-qty', row)?.value) : '',
+              qtyPerUnit: inRecipe ? toNumber(qtyInput.value) : '',
               unit: inRecipe ? ($('.item-proc-unit', row)?.value?.trim() || '') : '',
               remarks: inRecipe ? ($('.item-proc-remarks', row)?.value?.trim() || '') : ''
             };
+          });
+
+          const out = [];
+          Object.values(present).forEach(entry => {
             if (includeUnchanged || this._processRowChanged(entry)) out.push(entry);
+          });
+          // A process removed (or downgraded) so completely that it no
+          // longer has a row at all still needs its removal reported.
+          Object.keys(this._processesBaseline).forEach(pid => {
+            const base = this._processesBaseline[pid];
+            if (base.inRecipe && !present[pid]) {
+              out.push({ processId: pid, inRecipe: false, qtyPerUnit: '', unit: '', remarks: '' });
+            }
           });
           return out;
         },

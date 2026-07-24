@@ -1252,9 +1252,9 @@
           if (searchInput) {
             searchInput.value = '';
             searchInput.oninput = () => {
-              const q = searchInput.value.trim().toLowerCase();
+              const q = searchInput.value;
               $$('#vendorCatalogBody tr').forEach(tr => {
-                tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+                tr.style.display = App.Utils.matchesKeywords(tr.textContent, q) ? '' : 'none';
               });
             };
           }
