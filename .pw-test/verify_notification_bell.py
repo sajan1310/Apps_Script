@@ -72,16 +72,27 @@ def main():
         msg2 = page.evaluate("document.querySelectorAll('#notif-list .notif-item-msg')[1].textContent")
         check(msg2 == "Item saved successfully.", f"Item 2 message is '{msg2}'")
 
-        # 7. Click outside to close panel
+        # 7. Test single notification removal (dismiss button)
+        page.click("#notif-list .notif-item:first-child .notif-item-remove")
+        items_count_after_remove = page.evaluate("document.querySelectorAll('#notif-list .notif-item').length")
+        check(items_count_after_remove == 1, f"Items count after single dismiss is 1 (got {items_count_after_remove})")
+
+        remaining_msg = page.evaluate("document.querySelector('#notif-list .notif-item-msg').textContent")
+        check(remaining_msg == "Item saved successfully.", f"Remaining item is '{remaining_msg}'")
+
+        # 8. Click outside to close panel
         page.click("body", position={"x": 10, "y": 10})
         panel_display_closed = page.evaluate("document.getElementById('notif-panel').style.display")
         check(panel_display_closed == "none", "Panel closes when clicking outside")
 
-        # 8. Re-open and test Clear All button
+        # 9. Re-open and test Clear All button
         page.click("#notif-bell-btn")
         page.click("#notif-clear-btn")
         empty_text = page.evaluate("document.querySelector('#notif-list .notif-empty')?.textContent")
         check(empty_text == "No notifications yet.", f"Panel list reset to empty state (got '{empty_text}')")
+
+        clear_btn_disabled = page.evaluate("document.getElementById('notif-clear-btn').disabled")
+        check(clear_btn_disabled == True, "Clear All button is disabled when history is empty")
 
         browser.close()
 

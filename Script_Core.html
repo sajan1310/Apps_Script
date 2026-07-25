@@ -1811,10 +1811,41 @@
 
       // ── Notification History & Panel ─────────────────────────────
       Notify: {
+        STORAGE_KEY: 'maharaja-erp-notifications',
         items: [],
         unreadCount: 0,
         isOpen: false,
         _listenersBound: false,
+
+        load() {
+          try {
+            const raw = localStorage.getItem(this.STORAGE_KEY);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed?.items)) {
+                this.items = parsed.items.map(item => ({
+                  ...item,
+                  timestamp: item.timestamp ? new Date(item.timestamp) : new Date()
+                }));
+                this.unreadCount = Number(parsed.unreadCount) || 0;
+                this.updateBadge();
+              }
+            }
+          } catch (e) {
+            console.warn('[Notify] Failed to load persisted notifications:', e);
+          }
+        },
+
+        save() {
+          try {
+            localStorage.setItem(this.STORAGE_KEY, JSON.stringify({
+              items: this.items.slice(0, 50),
+              unreadCount: this.unreadCount
+            }));
+          } catch (e) {
+            console.warn('[Notify] Storage access denied:', e);
+          }
+        },
 
         add(message, isError = false) {
           if (!message) return;
@@ -1828,8 +1859,25 @@
           this.items.unshift(notif);
           if (this.items.length > 50) this.items.pop();
           this.unreadCount++;
+          this.save();
           this.updateBadge();
           if (this.isOpen) {
+            this.render();
+          }
+        },
+
+        remove(id, event) {
+          if (event && typeof event.stopPropagation === 'function') {
+            event.stopPropagation();
+          }
+          const idx = this.items.findIndex(item => item.id === id);
+          if (idx !== -1) {
+            if (this.items[idx].unread && this.unreadCount > 0) {
+              this.unreadCount--;
+            }
+            this.items.splice(idx, 1);
+            this.save();
+            this.updateBadge();
             this.render();
           }
         },
@@ -1853,6 +1901,7 @@
 
           this.unreadCount = 0;
           this.items.forEach(item => { item.unread = false; });
+          this.save();
           this.updateBadge();
           this.render();
 
@@ -1872,6 +1921,7 @@
         clear() {
           this.items = [];
           this.unreadCount = 0;
+          this.save();
           this.updateBadge();
           this.render();
         },
@@ -1897,11 +1947,17 @@
           if (diffMin < 60) return `${diffMin}m ago`;
           const diffHours = Math.floor(diffMin / 60);
           if (diffHours < 24) return `${diffHours}h ago`;
+          const diffDays = Math.floor(diffHours / 24);
+          if (diffDays < 7) return `${diffDays}d ago`;
           return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         },
 
         render() {
           const listEl = document.getElementById('notif-list');
+          const clearBtn = document.getElementById('notif-clear-btn');
+          if (clearBtn) {
+            clearBtn.disabled = this.items.length === 0;
+          }
           if (!listEl) return;
 
           if (this.items.length === 0) {
@@ -1919,6 +1975,7 @@
                   <div class="notif-item-msg">${escapeHtml(item.message)}</div>
                   <div class="notif-item-time">${timeStr}</div>
                 </div>
+                <button type="button" class="notif-item-remove" title="Dismiss notification" onclick="App.Notify.remove('${escapeHtml(item.id)}', event)">&times;</button>
               </div>
             `;
           }).join('');
@@ -1936,6 +1993,8 @@
         _handleKeyDown(e) {
           if (e.key === 'Escape') {
             App.Notify.close();
+            const btn = document.getElementById('notif-bell-btn');
+            if (btn) btn.focus();
           }
         },
 
@@ -1957,6 +2016,52 @@
           this._listenersBound = false;
           if (this._onOutsideClick) document.removeEventListener('click', this._onOutsideClick);
           if (this._onKeyDown) document.removeEventListener('keydown', this._onKeyDown);
+        },
+
+        async checkSmartAlerts() {
+          if (!this._alertKeys) this._alertKeys = new Set();
+
+          // Fetch stock data if state is empty
+          if ((!App.State?.globalStock || App.State.globalStock.length === 0) && typeof Api !== 'undefined') {
+            try {
+              const res = await Api.call('getStockData');
+              if (res?.success && Array.isArray(res.data)) {
+                App.State.globalStock = res.data;
+              }
+            } catch (e) { /* ignore best effort */ }
+          }
+
+          // 1. Low Stock Smart Alert
+          const stockItems = App.State?.globalStock || [];
+          const lowStock = stockItems.filter(i => (i.isLowStock || (Number(i.threshold) > 0 && Number(i.currentStock) <= Number(i.threshold))));
+          if (lowStock.length > 0) {
+            const key = `lowstock-${lowStock.length}-${lowStock.slice(0, 3).map(i => i.name + i.size).join('|')}`;
+            if (!this._alertKeys.has(key)) {
+              this._alertKeys.add(key);
+              const preview = lowStock.slice(0, 2).map(i => `${i.name}${i.size ? ` [${i.size}]` : ''} (${i.currentStock} left)`).join(', ');
+              const extra = lowStock.length > 2 ? ` and ${lowStock.length - 2} more` : '';
+              this.add(`⚠️ Smart Alert: ${lowStock.length} item(s) below threshold (${preview}${extra}).`, true);
+            }
+          }
+
+          // 2. Overdue Pending Purchase Orders Alert (pending > 7 days)
+          const pos = App.State?.globalPOs || [];
+          const now = new Date();
+          const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+          const overduePOs = pos.filter(po => {
+            if (!po || po.status === PO_STATUS.COMPLETED) return false;
+            const poDate = parseRecordDate(po.poDateRaw, po.poDate);
+            return !isNaN(poDate.getTime()) && (now - poDate) > SEVEN_DAYS_MS;
+          });
+          if (overduePOs.length > 0) {
+            const key = `overduepo-${overduePOs.length}-${overduePOs.slice(0, 3).map(p => p.poNumber).join('|')}`;
+            if (!this._alertKeys.has(key)) {
+              this._alertKeys.add(key);
+              const nums = overduePOs.slice(0, 3).map(p => `#${p.poNumber}`).join(', ');
+              const extra = overduePOs.length > 3 ? ` and ${overduePOs.length - 3} more` : '';
+              this.add(`📋 Smart Alert: ${overduePOs.length} purchase order(s) pending >7 days (${nums}${extra}).`, false);
+            }
+          }
         }
       },
 
@@ -2083,8 +2188,9 @@
 
 
       async Init() {
-        // Load persisted company logo (non-blocking, best-effort)
+        // Load persisted company logo and notification history (non-blocking, best-effort)
         this.Logo.load();
+        if (this.Notify) this.Notify.load();
 
         // Only load data needed for the default tab (Dashboard, plus PO for its
         // shared form dropdowns) up front. Bill, Stock, BOM, Production are
@@ -2150,6 +2256,11 @@
 
         if (this.PO && this.PO.populateVendorSelects) {
           this.PO.populateVendorSelects();
+        }
+
+        // Trigger smart notifications (low stock, pending POs)
+        if (this.Notify) {
+          await this.Notify.checkSmartAlerts();
         }
       }
     };

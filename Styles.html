@@ -755,6 +755,30 @@
     text-decoration: underline;
   }
 
+  .notif-clear-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    text-decoration: none;
+  }
+
+  .notif-item-remove {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+    opacity: 0.4;
+    transition: opacity 150ms ease, color 150ms ease;
+  }
+
+  .notif-item-remove:hover {
+    opacity: 1;
+    color: var(--danger-color);
+  }
+
   .notif-list {
     overflow-y: auto;
     max-height: 360px;
