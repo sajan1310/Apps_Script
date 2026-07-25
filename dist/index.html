@@ -9902,6 +9902,9 @@
       // ── Utilities ────────────────────────────────────────────────
       Utils: {
         showToast(message, isError = false) {
+          if (App.Notify && typeof App.Notify.add === 'function') {
+            App.Notify.add(message, isError);
+          }
           const toastEl = document.getElementById('systemToast');
           const msgEl = document.getElementById('toastMessage');
           if (msgEl) msgEl.innerText = message || '';
@@ -10317,7 +10320,157 @@
       },
 
 
-      // ── Navigation ───────────────────────────────────────────────
+      // ── Notification History & Panel ─────────────────────────────
+      Notify: {
+        items: [],
+        unreadCount: 0,
+        isOpen: false,
+        _listenersBound: false,
+
+        add(message, isError = false) {
+          if (!message) return;
+          const notif = {
+            id: Date.now() + '-' + Math.random().toString(36).substring(2, 5),
+            message: String(message),
+            isError: !!isError,
+            timestamp: new Date(),
+            unread: true
+          };
+          this.items.unshift(notif);
+          if (this.items.length > 50) this.items.pop();
+          this.unreadCount++;
+          this.updateBadge();
+          if (this.isOpen) {
+            this.render();
+          }
+        },
+
+        toggle() {
+          if (this.isOpen) {
+            this.close();
+          } else {
+            this.open();
+          }
+        },
+
+        open() {
+          const panel = document.getElementById('notif-panel');
+          const btn = document.getElementById('notif-bell-btn');
+          if (!panel) return;
+
+          this.isOpen = true;
+          panel.style.display = 'flex';
+          if (btn) btn.setAttribute('aria-expanded', 'true');
+
+          this.unreadCount = 0;
+          this.items.forEach(item => { item.unread = false; });
+          this.updateBadge();
+          this.render();
+
+          this._bindOutsideListeners();
+        },
+
+        close() {
+          const panel = document.getElementById('notif-panel');
+          const btn = document.getElementById('notif-bell-btn');
+          if (panel) panel.style.display = 'none';
+          if (btn) btn.setAttribute('aria-expanded', 'false');
+          this.isOpen = false;
+
+          this._unbindOutsideListeners();
+        },
+
+        clear() {
+          this.items = [];
+          this.unreadCount = 0;
+          this.updateBadge();
+          this.render();
+        },
+
+        updateBadge() {
+          const badge = document.getElementById('notif-badge');
+          if (!badge) return;
+          if (this.unreadCount > 0) {
+            badge.textContent = this.unreadCount > 99 ? '99+' : String(this.unreadCount);
+            badge.style.display = 'inline-flex';
+          } else {
+            badge.style.display = 'none';
+          }
+        },
+
+        formatTime(date) {
+          if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+          const diffMs = Date.now() - date.getTime();
+          const diffSec = Math.floor(diffMs / 1000);
+          if (diffSec < 10) return 'Just now';
+          if (diffSec < 60) return `${diffSec}s ago`;
+          const diffMin = Math.floor(diffSec / 60);
+          if (diffMin < 60) return `${diffMin}m ago`;
+          const diffHours = Math.floor(diffMin / 60);
+          if (diffHours < 24) return `${diffHours}h ago`;
+          return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        },
+
+        render() {
+          const listEl = document.getElementById('notif-list');
+          if (!listEl) return;
+
+          if (this.items.length === 0) {
+            listEl.innerHTML = '<div class="notif-empty">No notifications yet.</div>';
+            return;
+          }
+
+          const html = this.items.map(item => {
+            const errorClass = item.isError ? ' notif-error' : '';
+            const timeStr = this.formatTime(item.timestamp);
+            return `
+              <div class="notif-item${errorClass}">
+                <div class="notif-item-dot"></div>
+                <div class="notif-item-body">
+                  <div class="notif-item-msg">${escapeHtml(item.message)}</div>
+                  <div class="notif-item-time">${timeStr}</div>
+                </div>
+              </div>
+            `;
+          }).join('');
+
+          listEl.innerHTML = html;
+        },
+
+        _handleOutsideClick(e) {
+          const wrap = document.querySelector('.notif-wrap');
+          if (wrap && !wrap.contains(e.target)) {
+            App.Notify.close();
+          }
+        },
+
+        _handleKeyDown(e) {
+          if (e.key === 'Escape') {
+            App.Notify.close();
+          }
+        },
+
+        _bindOutsideListeners() {
+          if (this._listenersBound) return;
+          this._listenersBound = true;
+          this._onOutsideClick = this._handleOutsideClick.bind(this);
+          this._onKeyDown = this._handleKeyDown.bind(this);
+          setTimeout(() => {
+            if (this.isOpen) {
+              document.addEventListener('click', this._onOutsideClick);
+              document.addEventListener('keydown', this._onKeyDown);
+            }
+          }, 0);
+        },
+
+        _unbindOutsideListeners() {
+          if (!this._listenersBound) return;
+          this._listenersBound = false;
+          if (this._onOutsideClick) document.removeEventListener('click', this._onOutsideClick);
+          if (this._onKeyDown) document.removeEventListener('keydown', this._onKeyDown);
+        }
+      },
+
       Navigation: {
         showTab(id) {
           $$('.tab-content').forEach(tab => {
