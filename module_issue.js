@@ -326,6 +326,141 @@ function saveIssueStock(formData) {
   }
 }
 
+/**
+ * updateIssueStock(issueId, formData)
+ *
+ * Edits an existing issued-stock record in place: replaces all of its item
+ * rows with the resubmitted form data, keeping the same Issue ID. Mirrors
+ * saveBill's edit path (module_bill.js) — validate, locate the record's
+ * existing rows, delete them, insert the rebuilt rows at the same position.
+ *
+ * @param {string} issueId - Issue ID of the record being edited
+ * @param {Object} formData - Same shape as saveIssueStock's formData
+ * @returns {Object} API response
+ */
+function updateIssueStock(issueId, formData) {
+  const lock = LockService.getDocumentLock();
+
+  if (!lock.tryLock(ISSUE_LOCK_TIMEOUT_MS)) {
+    return buildResponse(false, null, 'System is busy. Please try again in a moment.');
+  }
+
+  try {
+    const targetId = String(issueId || '').trim();
+    if (!targetId) {
+      return buildResponse(false, null, 'Missing Issue ID to update.');
+    }
+
+    const sheet = _getIssueSheet();
+    _ensureIssueColumns(sheet);
+
+    let items;
+    try {
+      items = typeof formData.items === 'string'
+        ? JSON.parse(formData.items)
+        : (formData.items || []);
+    } catch (error) {
+      return buildResponse(false, null, 'Invalid items data: could not parse JSON.');
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return buildResponse(false, null, 'Cannot issue stock with zero items. Add at least one item.');
+    }
+
+    const issuedTo = sanitizeString(formData.issuedTo || '', 'issuedTo');
+    if (!issuedTo) {
+      return buildResponse(false, null, 'Issued To is required.');
+    }
+
+    const issueDateNative = toSafeDateObject(formData.date);
+    if (!issueDateNative) {
+      return buildResponse(false, null, 'Invalid issue date. Accepted formats: DD/MM/YYYY or YYYY-MM-DD.');
+    }
+
+    const startRow = APP_CONFIG.ISSUE_SETTINGS.DATA_START_ROW;
+    const firstMatchRow = _findFirstIssueRow(sheet, startRow, targetId);
+    if (firstMatchRow === -1) {
+      return buildResponse(false, null, `Original issue record ${targetId} not found. Edit aborted.`);
+    }
+
+    const reference = sanitizeString(formData.reference || '', 'reference');
+    const remarks = sanitizeString(formData.remarks || '', 'remarks');
+
+    const vendorNameMap = _getVendorNameMap();
+    const vendor = vendorNameMap[issuedTo.toLowerCase()] || '';
+
+    const itemUnitMap = _getItemUnitInfoMap();
+    const unitsMap = _getUnitsMap();
+
+    const newRows = items.map(function(item) {
+      const qty = _toValidNumber(item.qty, 'Qty', false);
+      const unit = sanitizeString(item.unit || 'Pcs', 'item.unit');
+
+      const unitInfo = _lookupItemUnitInfo(itemUnitMap, item.name, item.size || '');
+      let baseQty = qty;
+      try {
+        baseQty = convertQtyToBaseUnit(qty, unit, unitInfo, unitsMap);
+      } catch (e) {
+        baseQty = qty;
+      }
+
+      const rate = _toValidNumber(item.rate || 0, 'Rate', true);
+
+      return [
+        targetId,                                                // 1: ISSUE_ID
+        issueDateNative,                                         // 2: DATE
+        issuedTo,                                                // 3: ISSUED_TO
+        reference,                                               // 4: REFERENCE
+        sanitizeString(item.name, 'item.name'),                  // 5: ITEM_NAME
+        sanitizeString(item.size || '', 'item.size'),            // 6: SIZE
+        qty,                                                     // 7: QTY
+        unit,                                                    // 8: UNIT
+        remarks,                                                 // 9: REMARKS
+        baseQty,                                                 // 10: BASE_QTY
+        rate,                                                    // 11: RATE
+        vendor                                                   // 12: VENDOR
+      ];
+    });
+
+    _rewriteWithoutMatchingRowsBulk(sheet, startRow, ISSUE_COL.ISSUE_ID, new Set([targetId]));
+    _insertRowsAt(sheet, firstMatchRow, newRows);
+
+    if (typeof recalculateStock === 'function') {
+      recalculateStock();
+    }
+
+    SpreadsheetApp.flush();
+
+    logAction('UPDATE', APP_CONFIG.SHEETS.ISSUE, targetId, `Items: ${items.length}`, 'SUCCESS');
+    return buildResponse(true, { issueId: targetId }, `Stock issue ${targetId} updated successfully.`);
+  } catch (error) {
+    Log.error('[updateIssueStock] Error:', error.message);
+    logAction('ERROR', 'updateIssueStock', issueId, error.message, 'ERROR');
+    return buildResponse(false, null, 'Failed to update stock issue: ' + error.message);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Locates the first sheet row belonging to the given Issue ID.
+ * @private
+ */
+function _findFirstIssueRow(sheet, startRow, issueId) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < startRow) return -1;
+
+  const target = String(issueId).trim().toLowerCase();
+  const values = sheet.getRange(startRow, ISSUE_COL.ISSUE_ID, lastRow - startRow + 1, 1).getValues();
+
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0] || '').trim().toLowerCase() === target) {
+      return startRow + i;
+    }
+  }
+  return -1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // ISSUE DELETION
 // ─────────────────────────────────────────────────────────────────────────

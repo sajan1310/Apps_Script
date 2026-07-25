@@ -3095,11 +3095,12 @@
   <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
     <div class="modal-content shadow-lg">
       <div class="modal-header bg-warning text-dark">
-        <h5 class="modal-title fw-bold"><i class="bi bi-exclamation-triangle me-2"></i>Log Component Wastage</h5>
+        <h5 class="modal-title fw-bold" id="wastageModalTitle"><i class="bi bi-exclamation-triangle me-2"></i>Log Component Wastage</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body bg-light">
         <form id="wastageForm" autocomplete="off">
+          <input type="hidden" id="wastageEditingId">
           <div class="row g-3 mb-4">
             <div class="col-md-4">
               <label class="form-label fw-bold">Wastage Date *</label>
@@ -3137,7 +3138,7 @@
           <div class="text-end mt-2">
             <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
             <button type="submit" id="wastageSubmitBtn" class="btn btn-warning text-dark px-5 fw-bold shadow-sm">
-              <i class="bi bi-exclamation-triangle me-1"></i>Log Wastage
+              <i class="bi bi-exclamation-triangle me-1"></i><span id="wastageSubmitBtnLabel">Log Wastage</span>
             </button>
           </div>
         </form>
@@ -3151,7 +3152,7 @@
   <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
     <div class="modal-content shadow-lg">
       <div class="modal-header bg-dark text-white">
-        <h5 class="modal-title fw-bold"><i class="bi bi-box-arrow-up me-2"></i>Issue Stock</h5>
+        <h5 class="modal-title fw-bold" id="issueStockModalTitle"><i class="bi bi-box-arrow-up me-2"></i>Issue Stock</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body bg-light">
@@ -3160,6 +3161,7 @@
         </div>
         <form id="issueStockForm" autocomplete="off">
           <input type="hidden" id="issueSavedId">
+          <input type="hidden" id="issueEditingId">
           <div class="row g-3 mb-4">
             <div class="col-md-3">
               <label class="form-label fw-bold">Issue Date *</label>
@@ -3203,7 +3205,7 @@
             <button type="button" id="issueStockPrintBtn" class="btn btn-outline-dark me-2" style="display:none;" onclick="App.Issue.printCurrent()"><i class="bi bi-printer"></i> Print</button>
             <button type="button" id="issueStockDoneBtn" class="btn btn-success px-4 fw-bold shadow-sm" style="display:none;" onclick="App.Issue.done()"><i class="bi bi-check2"></i> Done</button>
             <button type="submit" id="issueStockSubmitBtn" class="btn btn-dark px-5 fw-bold shadow-sm">
-              <i class="bi bi-box-arrow-up me-1"></i>Issue Stock
+              <i class="bi bi-box-arrow-up me-1"></i><span id="issueStockSubmitBtnLabel">Issue Stock</span>
             </button>
           </div>
         </form>
@@ -29928,6 +29930,8 @@
               <td><small class="text-muted">${itemsPreview}</small></td>
               <td class="text-center fw-bold">${escapeHtml(String(w.totalQty ?? 0))}</td>
               <td>
+                <button class="btn btn-sm btn-outline-primary w-100 mb-1"
+                        onclick="App.Wastage.editWastage('${escapeHtml(key)}')">Edit</button>
                 <button class="btn btn-sm btn-danger w-100"
                         onclick="App.Wastage.deleteSingle('${escapeHtml(key)}')">Delete</button>
               </td>
@@ -29961,11 +29965,51 @@
 
         openWastageModal() {
           document.getElementById('wastageForm')?.reset();
+          this.resetToCreateMode();
           const dateInput = document.getElementById('wastageDateInput');
           if (dateInput) dateInput.value = todayIso();
           const tbody = document.getElementById('wastageItemsBody');
           if (tbody) tbody.innerHTML = this.getRowHtml();
           safeModalShow('logWastageModal');
+        },
+
+        editWastage(wastageId) {
+          const w = App.State.globalWastage.find(x => String(x.wastageId) === String(wastageId));
+          if (!w) {
+            App.Utils.showToast('Wastage record not found. Try refreshing.', true);
+            return;
+          }
+
+          document.getElementById('wastageForm')?.reset();
+          this.resetToCreateMode();
+          document.getElementById('wastageEditingId').value = w.wastageId;
+
+          const dateInput = document.getElementById('wastageDateInput');
+          if (dateInput) dateInput.value = dateToInputValue(w.dateRaw, w.date);
+          document.getElementById('wastageVendor').value = w.vendor || '';
+          const remarksInput = document.querySelector('#wastageForm [name="remarks"]');
+          if (remarksInput) remarksInput.value = w.remarks || '';
+
+          const tbody = document.getElementById('wastageItemsBody');
+          if (tbody) {
+            tbody.innerHTML = (w.items || []).map(item => this.getRowHtml(item)).join('') || this.getRowHtml();
+          }
+
+          const titleEl = document.getElementById('wastageModalTitle');
+          if (titleEl) titleEl.innerHTML = `<i class="bi bi-pencil-square me-2"></i>Edit Wastage ${escapeHtml(w.wastageId)}`;
+          const submitLabel = document.getElementById('wastageSubmitBtnLabel');
+          if (submitLabel) submitLabel.textContent = 'Update Wastage';
+
+          safeModalShow('logWastageModal');
+        },
+
+        resetToCreateMode() {
+          const editingId = document.getElementById('wastageEditingId');
+          if (editingId) editingId.value = '';
+          const titleEl = document.getElementById('wastageModalTitle');
+          if (titleEl) titleEl.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Log Component Wastage';
+          const submitLabel = document.getElementById('wastageSubmitBtnLabel');
+          if (submitLabel) submitLabel.textContent = 'Log Wastage';
         },
 
         addRow() {
@@ -30022,20 +30066,30 @@
             return;
           }
 
+          const editingId = document.getElementById('wastageEditingId')?.value || '';
           const submitBtn = document.getElementById('wastageSubmitBtn');
-          if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving…'; }
+          const submitLabel = document.getElementById('wastageSubmitBtnLabel');
+          const originalLabel = submitLabel ? submitLabel.textContent : '';
+          if (submitBtn) submitBtn.disabled = true;
+          if (submitLabel) submitLabel.textContent = editingId ? 'Updating…' : 'Saving…';
 
           try {
-            const res = await Api.call('saveWastage', formData);
+            const res = editingId
+              ? await Api.call('updateWastage', editingId, formData)
+              : await Api.call('saveWastage', formData);
             App.Utils.showToast(res?.message || 'Wastage logged.', !res?.success);
             if (res?.success) {
               bootstrap.Modal.getInstance(document.getElementById('logWastageModal'))?.hide();
+              this.resetToCreateMode();
               await this.loadData();
+            } else if (submitLabel) {
+              submitLabel.textContent = originalLabel;
             }
           } catch (err) {
             App.Utils.showToast(err.message || 'Failed to log wastage.', true);
+            if (submitLabel) submitLabel.textContent = originalLabel;
           } finally {
-            if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Log Wastage'; }
+            if (submitBtn) submitBtn.disabled = false;
           }
         },
 
@@ -30275,6 +30329,8 @@
               <td><small class="text-muted">${itemsPreview}</small></td>
               <td class="text-center fw-bold">${escapeHtml(String(iss.totalQty ?? 0))}</td>
               <td class="text-center">
+                <button class="btn btn-sm btn-outline-primary w-100 mb-1"
+                        onclick="App.Issue.editIssue('${escapeHtml(key)}')">Edit</button>
                 <button class="btn btn-sm btn-outline-dark w-100 mb-1"
                         onclick="App.Issue.print('${escapeHtml(key)}')">Print</button>
                 <button class="btn btn-sm btn-danger w-100"
@@ -30440,6 +30496,37 @@
           safeModalShow('issueStockModal');
         },
 
+        editIssue(issueId) {
+          const iss = App.State.globalIssues.find(i => String(i.issueId) === String(issueId));
+          if (!iss) {
+            App.Utils.showToast('Issue record not found. Try refreshing.', true);
+            return;
+          }
+
+          document.getElementById('issueStockForm')?.reset();
+          this.resetToCreateMode();
+          document.getElementById('issueEditingId').value = iss.issueId;
+
+          const dateInput = document.getElementById('issueDateInput');
+          if (dateInput) dateInput.value = dateToInputValue(iss.dateRaw, iss.date);
+          document.getElementById('issueIssuedTo').value = iss.issuedTo || '';
+          document.getElementById('issueReferenceInput').value = iss.reference || '';
+          const remarksInput = document.querySelector('#issueStockForm [name="remarks"]');
+          if (remarksInput) remarksInput.value = iss.remarks || '';
+
+          const tbody = document.getElementById('issueItemsBody');
+          if (tbody) {
+            tbody.innerHTML = (iss.items || []).map(item => this.getRowHtml(item)).join('') || this.getRowHtml();
+          }
+
+          const titleEl = document.getElementById('issueStockModalTitle');
+          if (titleEl) titleEl.innerHTML = `<i class="bi bi-pencil-square me-2"></i>Edit Issue ${escapeHtml(iss.issueId)}`;
+          const submitLabel = document.getElementById('issueStockSubmitBtnLabel');
+          if (submitLabel) submitLabel.textContent = 'Update Issue';
+
+          safeModalShow('issueStockModal');
+        },
+
         addRow() {
           const tbody = document.getElementById('issueItemsBody');
           if (!tbody) return;
@@ -30489,21 +30576,30 @@
             return;
           }
 
+          const editingId = document.getElementById('issueEditingId')?.value || '';
           const submitBtn = document.getElementById('issueStockSubmitBtn');
-          if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving…'; }
+          const submitLabel = document.getElementById('issueStockSubmitBtnLabel');
+          const originalLabel = submitLabel ? submitLabel.textContent : '';
+          if (submitBtn) submitBtn.disabled = true;
+          if (submitLabel) submitLabel.textContent = editingId ? 'Updating…' : 'Saving…';
 
           try {
-            const res = await Api.call('saveIssueStock', formData);
+            const res = editingId
+              ? await Api.call('updateIssueStock', editingId, formData)
+              : await Api.call('saveIssueStock', formData);
             App.Utils.showToast(res?.message || 'Stock issued.', !res?.success);
             if (res?.success) {
               await this.loadData();
               if (typeof App.Production !== 'undefined') App.Production.renderAllActivity();
-              this.enterSavedMode(res.data.issueId);
+              this.enterSavedMode(editingId || res.data.issueId);
+            } else if (submitLabel) {
+              submitLabel.textContent = originalLabel;
             }
           } catch (err) {
             App.Utils.showToast(err.message || 'Failed to issue stock.', true);
+            if (submitLabel) submitLabel.textContent = originalLabel;
           } finally {
-            if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '<i class="bi bi-box-arrow-up me-1"></i>Issue Stock'; }
+            if (submitBtn) submitBtn.disabled = false;
           }
         },
 
@@ -30545,6 +30641,8 @@
         resetToCreateMode() {
           const savedId = document.getElementById('issueSavedId');
           if (savedId) savedId.value = '';
+          const editingId = document.getElementById('issueEditingId');
+          if (editingId) editingId.value = '';
           this.setFormReadOnly(false);
           const submitBtn = document.getElementById('issueStockSubmitBtn');
           if (submitBtn) submitBtn.style.display = '';
@@ -30552,6 +30650,10 @@
           if (printBtn) printBtn.style.display = 'none';
           const doneBtn = document.getElementById('issueStockDoneBtn');
           if (doneBtn) doneBtn.style.display = 'none';
+          const titleEl = document.getElementById('issueStockModalTitle');
+          if (titleEl) titleEl.innerHTML = '<i class="bi bi-box-arrow-up me-2"></i>Issue Stock';
+          const submitLabel = document.getElementById('issueStockSubmitBtnLabel');
+          if (submitLabel) submitLabel.textContent = 'Issue Stock';
         },
 
         async deleteSingle(issueId) {
