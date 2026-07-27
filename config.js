@@ -1356,3 +1356,63 @@ function logAction(action, sheet, recordId, details = '', status = 'SUCCESS') {
     Logger.log(`Error logging action: ${error.message}`);
   }
 }
+
+/**
+ * getRecentNotificationLogs()
+ *
+ * Read-only counterpart to logAction() — feeds the web app's notification
+ * bell (App.Notify.checkBackendAlerts, Script_Core.html) so script errors
+ * and Internal Ledger Audit findings (module_audit.js) that never produced
+ * a toast in front of the user (background triggers, another tab/user, a
+ * resumed session) still surface somewhere. Scans only the most recent rows
+ * of the Logs sheet (cheap, bounded) for ERROR/WARNING entries from the
+ * last 7 days, newest first, capped to 30.
+ *
+ * @returns {Object} API response; data = Array<{ key, timestamp, action,
+ *   source, recordId, details, status }> — `key` is a stable per-row
+ *   dedupe key the client persists so the same entry isn't re-notified on
+ *   every reload.
+ */
+function getRecentNotificationLogs() {
+  try {
+    const logsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(getSheetName('LOGS'));
+    if (!logsSheet) return buildResponse(true, [], 'No logs sheet found.');
+
+    const lastRow = logsSheet.getLastRow();
+    if (lastRow < 2) return buildResponse(true, [], 'No log entries yet.');
+
+    const MAX_ROWS_SCANNED = 500;
+    const MAX_RESULTS = 30;
+    const startRow = Math.max(2, lastRow - MAX_ROWS_SCANNED + 1);
+    const numRows = lastRow - startRow + 1;
+    const data = logsSheet.getRange(startRow, 1, numRows, 7).getValues();
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const results = [];
+    for (let i = data.length - 1; i >= 0 && results.length < MAX_RESULTS; i--) {
+      const row = data[i];
+      const status = String(row[LOGS_COL.STATUS - 1] || '');
+      if (status !== 'ERROR' && status !== 'WARNING') continue;
+
+      const tsRaw = row[LOGS_COL.TIMESTAMP - 1];
+      const ts = tsRaw instanceof Date ? tsRaw : new Date(tsRaw);
+      if (isNaN(ts.getTime()) || ts < cutoff) continue;
+
+      const action = String(row[LOGS_COL.ACTION - 1] || '');
+      const recordId = String(row[LOGS_COL.RECORD_ID - 1] || '');
+      results.push({
+        key: `${ts.toISOString()}|${action}|${recordId}`,
+        timestamp: ts.toISOString(),
+        action,
+        source: String(row[LOGS_COL.SHEET - 1] || ''),
+        recordId,
+        details: String(row[LOGS_COL.DETAILS - 1] || ''),
+        status
+      });
+    }
+
+    return buildResponse(true, results, `${results.length} recent issue(s).`);
+  } catch (error) {
+    return handleError('getRecentNotificationLogs', error);
+  }
+}

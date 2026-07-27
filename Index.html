@@ -283,7 +283,10 @@
           <div id="notif-panel" class="notif-panel" style="display:none;">
             <div class="notif-panel-header">
               <span>Notifications</span>
-              <button type="button" id="notif-clear-btn" class="notif-clear-btn" onclick="App.Notify.clear()">Clear all</button>
+              <div class="notif-panel-header-actions">
+                <button type="button" id="notif-viewall-btn" class="notif-clear-btn" onclick="App.Notify.viewAll()">View all</button>
+                <button type="button" id="notif-clear-btn" class="notif-clear-btn" onclick="App.Notify.clear()">Clear all</button>
+              </div>
             </div>
             <div id="notif-list" class="notif-list">
               <div class="notif-empty">No notifications yet.</div>

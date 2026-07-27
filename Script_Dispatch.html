@@ -862,7 +862,9 @@
                 App.Dispatch.openCreateDispatchModal('');
               }
             }
-            App.Utils.showToast(res.message, !res.success);
+            App.Utils.showToast(res.message, !res.success, res.success
+              ? { type: 'dispatch', value: res.data?.row?.rowIdx || formData.dispatchRowIdx }
+              : null);
           } catch (err) {
             App.Utils.showToast(err.message || 'Failed to save dispatch', true);
           } finally {

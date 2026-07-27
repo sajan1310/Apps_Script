@@ -8,6 +8,48 @@
   </div>
 </div>
 
+<!-- Notifications: View All Modal -->
+<div class="modal fade" id="notifAllModal" tabindex="-1" aria-hidden="true" style="z-index: 1070;">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">All Notifications</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="notif-all-list" class="notif-list notif-list-modal">
+          <div class="notif-empty">No notifications yet.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-danger" onclick="App.Notify.clear()">Clear all</button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Notifications: Detail Modal (shown for a notification with no
+     navigable link — e.g. a plain error — so its full message is always
+     reachable even if the panel truncates it.) -->
+<div class="modal fade" id="notifDetailModal" tabindex="-1" aria-hidden="true" style="z-index: 1070;">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="notifDetailTitle">Notification Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="notifDetailBody" class="notif-detail-body"></div>
+        <div id="notifDetailTime" class="notif-detail-time text-muted small mt-2"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Confirmation Modal -->
 <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true" style="z-index: 1070;">
   <div class="modal-dialog modal-dialog-centered">

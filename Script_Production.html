@@ -5226,7 +5226,9 @@
                 App.Stock.loadWarehousePoolData();
               }
             }
-            App.Utils.showToast(response.message, !response.success);
+            App.Utils.showToast(response.message, !response.success, response.success
+              ? { type: 'production', value: response.data?.row?.rowIdx || savedRowIdx }
+              : null);
           } catch (err) {
             App.Utils.showToast(err.message || 'Failed to save production log', true);
           } finally {

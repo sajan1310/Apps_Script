@@ -678,7 +678,9 @@
                 App.Vendor.openCreateModal();
               }
             }
-            App.Utils.showToast(res.message, !res.success);
+            App.Utils.showToast(res.message, !res.success, res.success
+              ? { type: 'vendor', value: formData.vendorName || formData.originalVendorName }
+              : null);
           } catch (err) {
             App.Utils.showToast(err.message || 'Failed to save vendor', true);
           } finally {
