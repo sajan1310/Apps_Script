@@ -909,6 +909,9 @@
         .map(i =>
           typeof i === 'object' && i !== null
             ? `${escapeHtml(i.name)}${i.size ? ` [${escapeHtml(i.size)}]` : ''} (${escapeHtml(i.qty)} ${escapeHtml(i.unit || 'Pcs')})` +
+              // Only Labor Job Bill items carry this field — undefined for
+              // Goods Bill/PO/Return items, so this is a no-op for them.
+              (i.color ? ` <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">${escapeHtml(i.color)}</span>` : '') +
               // Only Bill items carry this field (see checkStockAdjustmentConflicts) —
               // undefined for PO/Return items, so this is a no-op for them.
               (i.affectsStock === false ? ' <span class="badge bg-warning text-dark">Ledger only</span>' : '')

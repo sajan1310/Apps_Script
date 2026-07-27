@@ -257,7 +257,10 @@ function _mapBillColumnOffsets(firstCol) {
     remarks:  BILL_COL.REMARKS - firstCol,
     baseQty:  BILL_COL.BASE_QTY - firstCol,
     baseRate: BILL_COL.BASE_RATE - firstCol,
-    affectsStock: BILL_COL.AFFECTS_STOCK - firstCol
+    affectsStock: BILL_COL.AFFECTS_STOCK - firstCol,
+    billType: BILL_COL.BILL_TYPE - firstCol,
+    processName: BILL_COL.PROCESS_NAME - firstCol,
+    color: BILL_COL.COLOR - firstCol
   };
 }
 
@@ -283,6 +286,8 @@ function _buildBillHeaderFromRow(r, OFF) {
     vendor: String(r[OFF.vendor] || '').trim(),
     contact: String(r[OFF.contact] || ''),
     remarks: String(r[OFF.remarks] || ''),
+    // Blank (legacy rows predating this column) defaults to a regular goods bill.
+    billType: String(r[OFF.billType] || 'GOODS').trim().toUpperCase() === 'LABOR' ? 'LABOR' : 'GOODS',
     items: [],
     totalQty: 0,
     totalAmount: 0
@@ -314,7 +319,11 @@ function _addBillItemFromRow(bill, r, OFF) {
     baseQty: _toValidNumber(r[OFF.baseQty], 'Base Qty', true) || qty,
     baseRate: _toValidNumber(r[OFF.baseRate], 'Base Rate', true) || price,
     // Blank (legacy rows predating this column) defaults to affecting Stock.
-    affectsStock: String(r[OFF.affectsStock] || 'Y').trim().toUpperCase() !== 'N'
+    affectsStock: String(r[OFF.affectsStock] || 'Y').trim().toUpperCase() !== 'N',
+    // Labor Job lines only — which Process this line's job-work was for, and
+    // the color that was processed (both blank on GOODS rows).
+    processName: String(r[OFF.processName] || ''),
+    color: String(r[OFF.color] || '')
   });
 
   bill.totalQty += qty;
@@ -354,10 +363,10 @@ function getBillData() {
       return buildResponse(true, []);
     }
 
-    // Read from PO_NUMBER column through AFFECTS_STOCK column
+    // Read from PO_NUMBER column through COLOR column
     // Avoids reading unrelated columns to the left
     const firstCol = BILL_COL.PO_NUMBER;
-    const numCols = BILL_COL.AFFECTS_STOCK - firstCol + 1;
+    const numCols = BILL_COL.COLOR - firstCol + 1;
     const data = sheet
       .getRange(startRow, firstCol, lastRow - startRow + 1, numCols)
       .getValues();
@@ -541,6 +550,29 @@ function _computeBillOverageWarnings(items) {
   }
 }
 
+/**
+ * _getActiveProcessNameMap()
+ *
+ * Builds a Process Name (lowercased) -> {processId, processName, outputItemName}
+ * lookup over active Process Master rows, for validating/resolving a Labor
+ * Job bill line's chosen Process (see saveBill). Uses getProcessData(true)
+ * — the same cached list every other module reads — rather than a second
+ * hand-rolled sheet scan.
+ * @returns {Object}
+ * @private
+ */
+function _getActiveProcessNameMap() {
+  const map = {};
+  if (typeof getProcessData !== 'function') return map;
+  const res = getProcessData(true);
+  if (!res || !res.success) return map;
+  (res.data || []).forEach(function(p) {
+    const key = String(p.processName || '').trim().toLowerCase();
+    if (key) map[key] = p;
+  });
+  return map;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // BILL CREATION
 // ─────────────────────────────────────────────────────────────────────────
@@ -697,6 +729,13 @@ function saveBill(formData) {
     // ─────────────────────────────────────────────────────────────────
     const contact = sanitizeString(formData.contact, 'contact');
     const remarks = sanitizeString(formData.remarks, 'remarks');
+    const billType = String(formData.billType || 'GOODS').trim().toUpperCase() === 'LABOR' ? 'LABOR' : 'GOODS';
+
+    // Labor Job bills carry a Process per line (ITEM_NAME is then forced to
+    // that Process's Output Item Name, not whatever the client sent) — build
+    // the lookup once, keyed by Process Name, so every item below can
+    // validate/resolve against it instead of trusting client-supplied text.
+    const processByName = billType === 'LABOR' ? _getActiveProcessNameMap() : null;
 
     // ─────────────────────────────────────────────────────────────────
     // Build batch write array
@@ -721,6 +760,26 @@ function saveBill(formData) {
     const excludeFromStockSet = new Set(excludeFromStockKeys.map(k => String(k).trim().toLowerCase()));
 
     const newRows = items.map(function(item) {
+      // Labor Job rows: resolve the chosen Process against Process Master
+      // (rejecting anything that doesn't match a real, active process) and
+      // force ITEM_NAME to that process's Output Item Name — the same
+      // "server owns the canonical value" rule saveProduction already
+      // applies, so a Labor bill's item name can never drift from what the
+      // process actually produces.
+      let itemName = item.name;
+      let processName = '';
+      let color = '';
+      if (billType === 'LABOR') {
+        const rawProcessName = sanitizeString(item.processName || item.process || '', 'item.processName');
+        const process = rawProcessName ? processByName[rawProcessName.toLowerCase()] : null;
+        if (!process) {
+          throw new Error(`"${rawProcessName || '(blank)'}" is not a recognized active Process. Pick a Process for every Labor Job line.`);
+        }
+        processName = process.processName;
+        itemName = process.outputItemName;
+        color = sanitizeString(item.color || '', 'item.color');
+      }
+
       const qty = _toValidNumber(item.qty, 'Qty');
       const price = _toValidNumber(item.price, 'Price');
       // `|| DEFAULT_GST_RATE_PCT` would also override an intentional 0%
@@ -735,7 +794,7 @@ function saveBill(formData) {
       // An unconvertible unit must never block saving the bill — fall back
       // to treating the as-entered qty/price as already in the Base Unit.
       // The line still saves with whatever unit the user actually typed.
-      const unitInfo = _lookupItemUnitInfo(itemUnitMap, item.name, item.size || '');
+      const unitInfo = _lookupItemUnitInfo(itemUnitMap, itemName, item.size || '');
       let baseQty = qty;
       let baseRate = price;
       try {
@@ -746,14 +805,17 @@ function saveBill(formData) {
         baseRate = price;
       }
 
-      // Attach converted values onto the item so autoExtractFromPoOrBill()
-      // (called below with this same `items` array) can use the per-Base-Unit
-      // rate instead of the as-entered price, and log this line's actual PO.
+      // Attach converted/resolved values onto the item so
+      // autoExtractFromPoOrBill() (called below with this same `items`
+      // array) sees the same canonical name/PO/rate this row was actually
+      // saved under (LABOR rows: the process's Output Item Name, not
+      // whatever the client sent).
+      item.name = itemName;
       item.baseQty = baseQty;
       item.baseRate = baseRate;
       item.poNumber = itemPoNumber;
 
-      const itemKey = String(item.name || '').trim().toLowerCase() + '|' + String(item.size || '').trim().toLowerCase();
+      const itemKey = String(itemName || '').trim().toLowerCase() + '|' + String(item.size || '').trim().toLowerCase();
       const affectsStock = excludeFromStockSet.has(itemKey) ? 'N' : 'Y';
 
       return [
@@ -762,7 +824,7 @@ function saveBill(formData) {
         billDateNative,                                    // 3: BILL_DATE
         vendor,                                            // 4: VENDOR
         contact,                                           // 5: CONTACT
-        sanitizeString(item.name, 'item.name'),            // 6: ITEM_NAME
+        sanitizeString(itemName, 'item.name'),             // 6: ITEM_NAME
         sanitizeString(item.size || '', 'item.size'),      // 7: SIZE
         sanitizeString(item.narration || '', 'item.narration'), // 8: NARRATION
         qty,                                               // 9: QTY
@@ -773,7 +835,10 @@ function saveBill(formData) {
         remarks,                                           // 14: REMARKS
         baseQty,                                           // 15: BASE_QTY
         baseRate,                                          // 16: BASE_RATE
-        affectsStock                                       // 17: AFFECTS_STOCK
+        affectsStock,                                      // 17: AFFECTS_STOCK
+        billType,                                          // 18: BILL_TYPE
+        processName,                                       // 19: PROCESS_NAME
+        color                                               // 20: COLOR
       ];
     });
 
@@ -799,12 +864,18 @@ function saveBill(formData) {
       ).setValues(newRows);
     }
 
-    // Auto-extract vendors, items, and rates
-    autoExtractFromPoOrBill(formData.vendor, formData.contact, items, {
-      date: billDateNative,
-      poNumber: defaultPoNumber,
-      billNumber: billNumber
-    });
+    // Auto-extract vendors, items, and rates — skipped for Labor Job bills:
+    // VENDOR there holds a Contractor's name, and this would otherwise both
+    // pollute Vendor Master with contractor names and record a job-work
+    // rate onto the Item Master's per-vendor purchase-rate list. Contractors
+    // already have their own master + rate card (CONTRACTOR_RATES_COL).
+    if (billType !== 'LABOR') {
+      autoExtractFromPoOrBill(formData.vendor, formData.contact, items, {
+        date: billDateNative,
+        poNumber: defaultPoNumber,
+        billNumber: billNumber
+      });
+    }
 
     if (typeof recalculateStock === 'function') {
       recalculateStock();
@@ -826,7 +897,7 @@ function saveBill(formData) {
     // Read this bill's own just-written rows back (cheap — only its own
     // block, not the whole sheet) so the client can patch it into an
     // already-loaded Bill Ledger in place instead of a full reload.
-    const freshNumCols = BILL_COL.AFFECTS_STOCK - BILL_COL.PO_NUMBER + 1;
+    const freshNumCols = BILL_COL.COLOR - BILL_COL.PO_NUMBER + 1;
     const freshRows = sheet.getRange(freshStartRow, BILL_COL.PO_NUMBER, newRows.length, freshNumCols).getValues();
     const freshBill = _buildBillRecordFromRows(freshRows);
 
@@ -1048,6 +1119,12 @@ function _ensureBillSheetColumns(sheet) {
   const hasAffectsStock = refreshedHeaders.some(h => String(h).trim().toLowerCase() === 'affects stock');
   if (!hasAffectsStock) {
     sheet.getRange(1, BILL_COL.AFFECTS_STOCK).setValue('Affects Stock');
+    SpreadsheetApp.flush();
+  }
+
+  const hasBillType = refreshedHeaders.some(h => String(h).trim().toLowerCase() === 'bill type');
+  if (!hasBillType) {
+    sheet.getRange(1, BILL_COL.BILL_TYPE, 1, 3).setValues([['Bill Type', 'Process Name', 'Color']]);
     SpreadsheetApp.flush();
   }
 

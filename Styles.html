@@ -214,6 +214,11 @@
     color: var(--text-primary);
   }
 
+  /* ── Bill form: Goods vs Labor Job column toggle (see App.Bill.setBillType) ── */
+  #billItemsTable .labor-col { display: none; }
+  #billItemsTable.labor-mode .labor-col { display: table-cell; }
+  #billItemsTable.labor-mode .goods-col { display: none; }
+
   /* ── Excel-style column filter icon in table headers (Items Master) ── */
   .th-filter-btn {
     border: none;

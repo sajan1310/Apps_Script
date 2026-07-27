@@ -381,9 +381,16 @@ const BILL_COL = Object.freeze({
   REMARKS:        14,     // Bill remarks
   BASE_QTY:       15,     // QTY converted to the item's Base Unit (e.g. Pcs) — drives stock/BOM math
   BASE_RATE:      16,     // PRICE converted to a per-Base-Unit rate
-  AFFECTS_STOCK:  17      // 'Y' (default/legacy) or 'N' — 'N' means this line is recorded for the
+  AFFECTS_STOCK:  17,     // 'Y' (default/legacy) or 'N' — 'N' means this line is recorded for the
                            // ledger only and is excluded from Stock's Billed Qty sum (see
                            // checkStockAdjustmentConflicts in module_stock.js)
+  BILL_TYPE:      18,     // 'GOODS' (default/legacy) or 'LABOR' — a Labor Job (job-work) bill from
+                           // a contractor. VENDOR holds the contractor's name for these rows.
+  PROCESS_NAME:   19,     // LABOR rows only: the Process (Process Master) this job-work line is
+                           // for. ITEM_NAME is forced server-side to that process's Output Item
+                           // Name — see saveBill.
+  COLOR:          20      // LABOR rows only: the color produced/processed on this line, picked
+                           // from that Process's color sub-groups (getProcessColorGroups).
 });
 
 /**
@@ -406,7 +413,10 @@ const BILL_COL_NAMES = Object.freeze({
   'remarks': BILL_COL.REMARKS,
   'baseQty': BILL_COL.BASE_QTY,
   'baseRate': BILL_COL.BASE_RATE,
-  'affectsStock': BILL_COL.AFFECTS_STOCK
+  'affectsStock': BILL_COL.AFFECTS_STOCK,
+  'billType': BILL_COL.BILL_TYPE,
+  'processName': BILL_COL.PROCESS_NAME,
+  'color': BILL_COL.COLOR
 });
 
 // ─────────────────────────────────────────────────────────────────────────

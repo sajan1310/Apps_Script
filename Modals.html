@@ -251,10 +251,21 @@
         <form id="billForm" autocomplete="off">
           <input type="hidden" id="existingBillNumber" name="existingBillNumber">
           <input type="hidden" id="existingVendor" name="existingVendor">
+          <div class="row g-3 mb-3">
+            <div class="col-12">
+              <label class="form-label fw-bold d-block">Bill Type</label>
+              <div class="btn-group" role="group" aria-label="Bill Type">
+                <input type="radio" class="btn-check" name="billType" id="billTypeGoods" value="GOODS" checked onchange="App.Bill.setBillType(this.value)">
+                <label class="btn btn-outline-dark" for="billTypeGoods">Goods Bill</label>
+                <input type="radio" class="btn-check" name="billType" id="billTypeLabor" value="LABOR" onchange="App.Bill.setBillType(this.value)">
+                <label class="btn btn-outline-dark" for="billTypeLabor">Labor Job Bill</label>
+              </div>
+            </div>
+          </div>
           <div class="row g-3 mb-4">
             <input type="hidden" name="contact" id="billContact">
             <div class="col-md-4">
-              <label class="form-label fw-bold">Vendor Name *</label>
+              <label class="form-label fw-bold" id="billVendorLabel">Vendor Name *</label>
               <select name="vendor" id="billVendor" class="form-select select2-vendor" required></select>
             </div>
 
@@ -263,13 +274,15 @@
             <div class="col-md-8"><label class="form-label">Ledger Remarks</label><input type="text" name="remarks" class="form-control" placeholder="Optional notes for this bill..." maxlength="500"></div>
           </div>
 
-          <h6 class="text-secondary border-bottom pb-1 fw-bold">Items Received</h6>
+          <h6 class="text-secondary border-bottom pb-1 fw-bold" id="billItemsSectionTitle">Items Received</h6>
           <div class="table-responsive">
-            <table class="table table-bordered bg-white shadow-sm">
+            <table class="table table-bordered bg-white shadow-sm" id="billItemsTable">
               <thead class="table-light">
                 <tr>
-                  <th>Item Name *</th>
-                  <th style="width:10%;">Size</th>
+                  <th class="goods-col">Item Name *</th>
+                  <th class="goods-col" style="width:10%;">Size</th>
+                  <th class="labor-col" style="width:18%;">Process *</th>
+                  <th class="labor-col" style="width:16%;">Color</th>
                   <th style="width:15%;">Narration</th>
                   <th style="width:10%;">Recv. Qty *</th>
                   <th style="width:8%;">Unit</th>
@@ -281,7 +294,7 @@
               <tbody id="billItemsBody"></tbody>
             </table>
           </div>
-          
+
           <button type="button" class="btn btn-outline-primary btn-sm mb-3 fw-bold" onclick="App.Bill.addRow()">+ Add Bill Item</button>
 
           <div class="text-end mt-2">
