@@ -4455,9 +4455,18 @@
         const knownColors = (p.colorBreakdown || []).map(c => c.color).filter(Boolean);
         const { common, matrixSlots, colors } = this.groupComponentsForSheet(components, knownColors);
 
+        // Size/Model aren't stored on the lot itself — they're derived from
+        // its Process's Output Item Name the same way the Production form's
+        // Size/Model dropdowns are (see handleSizeChange/handleModelChange).
+        const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+        const processName = process ? process.processName : (p.processId || 'Process');
+        const size = App.Utils.getSizeFromOutputItemName(p.outputItemName);
+        const model = App.Utils.getModelFromOutputItemName(p.outputItemName);
+
         // Remember context so Save/Reset/Add-row/Add-color actions know which
-        // lot and which color columns are currently in play.
-        App.State.currentProductionSheet = { idx, lotQty: p.qty, defaultComponents, colors, lotColor: p.color || '' };
+        // lot and which color columns are currently in play, and so
+        // downloadProductionSheetPDF can name the file after this lot.
+        App.State.currentProductionSheet = { idx, lotQty: p.qty, defaultComponents, colors, lotColor: p.color || '', date: p.date, size, model, processName };
 
         const label = p.productName || p.outputItemName || p.processId;
         const tag = p.productId || p.lotNumber;
@@ -4900,7 +4909,11 @@
         }
       },
 
-      printProductionSheet() {
+      // Populates #print-production-sheet-container from the currently-open
+      // Production Sheet dialog. Shared by printProductionSheet (feeds
+      // window.print()) and downloadProductionSheetPDF (feeds html2pdf) so
+      // both export paths render from one source of truth.
+      _buildProductionSheetForExport() {
         const setText = (id, text) => {
           const el = document.getElementById(id);
           if (el) el.innerText = text;
@@ -5101,9 +5114,122 @@
           remarksSection.style.display = remarksText ? '' : 'none';
           setText('print-prod-remarks-text', remarksText);
         }
+      },
 
+      printProductionSheet() {
+        this._buildProductionSheetForExport();
         const productId = document.getElementById('prodSheetProductId')?.innerText || 'Production';
         App.Print.trigger('print-production-sheet-container', `Production_Sheet_${productId.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+      },
+
+      // Strips everything except alphanumerics (no spaces/separators kept —
+      // the caller joins parts with its own underscore) so each filename
+      // segment is filesystem-safe on both Windows and POSIX downloaders.
+      _sanitizeFilenamePart(text, fallback) {
+        return String(text || '').replace(/[^a-zA-Z0-9]/g, '') || fallback;
+      },
+
+      async downloadProductionSheetPDF() {
+        const state = App.State.currentProductionSheet;
+        const element = document.getElementById('print-production-sheet-container');
+        if (!state || !element) return;
+
+        this._buildProductionSheetForExport();
+
+        if (typeof window.html2pdf !== 'function') {
+          try {
+            await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
+          } catch (err) {
+            console.error('[PDF] Failed to load html2pdf library:', err);
+            App.Utils.showToast('PDF library failed to load. Check your connection and try again.', true);
+            return;
+          }
+        }
+
+        try {
+          if (document.fonts?.ready) await document.fonts.ready;
+        } catch (err) {
+          console.warn('[PDF] Font loading check failed:', err);
+        }
+
+        // Filename: ddmmyy_Size_Model_ProcessName, e.g. 290726_26inch_Eagle_FramePainting.pdf
+        const [dd = '', mm = '', yyyy = ''] = String(state.date || '').split('/');
+        const ddmmyy = `${dd}${mm}${yyyy.slice(-2)}` || 'date';
+        const fileParts = [
+          ddmmyy,
+          this._sanitizeFilenamePart(state.size, 'Size'),
+          this._sanitizeFilenamePart(state.model, 'Model'),
+          this._sanitizeFilenamePart(state.processName, 'Process')
+        ];
+
+        // Same html2canvas offset/clipping fixes as App.PO.downloadPDF: move
+        // the element to the document origin, capture, then restore it.
+        const prevStyle = element.getAttribute('style');
+        const prevBodyPad = document.body.style.padding;
+        const prevBodyMar = document.body.style.margin;
+        const prevBodyOvf = document.body.style.overflow;
+        const prevHtmlOverflow = document.documentElement.style.overflow;
+        const originalParent = element.parentNode;
+        const originalSibling = element.nextSibling;
+        const prevScrollX = window.pageXOffset || document.documentElement.scrollLeft;
+        const prevScrollY = window.pageYOffset || document.documentElement.scrollTop;
+
+        window.scrollTo(0, 0);
+        document.body.insertBefore(element, document.body.firstChild);
+        document.body.style.padding = '0';
+        document.body.style.margin = '0';
+        document.body.style.overflow = 'visible';
+        document.documentElement.style.overflow = 'visible';
+        element.style.display = 'block';
+        element.style.width = '749px';
+        element.style.maxWidth = 'none';
+
+        await new Promise(r => requestAnimationFrame(r));
+
+        try {
+          await window.html2pdf()
+            .set({
+              margin: [6, 6, 6, 6],
+              filename: `${fileParts.join('_')}.pdf`,
+              image: { type: 'jpeg', quality: 0.98 },
+              html2canvas: {
+                scale: 2,
+                useCORS: true,
+                allowTaint: true,
+                logging: false,
+                scrollX: 0,
+                scrollY: 0,
+                backgroundColor: '#ffffff'
+              },
+              jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+              pagebreak: { mode: ['css', 'legacy'] }
+            })
+            .from(element)
+            .save();
+
+          App.Utils.showToast('PDF exported successfully!', false);
+        } catch (err) {
+          console.error('[PDF] Generation failed:', err);
+          App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
+        } finally {
+          window.scrollTo(prevScrollX, prevScrollY);
+          document.body.style.padding = prevBodyPad;
+          document.body.style.margin = prevBodyMar;
+          document.body.style.overflow = prevBodyOvf;
+          document.documentElement.style.overflow = prevHtmlOverflow;
+          if (prevStyle !== null) {
+            element.setAttribute('style', prevStyle);
+          } else {
+            element.removeAttribute('style');
+          }
+          if (originalParent) {
+            if (originalSibling) {
+              originalParent.insertBefore(element, originalSibling);
+            } else {
+              originalParent.appendChild(element);
+            }
+          }
+        }
       }
     };
 
