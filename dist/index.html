@@ -23511,7 +23511,12 @@
         poolItems.forEach(c => addPool(c.itemName));
 
         tagComps
-          .filter(c => App.Utils.sameText(c.colorGroup, color))
+          // Token match, not whole-string: a tag row scoped to "Blue-White"
+          // is genuinely consumed by a lot producing the composite
+          // "Blue-White / BCP", so its stock constrains that row's
+          // availability. Same rule the Per-Color Components table and
+          // saveProduction use (see _matchedColorToken).
+          .filter(c => this._matchedColorToken(c.colorGroup, color))
           .forEach(c => {
             if (c.sourceType === 'POOL') {
               addPool(c.itemName);
@@ -25619,6 +25624,34 @@
       // refreshPoolColorGroupCells updates their suggested qty for each
       // color without touching the main matrix at all. Caller is
       // responsible for the (single) refreshPoolAvailability afterward.
+      // Which part of `color` a recipe row's Color Sub-Group names, or null
+      // if it names none of it. A checked color is often a COMPOSITE of the
+      // axes this lot combines ("Blue-White / BCP"), while a recipe's
+      // color-specific rows are tagged with ONE axis's own color
+      // ("Blue-White", or "BCP"). Matching the whole composite string
+      // against colorGroup therefore never hit, so checking a composite
+      // color added its column to the Per-Color Components table and then
+      // populated nothing into it — the table looked like it emptied itself
+      // whenever the colors changed.
+      //
+      // Both tokens of a composite legitimately apply at once: a lot
+      // producing "Blue-White / BCP" consumes the frame-color-specific parts
+      // AND the rim-color-specific parts. This mirrors saveProduction's own
+      // rule server-side, which already accepts a component scoped to any
+      // single axis token of a breakdown color (module_production.js).
+      //
+      // Returns the matched token rather than a boolean so the caller can
+      // strip THAT token from the item's display name (see
+      // _stripColorSubstring) instead of the full composite, which would
+      // never be found inside an item name like "Frame---Blue-White".
+      _matchedColorToken(colorGroup, color) {
+        const cg = String(colorGroup || '').trim();
+        if (!cg) return null;
+        if (App.Utils.sameColor(cg, color)) return String(color || '').trim();
+        const segments = String(color || '').split(' / ').map(x => x.trim()).filter(Boolean);
+        return segments.find(seg => App.Utils.sameColor(seg, cg)) || null;
+      },
+
       async populateColorMatrixForColors(processId, colors, seq, axisKey) {
         if (!processId || !colors || colors.length === 0) return;
 
@@ -25648,8 +25681,10 @@
               // different literal items per color (e.g. "Frame---Red" /
               // "Frame---Blue") — keep those on merged rows, one real item
               // picker per color cell.
-              const colorComps = all.filter(c => App.Utils.sameText(c.colorGroup, color))
-                .map(c => ({ ...c, displayName: this._stripColorSubstring(c.itemName || '', color) }));
+              const colorComps = all
+                .map(c => ({ comp: c, token: this._matchedColorToken(c.colorGroup, color) }))
+                .filter(x => x.token)
+                .map(({ comp, token }) => ({ ...comp, displayName: this._stripColorSubstring(comp.itemName || '', token) }));
 
               colorComps.forEach(c => {
                 let row = this.findMatrixRowByDisplayName(c.displayName, c.size || '');
