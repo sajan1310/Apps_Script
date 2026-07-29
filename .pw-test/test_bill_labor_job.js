@@ -197,7 +197,7 @@ console.log('\n=== Test: saveBill records a Labor Job bill line correctly ===');
 {
   const res = saveBill({
     billNumber: 'LB-1', billDate: '2026-01-10', vendor: 'Rajesh Contractor', contact: '', remarks: 'Job work',
-    billType: 'LABOR',
+    billType: 'LABOR', issuingParty: 'Warehouse A', manufacturingVendor: 'Acme Manufacturing',
     items: JSON.stringify([{ processName: 'Sweep Painting', color: 'Red', qty: 5, unit: 'Pcs', price: 20, gst: 18, narration: 'Batch 1' }])
   });
   assert(res.success, 'saveBill succeeds: ' + res.message);
@@ -209,17 +209,26 @@ console.log('\n=== Test: saveBill records a Labor Job bill line correctly ===');
   assert(billSheet.getRange(lastRow, BILL_COL.PROCESS_NAME).getValue() === 'Sweep Painting', 'PROCESS_NAME column stored Sweep Painting');
   assert(billSheet.getRange(lastRow, BILL_COL.COLOR).getValue() === 'Red', 'COLOR column stored Red');
   assert(billSheet.getRange(lastRow, BILL_COL.VENDOR).getValue() === 'Rajesh Contractor', 'VENDOR column reused for the contractor name');
+  assert(billSheet.getRange(lastRow, BILL_COL.ISSUING_PARTY).getValue() === 'Warehouse A', 'ISSUING_PARTY column stored Warehouse A');
+  assert(billSheet.getRange(lastRow, BILL_COL.MANUFACTURING_VENDOR).getValue() === 'Acme Manufacturing', 'MANUFACTURING_VENDOR column stored Acme Manufacturing');
 
-  // Vendor/Item Master auto-extraction must be SKIPPED for Labor bills —
-  // Rajesh Contractor is not a real vendor and shouldn't pollute Vendor Master.
+  // Vendor/Item Master auto-extraction now RUNS for Labor bills too (per
+  // product decision) — the contractor name registers into Vendor Master
+  // just like any other vendor encountered on a bill.
   const vendorSheet = ss.getSheetByName(APP_CONFIG.SHEETS.VENDORS);
-  assert(vendorSheet.getLastRow() === 0, 'Vendor Master was NOT auto-populated with the contractor name (got ' + vendorSheet.getLastRow() + ' rows)');
+  assert(vendorSheet.getLastRow() === 1, 'Vendor Master WAS auto-populated with the contractor name (got ' + vendorSheet.getLastRow() + ' rows)');
+  // No header row was seeded on this fake Vendor Master sheet, so the first
+  // appended vendor lands on row 1, not row 2.
+  const vendorNames = vendorSheet.getRange(1, 1, vendorSheet.getLastRow(), 1).getValues().map(r => r[0]);
+  assert(vendorNames.includes('Rajesh Contractor'), 'Vendor Master contains the contractor name (got ' + JSON.stringify(vendorNames) + ')');
 
   const billData = getBillData();
   assert(billData.success, 'getBillData succeeds');
   const bill = billData.data.find(b => b.billNumber === 'LB-1');
   assert(!!bill, 'saved Labor Job bill is present in getBillData()');
   assert(bill && bill.billType === 'LABOR', 'bill header reports billType LABOR (got ' + (bill && bill.billType) + ')');
+  assert(bill && bill.issuingParty === 'Warehouse A', 'bill header reports issuingParty (got ' + (bill && bill.issuingParty) + ')');
+  assert(bill && bill.manufacturingVendor === 'Acme Manufacturing', 'bill header reports manufacturingVendor (got ' + (bill && bill.manufacturingVendor) + ')');
   const item = bill && bill.items[0];
   assert(item && item.name === 'Sweep Painted Frame', 'item.name is the process Output Item Name (got ' + (item && item.name) + ')');
   assert(item && item.processName === 'Sweep Painting', 'item.processName round-trips (got ' + (item && item.processName) + ')');
@@ -243,9 +252,10 @@ console.log('\n=== Test: a normal Goods bill still round-trips with billType GOO
   assert(item && item.processName === '', 'Goods bill item has blank processName');
   assert(item && item.color === '', 'Goods bill item has blank color');
 
-  // Vendor Master SHOULD gain a row for a real Goods bill.
+  // Vendor Master should now have 2 rows: the earlier Labor bill's
+  // contractor plus this Goods bill's real vendor.
   const vendorSheet = ss.getSheetByName(APP_CONFIG.SHEETS.VENDORS);
-  assert(vendorSheet.getLastRow() === 1, 'Vendor Master WAS auto-populated for a real Goods bill (got ' + vendorSheet.getLastRow() + ' rows)');
+  assert(vendorSheet.getLastRow() === 2, 'Vendor Master gained a 2nd row for this Goods bill vendor (got ' + vendorSheet.getLastRow() + ' rows)');
 }
 
 console.log('\n=== Test: editing a Labor Job bill updates its Process/Color in place ===');

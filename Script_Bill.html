@@ -618,6 +618,12 @@
           const remarksInput = document.querySelector('input[name="remarks"]');
           if (remarksInput) remarksInput.value = bill.remarks || '';
 
+          const issuingPartyInput = document.querySelector('input[name="issuingParty"]');
+          if (issuingPartyInput) issuingPartyInput.value = bill.issuingParty || '';
+
+          const manufacturingVendorInput = document.querySelector('input[name="manufacturingVendor"]');
+          if (manufacturingVendorInput) manufacturingVendorInput.value = bill.manufacturingVendor || '';
+
           const tbody = document.getElementById('billItemsBody');
           if (tbody) {
             tbody.innerHTML =
@@ -764,6 +770,9 @@
           const table = document.getElementById('billItemsTable');
           if (table) table.classList.toggle('labor-mode', isLabor);
 
+          const form = document.getElementById('billForm');
+          if (form) form.classList.toggle('labor-mode', isLabor);
+
           const title = document.getElementById('billItemsSectionTitle');
           if (title) title.textContent = isLabor ? 'Labor Job Lines' : 'Items Received';
 
@@ -824,9 +833,14 @@
         // Searchable Select2 for a Labor Job row's Process picker, scoped to
         // active processes (no free-typing — a Labor line must reference a
         // real Process Master row, same rule Production's own Process
-        // dropdown enforces). Each <option> carries the process's Output
-        // Item Name + canonical name in its dataset so serializeForm() and
-        // handleRowProcessChange() never have to re-look it up.
+        // dropdown enforces). Options are LABELED by each process's Output
+        // Item Name (what the operator actually thinks of as "the processed
+        // item") rather than the internal Process Name, but the underlying
+        // value is still the processId — each <option> carries both the
+        // Output Item Name and canonical Process Name in its dataset so
+        // serializeForm()/handleRowProcessChange() never have to re-look it
+        // up. Output Item Names are unique across active processes (saveProcess
+        // enforces this), so they're safe to use as the visible label.
         initRowProcessSelect2(row) {
           const selectEl = row?.querySelector('.b-process-select');
           if (!selectEl) return;
@@ -837,17 +851,17 @@
           const optionsHtml = processes.map(p => {
             const isSelected = currentProcessName && p.processName.trim().toLowerCase() === currentProcessName;
             if (isSelected) selectedId = p.processId;
-            return `<option value="${escapeHtml(p.processId)}" data-output-item="${escapeHtml(p.outputItemName || '')}" data-process-name="${escapeHtml(p.processName)}">${escapeHtml(p.processName)}</option>`;
+            return `<option value="${escapeHtml(p.processId)}" data-output-item="${escapeHtml(p.outputItemName || '')}" data-process-name="${escapeHtml(p.processName)}">${escapeHtml(p.outputItemName || p.processName)}</option>`;
           }).join('');
 
-          selectEl.innerHTML = '<option value="">Choose a Process...</option>' + optionsHtml;
+          selectEl.innerHTML = '<option value="">Choose a Processed Item...</option>' + optionsHtml;
           selectEl.value = selectedId;
 
           if (window.jQuery?.fn?.select2) {
             const $select = window.jQuery(selectEl);
             if ($select.data('select2')) $select.select2('destroy');
             $select.select2({
-              placeholder: 'Choose a Process...',
+              placeholder: 'Choose a Processed Item...',
               width: '100%',
               matcher: App.Utils.select2Matcher,
               dropdownParent: App.Utils.select2DropdownParent($select)

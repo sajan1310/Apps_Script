@@ -271,6 +271,8 @@
 
             <div class="col-md-4"><label class="form-label fw-bold">Invoice / Bill Number *</label><input type="text" name="billNumber" class="form-control" required maxlength="50"></div>
             <div class="col-md-4"><label class="form-label fw-bold">Invoice Date *</label><input type="date" name="billDate" id="billDateInput" class="form-control" required></div>
+            <div class="col-md-4 labor-only-field"><label class="form-label">Issuing Party</label><input type="text" name="issuingParty" class="form-control" placeholder="Optional" maxlength="200"></div>
+            <div class="col-md-4 labor-only-field"><label class="form-label">Manufacturing Vendor Name</label><input type="text" name="manufacturingVendor" class="form-control" placeholder="Optional" maxlength="200"></div>
             <div class="col-md-8"><label class="form-label">Ledger Remarks</label><input type="text" name="remarks" class="form-control" placeholder="Optional notes for this bill..." maxlength="500"></div>
           </div>
 
@@ -281,7 +283,7 @@
                 <tr>
                   <th class="goods-col">Item Name *</th>
                   <th class="goods-col" style="width:10%;">Size</th>
-                  <th class="labor-col" style="width:18%;">Process *</th>
+                  <th class="labor-col" style="width:18%;">Processed Item *</th>
                   <th class="labor-col" style="width:16%;">Color</th>
                   <th style="width:15%;">Narration</th>
                   <th style="width:10%;">Recv. Qty *</th>

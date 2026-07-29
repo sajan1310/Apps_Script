@@ -389,8 +389,13 @@ const BILL_COL = Object.freeze({
   PROCESS_NAME:   19,     // LABOR rows only: the Process (Process Master) this job-work line is
                            // for. ITEM_NAME is forced server-side to that process's Output Item
                            // Name — see saveBill.
-  COLOR:          20      // LABOR rows only: the color produced/processed on this line, picked
+  COLOR:          20,     // LABOR rows only: the color produced/processed on this line, picked
                            // from that Process's color sub-groups (getProcessColorGroups).
+  ISSUING_PARTY:  21,     // LABOR rows only: optional free-text — who issued the raw material/job
+                           // to the contractor for this bill (bill-header field, same value on
+                           // every row of one bill, like VENDOR/CONTACT).
+  MANUFACTURING_VENDOR: 22 // LABOR rows only: optional free-text — the vendor who manufactured the
+                           // raw item(s) processed on this job-work bill.
 });
 
 /**
@@ -416,7 +421,9 @@ const BILL_COL_NAMES = Object.freeze({
   'affectsStock': BILL_COL.AFFECTS_STOCK,
   'billType': BILL_COL.BILL_TYPE,
   'processName': BILL_COL.PROCESS_NAME,
-  'color': BILL_COL.COLOR
+  'color': BILL_COL.COLOR,
+  'issuingParty': BILL_COL.ISSUING_PARTY,
+  'manufacturingVendor': BILL_COL.MANUFACTURING_VENDOR
 });
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -265,6 +265,10 @@
   #billItemsTable.labor-mode .labor-col { display: table-cell; }
   #billItemsTable.labor-mode .goods-col { display: none; }
 
+  /* ── Bill form: Labor-Job-only header fields (Issuing Party / Manufacturing Vendor) ── */
+  #billForm .labor-only-field { display: none; }
+  #billForm.labor-mode .labor-only-field { display: block; }
+
   /* ── Excel-style column filter icon in table headers (Items Master) ── */
   .th-filter-btn {
     border: none;
@@ -3128,6 +3132,8 @@
 
             <div class="col-md-4"><label class="form-label fw-bold">Invoice / Bill Number *</label><input type="text" name="billNumber" class="form-control" required maxlength="50"></div>
             <div class="col-md-4"><label class="form-label fw-bold">Invoice Date *</label><input type="date" name="billDate" id="billDateInput" class="form-control" required></div>
+            <div class="col-md-4 labor-only-field"><label class="form-label">Issuing Party</label><input type="text" name="issuingParty" class="form-control" placeholder="Optional" maxlength="200"></div>
+            <div class="col-md-4 labor-only-field"><label class="form-label">Manufacturing Vendor Name</label><input type="text" name="manufacturingVendor" class="form-control" placeholder="Optional" maxlength="200"></div>
             <div class="col-md-8"><label class="form-label">Ledger Remarks</label><input type="text" name="remarks" class="form-control" placeholder="Optional notes for this bill..." maxlength="500"></div>
           </div>
 
@@ -3138,7 +3144,7 @@
                 <tr>
                   <th class="goods-col">Item Name *</th>
                   <th class="goods-col" style="width:10%;">Size</th>
-                  <th class="labor-col" style="width:18%;">Process *</th>
+                  <th class="labor-col" style="width:18%;">Processed Item *</th>
                   <th class="labor-col" style="width:16%;">Color</th>
                   <th style="width:15%;">Narration</th>
                   <th style="width:10%;">Recv. Qty *</th>
@@ -14356,6 +14362,12 @@
           const remarksInput = document.querySelector('input[name="remarks"]');
           if (remarksInput) remarksInput.value = bill.remarks || '';
 
+          const issuingPartyInput = document.querySelector('input[name="issuingParty"]');
+          if (issuingPartyInput) issuingPartyInput.value = bill.issuingParty || '';
+
+          const manufacturingVendorInput = document.querySelector('input[name="manufacturingVendor"]');
+          if (manufacturingVendorInput) manufacturingVendorInput.value = bill.manufacturingVendor || '';
+
           const tbody = document.getElementById('billItemsBody');
           if (tbody) {
             tbody.innerHTML =
@@ -14502,6 +14514,9 @@
           const table = document.getElementById('billItemsTable');
           if (table) table.classList.toggle('labor-mode', isLabor);
 
+          const form = document.getElementById('billForm');
+          if (form) form.classList.toggle('labor-mode', isLabor);
+
           const title = document.getElementById('billItemsSectionTitle');
           if (title) title.textContent = isLabor ? 'Labor Job Lines' : 'Items Received';
 
@@ -14562,9 +14577,14 @@
         // Searchable Select2 for a Labor Job row's Process picker, scoped to
         // active processes (no free-typing — a Labor line must reference a
         // real Process Master row, same rule Production's own Process
-        // dropdown enforces). Each <option> carries the process's Output
-        // Item Name + canonical name in its dataset so serializeForm() and
-        // handleRowProcessChange() never have to re-look it up.
+        // dropdown enforces). Options are LABELED by each process's Output
+        // Item Name (what the operator actually thinks of as "the processed
+        // item") rather than the internal Process Name, but the underlying
+        // value is still the processId — each <option> carries both the
+        // Output Item Name and canonical Process Name in its dataset so
+        // serializeForm()/handleRowProcessChange() never have to re-look it
+        // up. Output Item Names are unique across active processes (saveProcess
+        // enforces this), so they're safe to use as the visible label.
         initRowProcessSelect2(row) {
           const selectEl = row?.querySelector('.b-process-select');
           if (!selectEl) return;
@@ -14575,17 +14595,17 @@
           const optionsHtml = processes.map(p => {
             const isSelected = currentProcessName && p.processName.trim().toLowerCase() === currentProcessName;
             if (isSelected) selectedId = p.processId;
-            return `<option value="${escapeHtml(p.processId)}" data-output-item="${escapeHtml(p.outputItemName || '')}" data-process-name="${escapeHtml(p.processName)}">${escapeHtml(p.processName)}</option>`;
+            return `<option value="${escapeHtml(p.processId)}" data-output-item="${escapeHtml(p.outputItemName || '')}" data-process-name="${escapeHtml(p.processName)}">${escapeHtml(p.outputItemName || p.processName)}</option>`;
           }).join('');
 
-          selectEl.innerHTML = '<option value="">Choose a Process...</option>' + optionsHtml;
+          selectEl.innerHTML = '<option value="">Choose a Processed Item...</option>' + optionsHtml;
           selectEl.value = selectedId;
 
           if (window.jQuery?.fn?.select2) {
             const $select = window.jQuery(selectEl);
             if ($select.data('select2')) $select.select2('destroy');
             $select.select2({
-              placeholder: 'Choose a Process...',
+              placeholder: 'Choose a Processed Item...',
               width: '100%',
               matcher: App.Utils.select2Matcher,
               dropdownParent: App.Utils.select2DropdownParent($select)
@@ -22443,17 +22463,17 @@
       // (mirrors #print-production-sheet-container's markup/styling) for bulk printing.
       buildProductionSheetPrintPageHtml(p) {
         const BRAND = '#198754';
-        const HEAD_BG = '#e8f5e9', HEAD_INK = '#146c43', ZEBRA = '#f6f8f6';
+        const HEAD_BG = '#d4edda', HEAD_INK = '#0b5132', ZEBRA = '#f6f8f6';
         const components = p.componentsConsumed || [];
 
         let rowsHtml = '';
         components.forEach((comp, i) => {
           const zebra = i % 2 === 1 ? `background:${ZEBRA};` : '';
           rowsHtml += `<tr>
-        <td style="padding:6px;border:1px solid #ddd;text-align:left;font-size:13.5px;font-weight:700;${zebra}">${escapeHtml(comp.itemName || '')}</td>
-        <td style="padding:6px;border:1px solid #ddd;${zebra}">${escapeHtml(comp.size || '-')}</td>
-        <td style="padding:6px;border:1px solid #ddd;${zebra}">${escapeHtml(comp.sourceType === 'POOL' ? 'Pool' : 'Item')}</td>
-        <td style="padding:6px;border:1px solid #ddd;text-align:right;font-size:14.5px;font-weight:700;${zebra}">${escapeHtml(this.formatQty(comp.qty))}</td>
+        <td style="padding:6px;border:1px solid #999;text-align:left;font-size:13.5px;font-weight:700;color:#1a1a1a;${zebra}">${escapeHtml(comp.itemName || '')}</td>
+        <td style="padding:6px;border:1px solid #999;color:#1a1a1a;${zebra}">${escapeHtml(comp.size || '-')}</td>
+        <td style="padding:6px;border:1px solid #999;color:#1a1a1a;${zebra}">${escapeHtml(comp.sourceType === 'POOL' ? 'Pool' : 'Item')}</td>
+        <td style="padding:6px;border:1px solid #999;text-align:right;font-size:14.5px;font-weight:700;color:#1a1a1a;${zebra}">${escapeHtml(this.formatQty(comp.qty))}</td>
       </tr>`;
         });
         const rows = rowsHtml || '<tr><td colspan="4" style="padding:10px;text-align:center;color:#999;">No components recorded for this lot.</td></tr>';
@@ -22510,10 +22530,10 @@
       <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
         <thead style="text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
           <tr>
-            <th style="padding:6px;border:1px solid #bbb;background:${HEAD_BG};color:${HEAD_INK};text-align:left;width:45%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Item / Pool Name</th>
-            <th style="padding:6px;border:1px solid #bbb;background:${HEAD_BG};color:${HEAD_INK};width:20%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Size</th>
-            <th style="padding:6px;border:1px solid #bbb;background:${HEAD_BG};color:${HEAD_INK};width:20%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Source</th>
-            <th style="padding:6px;border:1px solid #bbb;background:${HEAD_BG};color:${HEAD_INK};text-align:right;width:15%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Qty</th>
+            <th style="padding:6px;border:1px solid #999;background:${HEAD_BG};color:${HEAD_INK};text-align:left;width:45%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Item / Pool Name</th>
+            <th style="padding:6px;border:1px solid #999;background:${HEAD_BG};color:${HEAD_INK};width:20%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Size</th>
+            <th style="padding:6px;border:1px solid #999;background:${HEAD_BG};color:${HEAD_INK};width:20%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Source</th>
+            <th style="padding:6px;border:1px solid #999;background:${HEAD_BG};color:${HEAD_INK};text-align:right;width:15%;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Qty</th>
           </tr>
         </thead>
         <tbody style="color:#1a1a1a;text-align:center;">${rows}</tbody>
@@ -24339,7 +24359,7 @@
         const rowsHtml = rows.map((r, rowIdx) => {
           const rowId = 'prod_pool_group_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
           const preSelectedOption = this._buildItemPreselectOption(r.itemName, r.size || '', r.sourceType);
-          const qtyPerUnitAttr = (mode === 'create' && r.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${r.qtyPerUnit}"` : '';
+          const qtyPerUnitAttr = (r.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${r.qtyPerUnit}"` : '';
           const cellsHtml = visibleColors.map(col => {
             const qty = this._poolGroupCellValue(mode, r, col, axisKey);
             const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
@@ -25272,7 +25292,10 @@
       // colors as a starting point in the matrix instead of staying flat —
       // the operator should adjust each color's cell to what was actually
       // used, then re-save to fix this lot's stored data going forward.
-      async populateComponentsConsumedDirect(components, colors) {
+      async populateComponentsConsumedDirect(components, breakdown) {
+        const colors = breakdown.map(b => b.color);
+        const lotTotalQty = breakdown.reduce((sum, b) => sum + (b.countsTowardTotal !== false ? (b.qty || 0) : 0), 0);
+
         this.clearComponentsTable();
         this.clearColorMatrix();
         colors.forEach(c => this.addMatrixColorColumn(c));
@@ -25293,6 +25316,16 @@
 
         (components || []).forEach(c => {
           const colorGroup = c.colorGroup || 'COMMON';
+          
+          let derivedQtyPerUnit = 1;
+          if (colorGroup === 'COMMON') {
+            derivedQtyPerUnit = lotTotalQty > 0 ? (c.qty / lotTotalQty) : 0;
+          } else {
+            const b = breakdown.find(entry => entry.color.toLowerCase() === colorGroup.toLowerCase());
+            const colorQty = b ? b.qty : 0;
+            derivedQtyPerUnit = colorQty > 0 ? (c.qty / colorQty) : 0;
+          }
+
           // Pool-color-aware (multi-color split) applies whether this row's
           // colorGroup is still the legacy 'COMMON' (saved before this item
           // was recognized as multi-color) or already a real color name
@@ -25310,8 +25343,10 @@
             const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
             let entry = poolGroupAccum.get(key);
             if (!entry) {
-              entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {} };
+              entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, qtyPerUnit: derivedQtyPerUnit };
               poolGroupAccum.set(key, entry);
+            } else if (entry.qtyPerUnit === undefined) {
+              entry.qtyPerUnit = derivedQtyPerUnit;
             }
 
             if (colorGroup === 'COMMON') {
@@ -25320,6 +25355,7 @@
               upgradedAny = true;
               const perColorQty = colors.length > 0 ? c.qty / colors.length : c.qty;
               colors.forEach(color => { entry.colorsQty[color.toLowerCase()] = perColorQty; });
+              entry.qtyPerUnit = derivedQtyPerUnit;
             } else {
               // Already a correctly saved per-color quantity. colorGroup is
               // this item's own literal axis color (e.g. "BCP"), which won't
@@ -25354,7 +25390,7 @@
               const colIndex = this.getMatrixColumnIndex(col);
               if (colIndex === -1) return;
               const cell = row.children[colIndex];
-              this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, perColorQty);
+              this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, perColorQty, derivedQtyPerUnit);
             });
             return;
           }
@@ -25371,6 +25407,7 @@
               narration: c.narration,
               sourceType: c.sourceType,
               qty: c.qty,
+              qtyPerUnit: derivedQtyPerUnit,
               color: isLockedPoolColor ? colorGroup : c.color,
               colorScope: isLockedPoolColor ? colorGroup : undefined,
               unit: c.unit
@@ -25386,7 +25423,7 @@
           if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, sourceType: c.sourceType, narration: c.narration });
           const colIndex = this.getMatrixColumnIndex(colorGroup);
           const cell = row.children[colIndex];
-          this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty);
+          this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty, derivedQtyPerUnit);
         });
 
         // Seed a table for EVERY pool-color-aware recipe item (see
@@ -26002,15 +26039,22 @@
 
         document.getElementById('productionRowIdx').value = p.rowIdx;
 
-        // Normalize date string (DD/MM/YYYY) to YYYY-MM-DD input value
+        // Normalize date string to local YYYY-MM-DD input value
         let inputDateStr = todayIso();
-        if (p.date && p.date.includes('/')) {
+        if (p.dateRaw) {
+          const d = new Date(p.dateRaw);
+          if (!isNaN(d)) {
+            const localY = d.getFullYear();
+            const localM = String(d.getMonth() + 1).padStart(2, '0');
+            const localD = String(d.getDate()).padStart(2, '0');
+            inputDateStr = `${localY}-${localM}-${localD}`;
+          }
+        } else if (p.date && p.date.includes('/')) {
           const [day, month, year] = p.date.split('/');
           inputDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-        } else if (p.dateRaw) {
-          inputDateStr = p.dateRaw.split('T')[0];
         }
         document.getElementById('productionDate').value = inputDateStr;
+        document.getElementById('productionDate').disabled = false;
 
         document.getElementById('productionAssignedBy').value = p.assignedBy;
         this.initContractorSelect2(p.assignedTo);
@@ -26200,7 +26244,7 @@
           this._syncColorGroupMasterCheckbox('custom');
 
           if (p.componentsConsumed && p.componentsConsumed.length > 0) {
-            await this.populateComponentsConsumedDirect(p.componentsConsumed, breakdown.map(b => b.color));
+            await this.populateComponentsConsumedDirect(p.componentsConsumed, breakdown);
           } else {
             // No saved consumption recorded (shouldn't normally happen) — fall
             // back to recipe defaults for the saved colors.
@@ -26800,7 +26844,7 @@
           { pad: '2.5px 6px', font: 10, emphasisFont: 12.5, tableGap: 7, hideSize: false },
           { pad: '2px 5px', font: 9.5, emphasisFont: 11, tableGap: 5, hideSize: true }
         ];
-        const HEAD_BG = '#e8f5e9', HEAD_INK = '#146c43', ZEBRA = '#f6f8f6', RULE = '#cfd6d1';
+        const HEAD_BG = '#d4edda', HEAD_INK = '#0b5132', ZEBRA = '#f6f8f6', RULE = '#999';
 
         const headCell = (label, tier, opts = {}) => {
           const width = opts.width ? `width:${opts.width};` : '';
@@ -26813,7 +26857,7 @@
           const weight = opts.bold ? 'font-weight:700;' : '';
           const fs = opts.emphasis ? tier.emphasisFont : tier.font;
           return `<td style="padding:${tier.pad};border:1px solid ${RULE};text-align:${opts.align || 'left'};
-                    font-size:${fs}px;${weight}${bg}">${content}</td>`;
+                    color:#1a1a1a;font-size:${fs}px;${weight}${bg}">${content}</td>`;
         };
 
         const buildCommonTable = (rows, tier, hideSize) => {

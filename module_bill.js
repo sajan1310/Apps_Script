@@ -260,7 +260,9 @@ function _mapBillColumnOffsets(firstCol) {
     affectsStock: BILL_COL.AFFECTS_STOCK - firstCol,
     billType: BILL_COL.BILL_TYPE - firstCol,
     processName: BILL_COL.PROCESS_NAME - firstCol,
-    color: BILL_COL.COLOR - firstCol
+    color: BILL_COL.COLOR - firstCol,
+    issuingParty: BILL_COL.ISSUING_PARTY - firstCol,
+    manufacturingVendor: BILL_COL.MANUFACTURING_VENDOR - firstCol
   };
 }
 
@@ -288,6 +290,9 @@ function _buildBillHeaderFromRow(r, OFF) {
     remarks: String(r[OFF.remarks] || ''),
     // Blank (legacy rows predating this column) defaults to a regular goods bill.
     billType: String(r[OFF.billType] || 'GOODS').trim().toUpperCase() === 'LABOR' ? 'LABOR' : 'GOODS',
+    // Labor Job bills only — optional free text, blank on Goods bills.
+    issuingParty: String(r[OFF.issuingParty] || ''),
+    manufacturingVendor: String(r[OFF.manufacturingVendor] || ''),
     items: [],
     totalQty: 0,
     totalAmount: 0
@@ -363,10 +368,10 @@ function getBillData() {
       return buildResponse(true, []);
     }
 
-    // Read from PO_NUMBER column through COLOR column
+    // Read from PO_NUMBER column through MANUFACTURING_VENDOR column
     // Avoids reading unrelated columns to the left
     const firstCol = BILL_COL.PO_NUMBER;
-    const numCols = BILL_COL.COLOR - firstCol + 1;
+    const numCols = BILL_COL.MANUFACTURING_VENDOR - firstCol + 1;
     const data = sheet
       .getRange(startRow, firstCol, lastRow - startRow + 1, numCols)
       .getValues();
@@ -730,6 +735,9 @@ function saveBill(formData) {
     const contact = sanitizeString(formData.contact, 'contact');
     const remarks = sanitizeString(formData.remarks, 'remarks');
     const billType = String(formData.billType || 'GOODS').trim().toUpperCase() === 'LABOR' ? 'LABOR' : 'GOODS';
+    // Labor Job bills only — optional free text, blank on Goods bills.
+    const issuingParty = sanitizeString(formData.issuingParty || '', 'issuingParty');
+    const manufacturingVendor = sanitizeString(formData.manufacturingVendor || '', 'manufacturingVendor');
 
     // Labor Job bills carry a Process per line (ITEM_NAME is then forced to
     // that Process's Output Item Name, not whatever the client sent) — build
@@ -838,7 +846,9 @@ function saveBill(formData) {
         affectsStock,                                      // 17: AFFECTS_STOCK
         billType,                                          // 18: BILL_TYPE
         processName,                                       // 19: PROCESS_NAME
-        color                                               // 20: COLOR
+        color,                                              // 20: COLOR
+        issuingParty,                                       // 21: ISSUING_PARTY
+        manufacturingVendor                                 // 22: MANUFACTURING_VENDOR
       ];
     });
 
@@ -864,18 +874,15 @@ function saveBill(formData) {
       ).setValues(newRows);
     }
 
-    // Auto-extract vendors, items, and rates — skipped for Labor Job bills:
-    // VENDOR there holds a Contractor's name, and this would otherwise both
-    // pollute Vendor Master with contractor names and record a job-work
-    // rate onto the Item Master's per-vendor purchase-rate list. Contractors
-    // already have their own master + rate card (CONTRACTOR_RATES_COL).
-    if (billType !== 'LABOR') {
-      autoExtractFromPoOrBill(formData.vendor, formData.contact, items, {
-        date: billDateNative,
-        poNumber: defaultPoNumber,
-        billNumber: billNumber
-      });
-    }
+    // Auto-extract vendors, items, and rates. Runs for Labor Job bills too
+    // (per product decision) — VENDOR there holds a Contractor's name, and
+    // this registers it into Vendor Master as well as the Contractors list,
+    // same as any other vendor name encountered on a bill.
+    autoExtractFromPoOrBill(formData.vendor, formData.contact, items, {
+      date: billDateNative,
+      poNumber: defaultPoNumber,
+      billNumber: billNumber
+    });
 
     if (typeof recalculateStock === 'function') {
       recalculateStock();
@@ -897,7 +904,7 @@ function saveBill(formData) {
     // Read this bill's own just-written rows back (cheap — only its own
     // block, not the whole sheet) so the client can patch it into an
     // already-loaded Bill Ledger in place instead of a full reload.
-    const freshNumCols = BILL_COL.COLOR - BILL_COL.PO_NUMBER + 1;
+    const freshNumCols = BILL_COL.MANUFACTURING_VENDOR - BILL_COL.PO_NUMBER + 1;
     const freshRows = sheet.getRange(freshStartRow, BILL_COL.PO_NUMBER, newRows.length, freshNumCols).getValues();
     const freshBill = _buildBillRecordFromRows(freshRows);
 
@@ -1125,6 +1132,12 @@ function _ensureBillSheetColumns(sheet) {
   const hasBillType = refreshedHeaders.some(h => String(h).trim().toLowerCase() === 'bill type');
   if (!hasBillType) {
     sheet.getRange(1, BILL_COL.BILL_TYPE, 1, 3).setValues([['Bill Type', 'Process Name', 'Color']]);
+    SpreadsheetApp.flush();
+  }
+
+  const hasIssuingParty = refreshedHeaders.some(h => String(h).trim().toLowerCase() === 'issuing party');
+  if (!hasIssuingParty) {
+    sheet.getRange(1, BILL_COL.ISSUING_PARTY, 1, 2).setValues([['Issuing Party', 'Manufacturing Vendor']]);
     SpreadsheetApp.flush();
   }
 
