@@ -3,6 +3,7 @@
     <div class="d-flex w-50 align-items-center flex-wrap gap-2">
       <input type="text" id="searchItem" class="form-control me-2" placeholder="Search Items, Sizes, Vendors, or try 'pending orders' / 'low stock' / 'no metadata'..." autocomplete="off" onkeyup="App.Item.filterData(this.value)">
       <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintItems" onclick="App.Item.bulkPrint()" style="white-space: nowrap;"><i class="bi bi-printer"></i> Print Selected</button>
+      <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfItems" onclick="App.Item.bulkDownloadPDF()" style="white-space: nowrap;"><i class="bi bi-file-earmark-pdf"></i> Download PDFs</button>
       <button class="btn btn-outline-warning fw-bold shadow-sm d-none" id="btnMergeSelected" onclick="App.Item.mergeSelected()" style="white-space: nowrap;" title="Check exactly 2 items: the one to KEEP first, then the duplicate to remove."><i class="bi bi-magic"></i> Merge Selected</button>
       <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteItems" onclick="App.Item.bulkDelete()" style="white-space: nowrap;"><i class="bi bi-trash"></i> Delete Selected</button>
     </div>

@@ -544,6 +544,7 @@
         const count = App.State.selectedProduction.length;
         App.Selection.updateButton('btnBulkDeleteProduction', count, '<i class="bi bi-trash"></i> Delete Selected');
         App.Selection.updateButton('btnBulkPrintProduction', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfProduction', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       async bulkDelete() {
@@ -2471,6 +2472,29 @@
         return total > 0 ? total * row.qtyPerUnit : undefined;
       },
 
+      // The qty-per-unit basis to stamp on one Per-Process Pool Components
+      // CELL (both the initial render in _buildPoolColorGroupTable and a
+      // later-inserted column in syncPoolColorGroupColumns) so
+      // refreshPoolColorGroupCells can keep recomputing that one cell as the
+      // checklist's Qty changes. Edit mode rows (see
+      // populateComponentsConsumedDirect) carry a PER-COLOR ratio in
+      // colorsQtyPerUnit — this item may have been consumed at a genuinely
+      // different rate for one color than another (rounding, wastage,
+      // partial batches), and using this color's own derived ratio (rather
+      // than whichever color's ratio happened to populate the row's shared
+      // `qtyPerUnit` first) keeps a later edit to THIS color's qty scaling
+      // correctly instead of borrowing a different color's rate. Falls back
+      // to the row's own shared `qtyPerUnit` (a create-mode row's recipe
+      // ratio, or an edit-mode row's recipe-seeded default for a color this
+      // lot never previously recorded any qty for at all — see the "seed a
+      // table for EVERY pool-color-aware recipe item" block) when no
+      // color-specific ratio exists yet.
+      _poolCellQtyPerUnit(row, color) {
+        if (!row) return undefined;
+        const perColor = row.colorsQtyPerUnit ? row.colorsQtyPerUnit[String(color || '').toLowerCase()] : undefined;
+        return perColor !== undefined ? perColor : row.qtyPerUnit;
+      },
+
       // Builds one <table> for a pool-color group: `colors` is that group's
       // FULL real color set (stamped on the table for later column
       // add/remove lookups — see addPoolColorGroupColumn), `visibleColors`
@@ -2484,10 +2508,11 @@
         const rowsHtml = rows.map((r, rowIdx) => {
           const rowId = 'prod_pool_group_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
           const preSelectedOption = this._buildItemPreselectOption(r.itemName, r.size || '', r.sourceType);
-          const qtyPerUnitAttr = (r.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${r.qtyPerUnit}"` : '';
           const cellsHtml = visibleColors.map(col => {
             const qty = this._poolGroupCellValue(mode, r, col, axisKey);
             const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
+            const cellQtyPerUnit = this._poolCellQtyPerUnit(r, col);
+            const qtyPerUnitAttr = (cellQtyPerUnit !== undefined) ? ` data-qty-per-unit="${cellQtyPerUnit}"` : '';
             return `<td><input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(col)}"${qtyPerUnitAttr} step="any" value="${display}"></td>`;
           }).join('');
           return `
@@ -2614,7 +2639,16 @@
               const rowObj = def.rows[Number(tr.dataset.rowIdx)];
               const qty = rowObj ? this._poolGroupCellValue(def.mode, rowObj, matchColor, def.axisKey) : undefined;
               const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
-              const qtyPerUnitAttr = (def.mode === 'create' && rowObj && rowObj.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${rowObj.qtyPerUnit}"` : '';
+              // Stamped for BOTH modes (see _poolCellQtyPerUnit) — an edit-
+              // mode row's own per-color ratio (or its recipe-seeded
+              // fallback) lets refreshPoolColorGroupCells keep recomputing
+              // this newly-added column as the checklist's Qty changes,
+              // same as every column already visible when the table first
+              // rendered. Previously gated to 'create' only, which left a
+              // color newly checked mid-edit permanently stuck blank no
+              // matter what qty the operator typed into the checklist.
+              const cellQtyPerUnit = rowObj ? this._poolCellQtyPerUnit(rowObj, matchColor) : undefined;
+              const qtyPerUnitAttr = (cellQtyPerUnit !== undefined) ? ` data-qty-per-unit="${cellQtyPerUnit}"` : '';
               const td = document.createElement('td');
               td.innerHTML = `<input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(matchColor)}"${qtyPerUnitAttr} step="any" value="${display}">`;
               tr.insertBefore(td, tr.children[insertIdx] || null);
@@ -3468,7 +3502,13 @@
             const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
             let entry = poolGroupAccum.get(key);
             if (!entry) {
-              entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, qtyPerUnit: derivedQtyPerUnit };
+              // colorsQtyPerUnit holds each color's OWN derived ratio (see
+              // _poolCellQtyPerUnit) — the shared `qtyPerUnit` alongside it
+              // is only ever a fallback for a color this lot has no history
+              // for yet (a brand-new column checked mid-edit), not the
+              // value actually used to redisplay/recompute any color that
+              // DOES have its own entry below.
+              entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: derivedQtyPerUnit };
               poolGroupAccum.set(key, entry);
             } else if (entry.qtyPerUnit === undefined) {
               entry.qtyPerUnit = derivedQtyPerUnit;
@@ -3479,7 +3519,10 @@
               // as a starting point for the operator to correct and re-save.
               upgradedAny = true;
               const perColorQty = colors.length > 0 ? c.qty / colors.length : c.qty;
-              colors.forEach(color => { entry.colorsQty[color.toLowerCase()] = perColorQty; });
+              colors.forEach(color => {
+                entry.colorsQty[color.toLowerCase()] = perColorQty;
+                entry.colorsQtyPerUnit[color.toLowerCase()] = derivedQtyPerUnit;
+              });
               entry.qtyPerUnit = derivedQtyPerUnit;
             } else {
               // Already a correctly saved per-color quantity. colorGroup is
@@ -3491,6 +3534,14 @@
               // pool-color-aware row is by construction one of this item's
               // real pool colors.
               entry.colorsQty[colorGroup.toLowerCase()] = c.qty;
+              // This color's OWN ratio (c.qty / this color's own breakdown
+              // qty), not whichever color happened to create `entry` first
+              // — two colors of the same pool item can legitimately have
+              // been consumed at different rates (rounding, partial
+              // batches), and a shared row-level ratio previously made
+              // editing one color's checklist Qty silently recompute using
+              // a DIFFERENT color's rate.
+              entry.colorsQtyPerUnit[colorGroup.toLowerCase()] = derivedQtyPerUnit;
             }
             return;
           }
@@ -3571,7 +3622,13 @@
               if (itemColors.length <= 1) return;
               const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
               if (!poolGroupAccum.has(key)) {
-                poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {} });
+                // No qty history at all for this item on this lot yet — fall
+                // back to the recipe's own qtyPerUnit (same basis Create mode
+                // suggests) so a color checked mid-edit still gets a useful
+                // starting estimate via _poolCellQtyPerUnit's row-level
+                // fallback, instead of staying permanently blank until the
+                // operator types directly into the pool cell.
+                poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: c.qtyPerUnit });
               }
             });
         }
@@ -4439,6 +4496,25 @@
         const p = App.State.globalProduction[idx];
         if (!p) return;
 
+        this._populateProductionSheetData(p, idx);
+
+        const modalEl = document.getElementById('productionSheetModal');
+        if (modalEl && typeof bootstrap !== 'undefined') {
+          bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        }
+      },
+
+      // Populates the Production Sheet dialog's DOM (title/date/Common
+      // table/Per-Color matrix/Remarks) for one lot, WITHOUT opening the
+      // modal — split out of viewProductionSheet so bulkDownloadPDF can
+      // reuse the exact same rich rendering (Common table + Per-Color
+      // matrix, including Pool-sourced per-color components — see
+      // groupComponentsForSheet) for every selected lot in turn, without
+      // flashing the modal open/closed once per lot. `idx` is only used to
+      // remember this lot's position for the popup's own Save/Reset/Add
+      // actions (see currentProductionSheet); a bulk-export caller that
+      // never touches those can pass it undefined.
+      _populateProductionSheetData(p, idx) {
         // This lot's own recorded consumption (set when it was logged) is the
         // source of truth — production lots are tied to a Process recipe, not
         // a Product BOM, so there is no BOM to fall back to here.
@@ -4479,11 +4555,6 @@
         this.renderProductionSheetTable(common, matrixSlots, colors);
 
         document.getElementById('productionSheetRemarks').value = p.sheetRemarks || '';
-
-        const modalEl = document.getElementById('productionSheetModal');
-        if (modalEl && typeof bootstrap !== 'undefined') {
-          bootstrap.Modal.getOrCreateInstance(modalEl).show();
-        }
       },
 
       // Which color bucket a Production Sheet component belongs to: its
@@ -5129,107 +5200,63 @@
         return String(text || '').replace(/[^a-zA-Z0-9]/g, '') || fallback;
       },
 
+      // Filename: ddmmyy_Size_Model_ProcessName, e.g. 290726_26inch_Eagle_FramePainting
+      _productionSheetFilenameBase(dateStr, size, model, processName) {
+        const [dd = '', mm = '', yyyy = ''] = String(dateStr || '').split('/');
+        const ddmmyy = `${dd}${mm}${yyyy.slice(-2)}` || 'date';
+        return [
+          ddmmyy,
+          this._sanitizeFilenamePart(size, 'Size'),
+          this._sanitizeFilenamePart(model, 'Model'),
+          this._sanitizeFilenamePart(processName, 'Process')
+        ].join('_');
+      },
+
       async downloadProductionSheetPDF() {
         const state = App.State.currentProductionSheet;
-        const element = document.getElementById('print-production-sheet-container');
-        if (!state || !element) return;
+        if (!state) return;
 
         this._buildProductionSheetForExport();
 
-        if (typeof window.html2pdf !== 'function') {
-          try {
-            await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
-          } catch (err) {
-            console.error('[PDF] Failed to load html2pdf library:', err);
-            App.Utils.showToast('PDF library failed to load. Check your connection and try again.', true);
-            return;
-          }
+        const filenameBase = this._productionSheetFilenameBase(state.date, state.size, state.model, state.processName);
+        const ok = await App.Print.downloadElementAsPDF('print-production-sheet-container', `${filenameBase}.pdf`);
+        if (ok) App.Utils.showToast('PDF exported successfully!', false);
+      },
+
+      // Bulk "Download PDFs" — downloads one SEPARATE PDF per selected lot,
+      // each the exact same rich Production Sheet a single "View Sheet" +
+      // "Download PDF" would produce (Common table + Per-Color matrix,
+      // including any Pool-sourced per-color breakdown — see
+      // groupComponentsForSheet/_populateProductionSheetData), not one
+      // combined multi-page file and not the flatter
+      // buildProductionSheetPrintPageHtml row list bulkPrint uses. Lots are
+      // processed one at a time, awaited in sequence rather than in
+      // parallel — every iteration reuses the SAME
+      // #print-production-sheet-container, so overlapping html2canvas
+      // captures would race and corrupt each other's output.
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedProduction;
+        if (!selected || selected.length === 0) return;
+
+        const lots = App.State.globalProduction.filter(p => App.Selection.isSelected(selected, String(p.rowIdx)));
+        if (lots.length === 0) return;
+
+        let successCount = 0;
+        for (const p of lots) {
+          this._populateProductionSheetData(p);
+          this._buildProductionSheetForExport();
+
+          const size = App.Utils.getSizeFromOutputItemName(p.outputItemName);
+          const model = App.Utils.getModelFromOutputItemName(p.outputItemName);
+          const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+          const processName = process ? process.processName : (p.processId || 'Process');
+          const filenameBase = this._productionSheetFilenameBase(p.date, size, model, processName);
+          const filename = `${this._sanitizeFilenamePart(p.lotNumber, 'Lot')}_${filenameBase}.pdf`;
+
+          if (await App.Print.downloadElementAsPDF('print-production-sheet-container', filename)) successCount++;
         }
 
-        try {
-          if (document.fonts?.ready) await document.fonts.ready;
-        } catch (err) {
-          console.warn('[PDF] Font loading check failed:', err);
-        }
-
-        // Filename: ddmmyy_Size_Model_ProcessName, e.g. 290726_26inch_Eagle_FramePainting.pdf
-        const [dd = '', mm = '', yyyy = ''] = String(state.date || '').split('/');
-        const ddmmyy = `${dd}${mm}${yyyy.slice(-2)}` || 'date';
-        const fileParts = [
-          ddmmyy,
-          this._sanitizeFilenamePart(state.size, 'Size'),
-          this._sanitizeFilenamePart(state.model, 'Model'),
-          this._sanitizeFilenamePart(state.processName, 'Process')
-        ];
-
-        // Same html2canvas offset/clipping fixes as App.PO.downloadPDF: move
-        // the element to the document origin, capture, then restore it.
-        const prevStyle = element.getAttribute('style');
-        const prevBodyPad = document.body.style.padding;
-        const prevBodyMar = document.body.style.margin;
-        const prevBodyOvf = document.body.style.overflow;
-        const prevHtmlOverflow = document.documentElement.style.overflow;
-        const originalParent = element.parentNode;
-        const originalSibling = element.nextSibling;
-        const prevScrollX = window.pageXOffset || document.documentElement.scrollLeft;
-        const prevScrollY = window.pageYOffset || document.documentElement.scrollTop;
-
-        window.scrollTo(0, 0);
-        document.body.insertBefore(element, document.body.firstChild);
-        document.body.style.padding = '0';
-        document.body.style.margin = '0';
-        document.body.style.overflow = 'visible';
-        document.documentElement.style.overflow = 'visible';
-        element.style.display = 'block';
-        element.style.width = '749px';
-        element.style.maxWidth = 'none';
-
-        await new Promise(r => requestAnimationFrame(r));
-
-        try {
-          await window.html2pdf()
-            .set({
-              margin: [6, 6, 6, 6],
-              filename: `${fileParts.join('_')}.pdf`,
-              image: { type: 'jpeg', quality: 0.98 },
-              html2canvas: {
-                scale: 2,
-                useCORS: true,
-                allowTaint: true,
-                logging: false,
-                scrollX: 0,
-                scrollY: 0,
-                backgroundColor: '#ffffff'
-              },
-              jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-              pagebreak: { mode: ['css', 'legacy'] }
-            })
-            .from(element)
-            .save();
-
-          App.Utils.showToast('PDF exported successfully!', false);
-        } catch (err) {
-          console.error('[PDF] Generation failed:', err);
-          App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
-        } finally {
-          window.scrollTo(prevScrollX, prevScrollY);
-          document.body.style.padding = prevBodyPad;
-          document.body.style.margin = prevBodyMar;
-          document.body.style.overflow = prevBodyOvf;
-          document.documentElement.style.overflow = prevHtmlOverflow;
-          if (prevStyle !== null) {
-            element.setAttribute('style', prevStyle);
-          } else {
-            element.removeAttribute('style');
-          }
-          if (originalParent) {
-            if (originalSibling) {
-              originalParent.insertBefore(element, originalSibling);
-            } else {
-              originalParent.appendChild(element);
-            }
-          }
-        }
+        App.Utils.showToast(`${successCount} of ${lots.length} production sheet(s) downloaded as separate PDFs.`, successCount < lots.length);
       }
     };
 

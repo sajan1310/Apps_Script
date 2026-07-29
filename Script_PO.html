@@ -141,6 +141,7 @@
           const count = App.State.selectedPOs.length;
           App.Selection.updateButton('btnBulkDeletePOs', count, '<i class="bi bi-trash"></i> Delete Selected');
           App.Selection.updateButton('btnBulkPrintPOs', count, '<i class="bi bi-printer"></i> Print Selected');
+          App.Selection.updateButton('btnBulkDownloadPdfPOs', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
         },
 
         async bulkDelete() {
@@ -185,6 +186,25 @@
             po => this.buildPOPrintPageHtml(po, includeRates, includeTotal),
             'Purchase_Orders_Selected'
           );
+        },
+
+        async bulkDownloadPDF() {
+          const selected = App.State.selectedPOs;
+          if (!selected.length) {
+            App.Utils.showToast('No purchase orders selected.', true);
+            return;
+          }
+
+          const includeRates = document.getElementById('printWithRates')?.checked ?? true;
+          const includeTotal = document.getElementById('printWithTotal')?.checked ?? true;
+
+          const pos = App.State.globalPOs.filter(po => App.Selection.isSelected(selected, String(po.poNumber)));
+          if (!pos.length) return;
+
+          App.Print.renderBulkPages(pos, po => this.buildPOPrintPageHtml(po, includeRates, includeTotal));
+          const filename = App.Print.bulkPdfFilename('Purchase_Orders', pos.length);
+          const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+          if (ok) App.Utils.showToast(`${pos.length} purchase order(s) exported to PDF!`, false);
         },
 
         filterData(searchTerm) {

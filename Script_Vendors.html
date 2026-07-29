@@ -112,6 +112,7 @@
         const count = App.State.selectedVendors.length;
         App.Selection.updateButton('btnBulkDeleteVendors', count, '<i class="bi bi-trash"></i> Delete Selected');
         App.Selection.updateButton('btnBulkPrintVendors', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfVendors', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       async bulkDelete() {
@@ -154,6 +155,26 @@
           vendor => this.buildVendorLedgerPrintPageHtml(vendor),
           'Vendor_Ledgers_Selected'
         );
+      },
+
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedVendors;
+        if (!selected.length) {
+          App.Utils.showToast('No vendors selected.', true);
+          return;
+        }
+
+        const vendors = App.State.globalVendors.filter(v => App.Selection.isSelected(selected, v.name));
+        if (!vendors.length) return;
+
+        if (typeof App.Issue !== 'undefined' && !App.State.globalIssues.length) {
+          await App.Issue.loadData();
+        }
+
+        App.Print.renderBulkPages(vendors, vendor => this.buildVendorLedgerPrintPageHtml(vendor));
+        const filename = App.Print.bulkPdfFilename('Vendor_Ledgers', vendors.length);
+        const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+        if (ok) App.Utils.showToast(`${vendors.length} vendor ledger(s) exported to PDF!`, false);
       },
 
       switchTab(tabId) {

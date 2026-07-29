@@ -84,9 +84,10 @@
         },
 
         // Renders one self-contained "page" per record (via buildPageHtml)
-        // into the shared bulk container, separated by page breaks, then
-        // prints them all as a single multi-page job.
-        triggerBulk(records, buildPageHtml, documentTitle) {
+        // into the shared bulk container, separated by page breaks. Split
+        // out from triggerBulk so a PDF export can reuse the same markup
+        // without also firing window.print().
+        renderBulkPages(records, buildPageHtml) {
           const body = document.getElementById('print-bulk-body');
           if (!body) return;
 
@@ -96,8 +97,126 @@
               : '';
             return `<div class="bulk-print-page" style="${pageStyle}">${buildPageHtml(record)}</div>`;
           }).join('');
+        },
 
+        // Renders one self-contained "page" per record (via buildPageHtml)
+        // into the shared bulk container, separated by page breaks, then
+        // prints them all as a single multi-page job.
+        triggerBulk(records, buildPageHtml, documentTitle) {
+          this.renderBulkPages(records, buildPageHtml);
           this.trigger('print-bulk-container', documentTitle);
+        },
+
+        // Shared filename for every module's bulk "Download PDFs" button:
+        // <prefix>_<ddmmyy-of-export>_<count><unit>.pdf, e.g.
+        // "Purchase_Orders_290726_3.pdf" or "Production_Sheets_290726_3Lots.pdf".
+        bulkPdfFilename(prefix, count, unit = '') {
+          const now = new Date();
+          const pad = n => String(n).padStart(2, '0');
+          const ddmmyy = `${pad(now.getDate())}${pad(now.getMonth() + 1)}${String(now.getFullYear()).slice(-2)}`;
+          return `${prefix}_${ddmmyy}_${count}${unit}.pdf`;
+        },
+
+        // Lazy-loads html2pdf.js (used by every module's "Download PDF"
+        // button) on first use so it isn't fetched until actually needed.
+        async ensureHtml2Pdf() {
+          if (typeof window.html2pdf === 'function') return true;
+          try {
+            await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
+            return true;
+          } catch (err) {
+            console.error('[PDF] Failed to load html2pdf library:', err);
+            App.Utils.showToast('PDF library failed to load. Check your connection and try again.', true);
+            return false;
+          }
+        },
+
+        // Captures elementId's current content as a downloaded PDF. Shared
+        // by every "Download PDF" button so the html2canvas offset/clipping
+        // fixes (move the element to the document origin so preceding
+        // siblings and scroll position can't clip it, capture, then put it
+        // back exactly where it was) only need to be maintained in one
+        // place. Returns true/false instead of throwing — callers decide
+        // their own success messaging, but a failure is always toasted here
+        // since the cause (library/network) is the same for every caller.
+        async downloadElementAsPDF(elementId, filename, pdfOverrides = {}) {
+          const element = document.getElementById(elementId);
+          if (!element) return false;
+
+          if (!(await this.ensureHtml2Pdf())) return false;
+
+          try {
+            if (document.fonts?.ready) await document.fonts.ready;
+          } catch (err) {
+            console.warn('[PDF] Font loading check failed:', err);
+          }
+
+          const prevStyle = element.getAttribute('style');
+          const prevBodyPad = document.body.style.padding;
+          const prevBodyMar = document.body.style.margin;
+          const prevBodyOvf = document.body.style.overflow;
+          const prevHtmlOverflow = document.documentElement.style.overflow;
+          const originalParent = element.parentNode;
+          const originalSibling = element.nextSibling;
+          const prevScrollX = window.pageXOffset || document.documentElement.scrollLeft;
+          const prevScrollY = window.pageYOffset || document.documentElement.scrollTop;
+
+          window.scrollTo(0, 0);
+          document.body.insertBefore(element, document.body.firstChild);
+          document.body.style.padding = '0';
+          document.body.style.margin = '0';
+          document.body.style.overflow = 'visible';
+          document.documentElement.style.overflow = 'visible';
+          element.style.display = 'block';
+          element.style.width = '749px';
+          element.style.maxWidth = 'none';
+
+          await new Promise(r => requestAnimationFrame(r));
+
+          try {
+            await window.html2pdf()
+              .set(Object.assign({
+                margin: [6, 6, 6, 6],
+                filename,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: {
+                  scale: 2,
+                  useCORS: true,
+                  allowTaint: true,
+                  logging: false,
+                  scrollX: 0,
+                  scrollY: 0,
+                  backgroundColor: '#ffffff'
+                },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                pagebreak: { mode: ['css', 'legacy'] }
+              }, pdfOverrides))
+              .from(element)
+              .save();
+            return true;
+          } catch (err) {
+            console.error('[PDF] Generation failed:', err);
+            App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
+            return false;
+          } finally {
+            window.scrollTo(prevScrollX, prevScrollY);
+            document.body.style.padding = prevBodyPad;
+            document.body.style.margin = prevBodyMar;
+            document.body.style.overflow = prevBodyOvf;
+            document.documentElement.style.overflow = prevHtmlOverflow;
+            if (prevStyle !== null) {
+              element.setAttribute('style', prevStyle);
+            } else {
+              element.removeAttribute('style');
+            }
+            if (originalParent) {
+              if (originalSibling) {
+                originalParent.insertBefore(element, originalSibling);
+              } else {
+                originalParent.appendChild(element);
+              }
+            }
+          }
         }
       };
 </script>

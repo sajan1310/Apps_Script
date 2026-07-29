@@ -444,6 +444,7 @@
         const count = App.State.selectedProcesses.length;
         App.Selection.updateButton('btnBulkDeleteProcesses', count, '<i class="bi bi-trash"></i> Delete Selected');
         App.Selection.updateButton('btnBulkPrintProcesses', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfProcesses', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       async bulkDelete() {
@@ -488,6 +489,27 @@
           App.Print.triggerBulk(withComponents, p => this.buildProcessPrintPageHtml(p), 'Process_Sheets_Selected');
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to prepare processes for printing', true);
+        }
+      },
+
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedProcesses;
+        if (selected.length === 0) return;
+
+        const processes = App.State.globalProcesses.filter(p => App.Selection.isSelected(selected, p.processId));
+        if (processes.length === 0) return;
+
+        try {
+          const withComponents = await Promise.all(processes.map(async p => {
+            const res = await Api.call('getProcessComponentsData', p.processId);
+            return Object.assign({}, p, { components: res.success ? res.data : [] });
+          }));
+          App.Print.renderBulkPages(withComponents, p => this.buildProcessPrintPageHtml(p));
+          const filename = App.Print.bulkPdfFilename('Process_Sheets', withComponents.length);
+          const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+          if (ok) App.Utils.showToast(`${withComponents.length} process sheet(s) exported to PDF!`, false);
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to prepare processes for export', true);
         }
       },
 

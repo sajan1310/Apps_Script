@@ -268,6 +268,7 @@
         const count = App.State.selectedDispatch.length;
         App.Selection.updateButton('btnBulkDeleteDispatch', count, '<i class="bi bi-trash"></i> Delete Selected');
         App.Selection.updateButton('btnBulkPrintDispatch', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfDispatch', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       // Populates #print-dispatch-container's fields from one Dispatch
@@ -337,6 +338,22 @@
         if (!records.length) return;
 
         App.Print.triggerBulk(records, d => this.buildDispatchPrintPageHtml(d), 'Delivery_Challans_Selected');
+      },
+
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedDispatch;
+        if (!selected.length) {
+          App.Utils.showToast('No dispatch records selected.', true);
+          return;
+        }
+
+        const records = App.State.globalDispatch.filter(d => App.Selection.isSelected(selected, String(d.rowIdx)));
+        if (!records.length) return;
+
+        App.Print.renderBulkPages(records, d => this.buildDispatchPrintPageHtml(d));
+        const filename = App.Print.bulkPdfFilename('Delivery_Challans', records.length);
+        const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+        if (ok) App.Utils.showToast(`${records.length} delivery challan(s) exported to PDF!`, false);
       },
 
       // Builds a fully self-contained "Delivery Challan" page (mirrors

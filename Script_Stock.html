@@ -799,6 +799,7 @@
       updateWarehousePoolBulkButtons() {
         const count = App.State.selectedWarehousePool.length;
         App.Selection.updateButton('btnBulkPrintWarehousePool', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfWarehousePool', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       // Prints every leaf bucket (Color/Product-Tag combination) belonging to
@@ -824,6 +825,31 @@
             : 'Warehouse_Pool_Selected',
           emptyMessage: 'No Warehouse Pool buckets selected.'
         });
+      },
+
+      // Same pivot table as bulkPrintWarehousePool but captured as a PDF
+      // download instead of opening the browser print dialog.
+      async bulkDownloadPdfWarehousePool() {
+        const selected = App.State.selectedWarehousePool;
+        if (selected.length === 0) return;
+
+        const poolItems = (App.State.globalWarehousePool || [])
+          .filter(r => App.Selection.isSelected(selected, r.processId));
+        if (poolItems.length === 0) return;
+
+        const term = App.State.warehousePoolSearchTerm;
+        const ok = await this.printStockPivot([], poolItems, {
+          subtitle: 'Selected Warehouse Pool Register',
+          reportType: term
+            ? `Selected Warehouse Pool — Search: "${term}"`
+            : 'Selected Warehouse Pool (Available Qty by Size)',
+          fileNamePrefix: term
+            ? `Warehouse_Pool_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
+            : 'Warehouse_Pool_Selected',
+          emptyMessage: 'No Warehouse Pool buckets selected.',
+          asPdf: true
+        });
+        if (ok) App.Utils.showToast(`${poolItems.length} warehouse pool bucket(s) exported to PDF!`, false);
       },
 
       // Returns the bucket rows to render under one Process: every existing
@@ -2109,6 +2135,7 @@
       updateBulkButtons() {
         const count = App.State.selectedStock.length;
         App.Selection.updateButton('btnBulkPrintStock', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfStock', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       bulkPrint() {
@@ -2129,6 +2156,30 @@
             : 'Stock_Report_Selected',
           emptyMessage: 'No stock items selected.'
         });
+      },
+
+      // Same pivot table as bulkPrint but captured as a PDF download instead
+      // of opening the browser print dialog (see printStockPivot's asPdf option).
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedStock;
+        if (selected.length === 0) return;
+
+        const items = App.State.globalStock.filter(item => App.Selection.isSelected(selected, this.stockKey(item)));
+        if (items.length === 0) return;
+
+        const term = App.State.stockSearchTerm;
+        const ok = await this.printStockPivot(items, [], {
+          subtitle: 'Selected Item & Stock Register',
+          reportType: term
+            ? `Selected Stock Items — Search: "${term}"`
+            : 'Selected Stock Items (Current Stock by Size)',
+          fileNamePrefix: term
+            ? `Stock_Report_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
+            : 'Stock_Report_Selected',
+          emptyMessage: 'No stock items selected.',
+          asPdf: true
+        });
+        if (ok) App.Utils.showToast(`${items.length} stock item(s) exported to PDF!`, false);
       },
 
       changePage(page) {
@@ -2551,7 +2602,8 @@
         subtitle = 'Inventory Status Report',
         reportType = 'Stock Report',
         fileNamePrefix = 'Stock_Report',
-        emptyMessage = 'No stock records found.'
+        emptyMessage = 'No stock records found.',
+        asPdf = false
       } = {}) {
         const sizeSet = new Set();
         const byName = new Map(); // name -> Map(size -> {currentStock, isLowStock})
@@ -2626,7 +2678,11 @@
           }
         }
 
-        App.Print.trigger('print-low-stock-container', `${fileNamePrefix}_${new Date().toISOString().slice(0, 10)}`);
+        const filenameBase = `${fileNamePrefix}_${new Date().toISOString().slice(0, 10)}`;
+        if (asPdf) {
+          return App.Print.downloadElementAsPDF('print-low-stock-container', `${filenameBase}.pdf`);
+        }
+        App.Print.trigger('print-low-stock-container', filenameBase);
       }
     };
 </script>

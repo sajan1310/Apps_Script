@@ -4642,6 +4642,9 @@
       <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintPOs" type="button" onclick="App.PO.bulkPrint()" style="white-space: nowrap;">
         <i class="bi bi-printer"></i> Print Selected
       </button>
+      <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfPOs" type="button" onclick="App.PO.bulkDownloadPDF()" style="white-space: nowrap;">
+        <i class="bi bi-file-earmark-pdf"></i> Download PDFs
+      </button>
       <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeletePOs" type="button" onclick="App.PO.bulkDelete()" style="white-space: nowrap;">
         <i class="bi bi-trash"></i> Delete Selected
       </button>
@@ -4858,6 +4861,9 @@
     <div class="d-flex gap-2 flex-wrap justify-content-end">
       <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintBills" type="button" onclick="App.Bill.bulkPrint()" style="white-space: nowrap;">
         <i class="bi bi-printer"></i> Print Selected
+      </button>
+      <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfBills" type="button" onclick="App.Bill.bulkDownloadPDF()" style="white-space: nowrap;">
+        <i class="bi bi-file-earmark-pdf"></i> Download PDFs
       </button>
       <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteBills" type="button" onclick="App.Bill.bulkDelete()" style="white-space: nowrap;">
         <i class="bi bi-trash"></i> Delete Selected
@@ -5300,6 +5306,7 @@
     <div class="d-flex w-50 align-items-center flex-wrap gap-2">
       <input type="text" id="searchItem" class="form-control me-2" placeholder="Search Items, Sizes, Vendors, or try 'pending orders' / 'low stock' / 'no metadata'..." autocomplete="off" onkeyup="App.Item.filterData(this.value)">
       <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintItems" onclick="App.Item.bulkPrint()" style="white-space: nowrap;"><i class="bi bi-printer"></i> Print Selected</button>
+      <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfItems" onclick="App.Item.bulkDownloadPDF()" style="white-space: nowrap;"><i class="bi bi-file-earmark-pdf"></i> Download PDFs</button>
       <button class="btn btn-outline-warning fw-bold shadow-sm d-none" id="btnMergeSelected" onclick="App.Item.mergeSelected()" style="white-space: nowrap;" title="Check exactly 2 items: the one to KEEP first, then the duplicate to remove."><i class="bi bi-magic"></i> Merge Selected</button>
       <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteItems" onclick="App.Item.bulkDelete()" style="white-space: nowrap;"><i class="bi bi-trash"></i> Delete Selected</button>
     </div>
@@ -5350,6 +5357,10 @@
       <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintVendors" type="button"
         onclick="App.Vendor.bulkPrint()" style="white-space: nowrap;">
         <i class="bi bi-printer"></i> Print Selected
+      </button>
+      <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfVendors" type="button"
+        onclick="App.Vendor.bulkDownloadPDF()" style="white-space: nowrap;">
+        <i class="bi bi-file-earmark-pdf"></i> Download PDFs
       </button>
       <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteVendors" type="button"
         onclick="App.Vendor.bulkDelete()" style="white-space: nowrap;">
@@ -5553,6 +5564,9 @@
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintStock" type="button" onclick="App.Stock.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
         </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfStock" type="button" onclick="App.Stock.bulkDownloadPDF()" style="white-space: nowrap;">
+          <i class="bi bi-file-earmark-pdf"></i> Download PDFs
+        </button>
         <button class="btn btn-secondary fw-bold shadow-sm" onclick="App.Stock.openDeadStockDialog()" style="white-space: nowrap;">
           <i class="bi bi-x-circle me-2"></i>Dead Stock
         </button>
@@ -5618,6 +5632,9 @@
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintWarehousePool" type="button" onclick="App.Stock.bulkPrintWarehousePool()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
+        </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfWarehousePool" type="button" onclick="App.Stock.bulkDownloadPdfWarehousePool()" style="white-space: nowrap;">
+          <i class="bi bi-file-earmark-pdf"></i> Download PDFs
         </button>
         <button class="btn btn-primary fw-bold shadow-sm" onclick="App.Stock.openWarehouseOpeningModal()">
           <i class="bi bi-plus-circle me-2"></i>Add Opening Stock
@@ -5955,6 +5972,9 @@
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintProcesses" type="button" onclick="App.Process.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
         </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfProcesses" type="button" onclick="App.Process.bulkDownloadPDF()" style="white-space: nowrap;">
+          <i class="bi bi-file-earmark-pdf"></i> Download PDFs
+        </button>
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteProcesses" type="button" onclick="App.Process.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
         </button>
@@ -6009,6 +6029,9 @@
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintBOMs" type="button" onclick="App.BOM.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
+        </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfBOMs" type="button" onclick="App.BOM.bulkDownloadPDF()" style="white-space: nowrap;">
+          <i class="bi bi-file-earmark-pdf"></i> Download PDFs
         </button>
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteBOMs" type="button" onclick="App.BOM.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
@@ -6536,6 +6559,9 @@
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintProduction" type="button" onclick="App.Production.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
         </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfProduction" type="button" onclick="App.Production.bulkDownloadPDF()" style="white-space: nowrap;">
+          <i class="bi bi-file-earmark-pdf"></i> Download PDFs
+        </button>
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteProduction" type="button" onclick="App.Production.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
         </button>
@@ -6596,6 +6622,9 @@
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintIssue" type="button" onclick="App.Issue.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
+        </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfIssue" type="button" onclick="App.Issue.bulkDownloadPDF()" style="white-space: nowrap;">
+          <i class="bi bi-file-earmark-pdf"></i> Download PDFs
         </button>
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteIssue" type="button" onclick="App.Issue.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
@@ -6920,6 +6949,9 @@
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintDispatch" type="button" onclick="App.Dispatch.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
+        </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfDispatch" type="button" onclick="App.Dispatch.bulkDownloadPDF()" style="white-space: nowrap;">
+          <i class="bi bi-file-earmark-pdf"></i> Download PDFs
         </button>
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteDispatch" type="button" onclick="App.Dispatch.bulkDeleteDispatch()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
@@ -12451,9 +12483,10 @@
         },
 
         // Renders one self-contained "page" per record (via buildPageHtml)
-        // into the shared bulk container, separated by page breaks, then
-        // prints them all as a single multi-page job.
-        triggerBulk(records, buildPageHtml, documentTitle) {
+        // into the shared bulk container, separated by page breaks. Split
+        // out from triggerBulk so a PDF export can reuse the same markup
+        // without also firing window.print().
+        renderBulkPages(records, buildPageHtml) {
           const body = document.getElementById('print-bulk-body');
           if (!body) return;
 
@@ -12463,8 +12496,126 @@
               : '';
             return `<div class="bulk-print-page" style="${pageStyle}">${buildPageHtml(record)}</div>`;
           }).join('');
+        },
 
+        // Renders one self-contained "page" per record (via buildPageHtml)
+        // into the shared bulk container, separated by page breaks, then
+        // prints them all as a single multi-page job.
+        triggerBulk(records, buildPageHtml, documentTitle) {
+          this.renderBulkPages(records, buildPageHtml);
           this.trigger('print-bulk-container', documentTitle);
+        },
+
+        // Shared filename for every module's bulk "Download PDFs" button:
+        // <prefix>_<ddmmyy-of-export>_<count><unit>.pdf, e.g.
+        // "Purchase_Orders_290726_3.pdf" or "Production_Sheets_290726_3Lots.pdf".
+        bulkPdfFilename(prefix, count, unit = '') {
+          const now = new Date();
+          const pad = n => String(n).padStart(2, '0');
+          const ddmmyy = `${pad(now.getDate())}${pad(now.getMonth() + 1)}${String(now.getFullYear()).slice(-2)}`;
+          return `${prefix}_${ddmmyy}_${count}${unit}.pdf`;
+        },
+
+        // Lazy-loads html2pdf.js (used by every module's "Download PDF"
+        // button) on first use so it isn't fetched until actually needed.
+        async ensureHtml2Pdf() {
+          if (typeof window.html2pdf === 'function') return true;
+          try {
+            await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
+            return true;
+          } catch (err) {
+            console.error('[PDF] Failed to load html2pdf library:', err);
+            App.Utils.showToast('PDF library failed to load. Check your connection and try again.', true);
+            return false;
+          }
+        },
+
+        // Captures elementId's current content as a downloaded PDF. Shared
+        // by every "Download PDF" button so the html2canvas offset/clipping
+        // fixes (move the element to the document origin so preceding
+        // siblings and scroll position can't clip it, capture, then put it
+        // back exactly where it was) only need to be maintained in one
+        // place. Returns true/false instead of throwing — callers decide
+        // their own success messaging, but a failure is always toasted here
+        // since the cause (library/network) is the same for every caller.
+        async downloadElementAsPDF(elementId, filename, pdfOverrides = {}) {
+          const element = document.getElementById(elementId);
+          if (!element) return false;
+
+          if (!(await this.ensureHtml2Pdf())) return false;
+
+          try {
+            if (document.fonts?.ready) await document.fonts.ready;
+          } catch (err) {
+            console.warn('[PDF] Font loading check failed:', err);
+          }
+
+          const prevStyle = element.getAttribute('style');
+          const prevBodyPad = document.body.style.padding;
+          const prevBodyMar = document.body.style.margin;
+          const prevBodyOvf = document.body.style.overflow;
+          const prevHtmlOverflow = document.documentElement.style.overflow;
+          const originalParent = element.parentNode;
+          const originalSibling = element.nextSibling;
+          const prevScrollX = window.pageXOffset || document.documentElement.scrollLeft;
+          const prevScrollY = window.pageYOffset || document.documentElement.scrollTop;
+
+          window.scrollTo(0, 0);
+          document.body.insertBefore(element, document.body.firstChild);
+          document.body.style.padding = '0';
+          document.body.style.margin = '0';
+          document.body.style.overflow = 'visible';
+          document.documentElement.style.overflow = 'visible';
+          element.style.display = 'block';
+          element.style.width = '749px';
+          element.style.maxWidth = 'none';
+
+          await new Promise(r => requestAnimationFrame(r));
+
+          try {
+            await window.html2pdf()
+              .set(Object.assign({
+                margin: [6, 6, 6, 6],
+                filename,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: {
+                  scale: 2,
+                  useCORS: true,
+                  allowTaint: true,
+                  logging: false,
+                  scrollX: 0,
+                  scrollY: 0,
+                  backgroundColor: '#ffffff'
+                },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                pagebreak: { mode: ['css', 'legacy'] }
+              }, pdfOverrides))
+              .from(element)
+              .save();
+            return true;
+          } catch (err) {
+            console.error('[PDF] Generation failed:', err);
+            App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
+            return false;
+          } finally {
+            window.scrollTo(prevScrollX, prevScrollY);
+            document.body.style.padding = prevBodyPad;
+            document.body.style.margin = prevBodyMar;
+            document.body.style.overflow = prevBodyOvf;
+            document.documentElement.style.overflow = prevHtmlOverflow;
+            if (prevStyle !== null) {
+              element.setAttribute('style', prevStyle);
+            } else {
+              element.removeAttribute('style');
+            }
+            if (originalParent) {
+              if (originalSibling) {
+                originalParent.insertBefore(element, originalSibling);
+              } else {
+                originalParent.appendChild(element);
+              }
+            }
+          }
         }
       };
 </script>
@@ -12612,6 +12763,7 @@
           const count = App.State.selectedPOs.length;
           App.Selection.updateButton('btnBulkDeletePOs', count, '<i class="bi bi-trash"></i> Delete Selected');
           App.Selection.updateButton('btnBulkPrintPOs', count, '<i class="bi bi-printer"></i> Print Selected');
+          App.Selection.updateButton('btnBulkDownloadPdfPOs', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
         },
 
         async bulkDelete() {
@@ -12656,6 +12808,25 @@
             po => this.buildPOPrintPageHtml(po, includeRates, includeTotal),
             'Purchase_Orders_Selected'
           );
+        },
+
+        async bulkDownloadPDF() {
+          const selected = App.State.selectedPOs;
+          if (!selected.length) {
+            App.Utils.showToast('No purchase orders selected.', true);
+            return;
+          }
+
+          const includeRates = document.getElementById('printWithRates')?.checked ?? true;
+          const includeTotal = document.getElementById('printWithTotal')?.checked ?? true;
+
+          const pos = App.State.globalPOs.filter(po => App.Selection.isSelected(selected, String(po.poNumber)));
+          if (!pos.length) return;
+
+          App.Print.renderBulkPages(pos, po => this.buildPOPrintPageHtml(po, includeRates, includeTotal));
+          const filename = App.Print.bulkPdfFilename('Purchase_Orders', pos.length);
+          const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+          if (ok) App.Utils.showToast(`${pos.length} purchase order(s) exported to PDF!`, false);
         },
 
         filterData(searchTerm) {
@@ -14003,6 +14174,7 @@
           const count = App.State.selectedBills.length;
           App.Selection.updateButton('btnBulkDeleteBills', count, '<i class="bi bi-trash"></i> Delete Selected');
           App.Selection.updateButton('btnBulkPrintBills', count, '<i class="bi bi-printer"></i> Print Selected');
+          App.Selection.updateButton('btnBulkDownloadPdfBills', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
         },
 
         // Populates #print-bill-container's fields from one Bill for the
@@ -14109,6 +14281,22 @@
             bill => this.buildBillPrintPageHtml(bill),
             'Goods_Receipts_Selected'
           );
+        },
+
+        async bulkDownloadPDF() {
+          const selected = App.State.selectedBills;
+          if (!selected.length) {
+            App.Utils.showToast('No bills selected.', true);
+            return;
+          }
+
+          const bills = App.State.globalBills.filter(bill => App.Selection.isSelected(selected, this.billKey(bill)));
+          if (!bills.length) return;
+
+          App.Print.renderBulkPages(bills, bill => this.buildBillPrintPageHtml(bill));
+          const filename = App.Print.bulkPdfFilename('Goods_Receipts', bills.length);
+          const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+          if (ok) App.Utils.showToast(`${bills.length} bill(s) exported to PDF!`, false);
         },
 
         // Builds a fully self-contained "Goods Receipt" page (mirrors
@@ -16287,6 +16475,24 @@
           );
         },
 
+        async bulkDownloadPDF() {
+          const selectedKeys = App.State.selectedItems;
+          if (!selectedKeys.length) {
+            App.Utils.showToast('No items selected.', true);
+            return;
+          }
+
+          await this.ensureLedgerSourceDataLoaded();
+
+          const items = App.State.globalItems.filter(i => App.Selection.isSelected(selectedKeys, this.itemKey(i)));
+          const names = [...new Set(items.map(i => i.name))];
+
+          App.Print.renderBulkPages(names, name => this.buildItemLedgerPrintPageHtml(name));
+          const filename = App.Print.bulkPdfFilename('Item_Ledgers', names.length);
+          const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+          if (ok) App.Utils.showToast(`${names.length} item ledger(s) exported to PDF!`, false);
+        },
+
         openCreateModal() {
           document.getElementById('itemForm')?.reset();
 
@@ -17122,6 +17328,7 @@
           if (mergeBtn) mergeBtn.classList.toggle('d-none', count !== 2);
 
           App.Selection.updateButton('btnBulkPrintItems', count, '<i class="bi bi-printer"></i> Print Selected');
+          App.Selection.updateButton('btnBulkDownloadPdfItems', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
         },
 
         async mergeSelected() {
@@ -17966,6 +18173,7 @@
         const count = App.State.selectedBOMs.length;
         App.Selection.updateButton('btnBulkDeleteBOMs', count, '<i class="bi bi-trash"></i> Delete Selected');
         App.Selection.updateButton('btnBulkPrintBOMs', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfBOMs', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       // Read-only diagnostic (module_bom.js#getBomProcessComponentsDrift) —
@@ -18057,6 +18265,19 @@
         if (boms.length === 0) return;
 
         App.Print.triggerBulk(boms, bom => this.buildBOMPrintPageHtml(bom), 'BOM_Cost_Sheets_Selected');
+      },
+
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedBOMs;
+        if (selected.length === 0) return;
+
+        const boms = App.State.globalBOMs.filter(b => App.Selection.isSelected(selected, b.productId));
+        if (boms.length === 0) return;
+
+        App.Print.renderBulkPages(boms, bom => this.buildBOMPrintPageHtml(bom));
+        const filename = App.Print.bulkPdfFilename('BOM_Cost_Sheets', boms.length);
+        const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+        if (ok) App.Utils.showToast(`${boms.length} BOM cost sheet(s) exported to PDF!`, false);
       },
 
       // Builds a fully self-contained "BOM Cost Sheet / Recipe Card" page
@@ -20042,6 +20263,7 @@
       updateWarehousePoolBulkButtons() {
         const count = App.State.selectedWarehousePool.length;
         App.Selection.updateButton('btnBulkPrintWarehousePool', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfWarehousePool', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       // Prints every leaf bucket (Color/Product-Tag combination) belonging to
@@ -20067,6 +20289,31 @@
             : 'Warehouse_Pool_Selected',
           emptyMessage: 'No Warehouse Pool buckets selected.'
         });
+      },
+
+      // Same pivot table as bulkPrintWarehousePool but captured as a PDF
+      // download instead of opening the browser print dialog.
+      async bulkDownloadPdfWarehousePool() {
+        const selected = App.State.selectedWarehousePool;
+        if (selected.length === 0) return;
+
+        const poolItems = (App.State.globalWarehousePool || [])
+          .filter(r => App.Selection.isSelected(selected, r.processId));
+        if (poolItems.length === 0) return;
+
+        const term = App.State.warehousePoolSearchTerm;
+        const ok = await this.printStockPivot([], poolItems, {
+          subtitle: 'Selected Warehouse Pool Register',
+          reportType: term
+            ? `Selected Warehouse Pool — Search: "${term}"`
+            : 'Selected Warehouse Pool (Available Qty by Size)',
+          fileNamePrefix: term
+            ? `Warehouse_Pool_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
+            : 'Warehouse_Pool_Selected',
+          emptyMessage: 'No Warehouse Pool buckets selected.',
+          asPdf: true
+        });
+        if (ok) App.Utils.showToast(`${poolItems.length} warehouse pool bucket(s) exported to PDF!`, false);
       },
 
       // Returns the bucket rows to render under one Process: every existing
@@ -21352,6 +21599,7 @@
       updateBulkButtons() {
         const count = App.State.selectedStock.length;
         App.Selection.updateButton('btnBulkPrintStock', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfStock', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       bulkPrint() {
@@ -21372,6 +21620,30 @@
             : 'Stock_Report_Selected',
           emptyMessage: 'No stock items selected.'
         });
+      },
+
+      // Same pivot table as bulkPrint but captured as a PDF download instead
+      // of opening the browser print dialog (see printStockPivot's asPdf option).
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedStock;
+        if (selected.length === 0) return;
+
+        const items = App.State.globalStock.filter(item => App.Selection.isSelected(selected, this.stockKey(item)));
+        if (items.length === 0) return;
+
+        const term = App.State.stockSearchTerm;
+        const ok = await this.printStockPivot(items, [], {
+          subtitle: 'Selected Item & Stock Register',
+          reportType: term
+            ? `Selected Stock Items — Search: "${term}"`
+            : 'Selected Stock Items (Current Stock by Size)',
+          fileNamePrefix: term
+            ? `Stock_Report_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
+            : 'Stock_Report_Selected',
+          emptyMessage: 'No stock items selected.',
+          asPdf: true
+        });
+        if (ok) App.Utils.showToast(`${items.length} stock item(s) exported to PDF!`, false);
       },
 
       changePage(page) {
@@ -21794,7 +22066,8 @@
         subtitle = 'Inventory Status Report',
         reportType = 'Stock Report',
         fileNamePrefix = 'Stock_Report',
-        emptyMessage = 'No stock records found.'
+        emptyMessage = 'No stock records found.',
+        asPdf = false
       } = {}) {
         const sizeSet = new Set();
         const byName = new Map(); // name -> Map(size -> {currentStock, isLowStock})
@@ -21869,7 +22142,11 @@
           }
         }
 
-        App.Print.trigger('print-low-stock-container', `${fileNamePrefix}_${new Date().toISOString().slice(0, 10)}`);
+        const filenameBase = `${fileNamePrefix}_${new Date().toISOString().slice(0, 10)}`;
+        if (asPdf) {
+          return App.Print.downloadElementAsPDF('print-low-stock-container', `${filenameBase}.pdf`);
+        }
+        App.Print.trigger('print-low-stock-container', filenameBase);
       }
     };
 </script>
@@ -22420,6 +22697,7 @@
         const count = App.State.selectedProduction.length;
         App.Selection.updateButton('btnBulkDeleteProduction', count, '<i class="bi bi-trash"></i> Delete Selected');
         App.Selection.updateButton('btnBulkPrintProduction', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfProduction', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       async bulkDelete() {
@@ -24347,6 +24625,29 @@
         return total > 0 ? total * row.qtyPerUnit : undefined;
       },
 
+      // The qty-per-unit basis to stamp on one Per-Process Pool Components
+      // CELL (both the initial render in _buildPoolColorGroupTable and a
+      // later-inserted column in syncPoolColorGroupColumns) so
+      // refreshPoolColorGroupCells can keep recomputing that one cell as the
+      // checklist's Qty changes. Edit mode rows (see
+      // populateComponentsConsumedDirect) carry a PER-COLOR ratio in
+      // colorsQtyPerUnit — this item may have been consumed at a genuinely
+      // different rate for one color than another (rounding, wastage,
+      // partial batches), and using this color's own derived ratio (rather
+      // than whichever color's ratio happened to populate the row's shared
+      // `qtyPerUnit` first) keeps a later edit to THIS color's qty scaling
+      // correctly instead of borrowing a different color's rate. Falls back
+      // to the row's own shared `qtyPerUnit` (a create-mode row's recipe
+      // ratio, or an edit-mode row's recipe-seeded default for a color this
+      // lot never previously recorded any qty for at all — see the "seed a
+      // table for EVERY pool-color-aware recipe item" block) when no
+      // color-specific ratio exists yet.
+      _poolCellQtyPerUnit(row, color) {
+        if (!row) return undefined;
+        const perColor = row.colorsQtyPerUnit ? row.colorsQtyPerUnit[String(color || '').toLowerCase()] : undefined;
+        return perColor !== undefined ? perColor : row.qtyPerUnit;
+      },
+
       // Builds one <table> for a pool-color group: `colors` is that group's
       // FULL real color set (stamped on the table for later column
       // add/remove lookups — see addPoolColorGroupColumn), `visibleColors`
@@ -24360,10 +24661,11 @@
         const rowsHtml = rows.map((r, rowIdx) => {
           const rowId = 'prod_pool_group_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
           const preSelectedOption = this._buildItemPreselectOption(r.itemName, r.size || '', r.sourceType);
-          const qtyPerUnitAttr = (r.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${r.qtyPerUnit}"` : '';
           const cellsHtml = visibleColors.map(col => {
             const qty = this._poolGroupCellValue(mode, r, col, axisKey);
             const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
+            const cellQtyPerUnit = this._poolCellQtyPerUnit(r, col);
+            const qtyPerUnitAttr = (cellQtyPerUnit !== undefined) ? ` data-qty-per-unit="${cellQtyPerUnit}"` : '';
             return `<td><input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(col)}"${qtyPerUnitAttr} step="any" value="${display}"></td>`;
           }).join('');
           return `
@@ -24490,7 +24792,16 @@
               const rowObj = def.rows[Number(tr.dataset.rowIdx)];
               const qty = rowObj ? this._poolGroupCellValue(def.mode, rowObj, matchColor, def.axisKey) : undefined;
               const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
-              const qtyPerUnitAttr = (def.mode === 'create' && rowObj && rowObj.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${rowObj.qtyPerUnit}"` : '';
+              // Stamped for BOTH modes (see _poolCellQtyPerUnit) — an edit-
+              // mode row's own per-color ratio (or its recipe-seeded
+              // fallback) lets refreshPoolColorGroupCells keep recomputing
+              // this newly-added column as the checklist's Qty changes,
+              // same as every column already visible when the table first
+              // rendered. Previously gated to 'create' only, which left a
+              // color newly checked mid-edit permanently stuck blank no
+              // matter what qty the operator typed into the checklist.
+              const cellQtyPerUnit = rowObj ? this._poolCellQtyPerUnit(rowObj, matchColor) : undefined;
+              const qtyPerUnitAttr = (cellQtyPerUnit !== undefined) ? ` data-qty-per-unit="${cellQtyPerUnit}"` : '';
               const td = document.createElement('td');
               td.innerHTML = `<input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(matchColor)}"${qtyPerUnitAttr} step="any" value="${display}">`;
               tr.insertBefore(td, tr.children[insertIdx] || null);
@@ -25344,7 +25655,13 @@
             const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
             let entry = poolGroupAccum.get(key);
             if (!entry) {
-              entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, qtyPerUnit: derivedQtyPerUnit };
+              // colorsQtyPerUnit holds each color's OWN derived ratio (see
+              // _poolCellQtyPerUnit) — the shared `qtyPerUnit` alongside it
+              // is only ever a fallback for a color this lot has no history
+              // for yet (a brand-new column checked mid-edit), not the
+              // value actually used to redisplay/recompute any color that
+              // DOES have its own entry below.
+              entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: derivedQtyPerUnit };
               poolGroupAccum.set(key, entry);
             } else if (entry.qtyPerUnit === undefined) {
               entry.qtyPerUnit = derivedQtyPerUnit;
@@ -25355,7 +25672,10 @@
               // as a starting point for the operator to correct and re-save.
               upgradedAny = true;
               const perColorQty = colors.length > 0 ? c.qty / colors.length : c.qty;
-              colors.forEach(color => { entry.colorsQty[color.toLowerCase()] = perColorQty; });
+              colors.forEach(color => {
+                entry.colorsQty[color.toLowerCase()] = perColorQty;
+                entry.colorsQtyPerUnit[color.toLowerCase()] = derivedQtyPerUnit;
+              });
               entry.qtyPerUnit = derivedQtyPerUnit;
             } else {
               // Already a correctly saved per-color quantity. colorGroup is
@@ -25367,6 +25687,14 @@
               // pool-color-aware row is by construction one of this item's
               // real pool colors.
               entry.colorsQty[colorGroup.toLowerCase()] = c.qty;
+              // This color's OWN ratio (c.qty / this color's own breakdown
+              // qty), not whichever color happened to create `entry` first
+              // — two colors of the same pool item can legitimately have
+              // been consumed at different rates (rounding, partial
+              // batches), and a shared row-level ratio previously made
+              // editing one color's checklist Qty silently recompute using
+              // a DIFFERENT color's rate.
+              entry.colorsQtyPerUnit[colorGroup.toLowerCase()] = derivedQtyPerUnit;
             }
             return;
           }
@@ -25447,7 +25775,13 @@
               if (itemColors.length <= 1) return;
               const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
               if (!poolGroupAccum.has(key)) {
-                poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {} });
+                // No qty history at all for this item on this lot yet — fall
+                // back to the recipe's own qtyPerUnit (same basis Create mode
+                // suggests) so a color checked mid-edit still gets a useful
+                // starting estimate via _poolCellQtyPerUnit's row-level
+                // fallback, instead of staying permanently blank until the
+                // operator types directly into the pool cell.
+                poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: c.qtyPerUnit });
               }
             });
         }
@@ -26315,6 +26649,25 @@
         const p = App.State.globalProduction[idx];
         if (!p) return;
 
+        this._populateProductionSheetData(p, idx);
+
+        const modalEl = document.getElementById('productionSheetModal');
+        if (modalEl && typeof bootstrap !== 'undefined') {
+          bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        }
+      },
+
+      // Populates the Production Sheet dialog's DOM (title/date/Common
+      // table/Per-Color matrix/Remarks) for one lot, WITHOUT opening the
+      // modal — split out of viewProductionSheet so bulkDownloadPDF can
+      // reuse the exact same rich rendering (Common table + Per-Color
+      // matrix, including Pool-sourced per-color components — see
+      // groupComponentsForSheet) for every selected lot in turn, without
+      // flashing the modal open/closed once per lot. `idx` is only used to
+      // remember this lot's position for the popup's own Save/Reset/Add
+      // actions (see currentProductionSheet); a bulk-export caller that
+      // never touches those can pass it undefined.
+      _populateProductionSheetData(p, idx) {
         // This lot's own recorded consumption (set when it was logged) is the
         // source of truth — production lots are tied to a Process recipe, not
         // a Product BOM, so there is no BOM to fall back to here.
@@ -26355,11 +26708,6 @@
         this.renderProductionSheetTable(common, matrixSlots, colors);
 
         document.getElementById('productionSheetRemarks').value = p.sheetRemarks || '';
-
-        const modalEl = document.getElementById('productionSheetModal');
-        if (modalEl && typeof bootstrap !== 'undefined') {
-          bootstrap.Modal.getOrCreateInstance(modalEl).show();
-        }
       },
 
       // Which color bucket a Production Sheet component belongs to: its
@@ -27005,107 +27353,63 @@
         return String(text || '').replace(/[^a-zA-Z0-9]/g, '') || fallback;
       },
 
+      // Filename: ddmmyy_Size_Model_ProcessName, e.g. 290726_26inch_Eagle_FramePainting
+      _productionSheetFilenameBase(dateStr, size, model, processName) {
+        const [dd = '', mm = '', yyyy = ''] = String(dateStr || '').split('/');
+        const ddmmyy = `${dd}${mm}${yyyy.slice(-2)}` || 'date';
+        return [
+          ddmmyy,
+          this._sanitizeFilenamePart(size, 'Size'),
+          this._sanitizeFilenamePart(model, 'Model'),
+          this._sanitizeFilenamePart(processName, 'Process')
+        ].join('_');
+      },
+
       async downloadProductionSheetPDF() {
         const state = App.State.currentProductionSheet;
-        const element = document.getElementById('print-production-sheet-container');
-        if (!state || !element) return;
+        if (!state) return;
 
         this._buildProductionSheetForExport();
 
-        if (typeof window.html2pdf !== 'function') {
-          try {
-            await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
-          } catch (err) {
-            console.error('[PDF] Failed to load html2pdf library:', err);
-            App.Utils.showToast('PDF library failed to load. Check your connection and try again.', true);
-            return;
-          }
+        const filenameBase = this._productionSheetFilenameBase(state.date, state.size, state.model, state.processName);
+        const ok = await App.Print.downloadElementAsPDF('print-production-sheet-container', `${filenameBase}.pdf`);
+        if (ok) App.Utils.showToast('PDF exported successfully!', false);
+      },
+
+      // Bulk "Download PDFs" — downloads one SEPARATE PDF per selected lot,
+      // each the exact same rich Production Sheet a single "View Sheet" +
+      // "Download PDF" would produce (Common table + Per-Color matrix,
+      // including any Pool-sourced per-color breakdown — see
+      // groupComponentsForSheet/_populateProductionSheetData), not one
+      // combined multi-page file and not the flatter
+      // buildProductionSheetPrintPageHtml row list bulkPrint uses. Lots are
+      // processed one at a time, awaited in sequence rather than in
+      // parallel — every iteration reuses the SAME
+      // #print-production-sheet-container, so overlapping html2canvas
+      // captures would race and corrupt each other's output.
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedProduction;
+        if (!selected || selected.length === 0) return;
+
+        const lots = App.State.globalProduction.filter(p => App.Selection.isSelected(selected, String(p.rowIdx)));
+        if (lots.length === 0) return;
+
+        let successCount = 0;
+        for (const p of lots) {
+          this._populateProductionSheetData(p);
+          this._buildProductionSheetForExport();
+
+          const size = App.Utils.getSizeFromOutputItemName(p.outputItemName);
+          const model = App.Utils.getModelFromOutputItemName(p.outputItemName);
+          const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+          const processName = process ? process.processName : (p.processId || 'Process');
+          const filenameBase = this._productionSheetFilenameBase(p.date, size, model, processName);
+          const filename = `${this._sanitizeFilenamePart(p.lotNumber, 'Lot')}_${filenameBase}.pdf`;
+
+          if (await App.Print.downloadElementAsPDF('print-production-sheet-container', filename)) successCount++;
         }
 
-        try {
-          if (document.fonts?.ready) await document.fonts.ready;
-        } catch (err) {
-          console.warn('[PDF] Font loading check failed:', err);
-        }
-
-        // Filename: ddmmyy_Size_Model_ProcessName, e.g. 290726_26inch_Eagle_FramePainting.pdf
-        const [dd = '', mm = '', yyyy = ''] = String(state.date || '').split('/');
-        const ddmmyy = `${dd}${mm}${yyyy.slice(-2)}` || 'date';
-        const fileParts = [
-          ddmmyy,
-          this._sanitizeFilenamePart(state.size, 'Size'),
-          this._sanitizeFilenamePart(state.model, 'Model'),
-          this._sanitizeFilenamePart(state.processName, 'Process')
-        ];
-
-        // Same html2canvas offset/clipping fixes as App.PO.downloadPDF: move
-        // the element to the document origin, capture, then restore it.
-        const prevStyle = element.getAttribute('style');
-        const prevBodyPad = document.body.style.padding;
-        const prevBodyMar = document.body.style.margin;
-        const prevBodyOvf = document.body.style.overflow;
-        const prevHtmlOverflow = document.documentElement.style.overflow;
-        const originalParent = element.parentNode;
-        const originalSibling = element.nextSibling;
-        const prevScrollX = window.pageXOffset || document.documentElement.scrollLeft;
-        const prevScrollY = window.pageYOffset || document.documentElement.scrollTop;
-
-        window.scrollTo(0, 0);
-        document.body.insertBefore(element, document.body.firstChild);
-        document.body.style.padding = '0';
-        document.body.style.margin = '0';
-        document.body.style.overflow = 'visible';
-        document.documentElement.style.overflow = 'visible';
-        element.style.display = 'block';
-        element.style.width = '749px';
-        element.style.maxWidth = 'none';
-
-        await new Promise(r => requestAnimationFrame(r));
-
-        try {
-          await window.html2pdf()
-            .set({
-              margin: [6, 6, 6, 6],
-              filename: `${fileParts.join('_')}.pdf`,
-              image: { type: 'jpeg', quality: 0.98 },
-              html2canvas: {
-                scale: 2,
-                useCORS: true,
-                allowTaint: true,
-                logging: false,
-                scrollX: 0,
-                scrollY: 0,
-                backgroundColor: '#ffffff'
-              },
-              jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-              pagebreak: { mode: ['css', 'legacy'] }
-            })
-            .from(element)
-            .save();
-
-          App.Utils.showToast('PDF exported successfully!', false);
-        } catch (err) {
-          console.error('[PDF] Generation failed:', err);
-          App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
-        } finally {
-          window.scrollTo(prevScrollX, prevScrollY);
-          document.body.style.padding = prevBodyPad;
-          document.body.style.margin = prevBodyMar;
-          document.body.style.overflow = prevBodyOvf;
-          document.documentElement.style.overflow = prevHtmlOverflow;
-          if (prevStyle !== null) {
-            element.setAttribute('style', prevStyle);
-          } else {
-            element.removeAttribute('style');
-          }
-          if (originalParent) {
-            if (originalSibling) {
-              originalParent.insertBefore(element, originalSibling);
-            } else {
-              originalParent.appendChild(element);
-            }
-          }
-        }
+        App.Utils.showToast(`${successCount} of ${lots.length} production sheet(s) downloaded as separate PDFs.`, successCount < lots.length);
       }
     };
 
@@ -27711,6 +28015,7 @@
         const count = App.State.selectedProcesses.length;
         App.Selection.updateButton('btnBulkDeleteProcesses', count, '<i class="bi bi-trash"></i> Delete Selected');
         App.Selection.updateButton('btnBulkPrintProcesses', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfProcesses', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       async bulkDelete() {
@@ -27755,6 +28060,27 @@
           App.Print.triggerBulk(withComponents, p => this.buildProcessPrintPageHtml(p), 'Process_Sheets_Selected');
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to prepare processes for printing', true);
+        }
+      },
+
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedProcesses;
+        if (selected.length === 0) return;
+
+        const processes = App.State.globalProcesses.filter(p => App.Selection.isSelected(selected, p.processId));
+        if (processes.length === 0) return;
+
+        try {
+          const withComponents = await Promise.all(processes.map(async p => {
+            const res = await Api.call('getProcessComponentsData', p.processId);
+            return Object.assign({}, p, { components: res.success ? res.data : [] });
+          }));
+          App.Print.renderBulkPages(withComponents, p => this.buildProcessPrintPageHtml(p));
+          const filename = App.Print.bulkPdfFilename('Process_Sheets', withComponents.length);
+          const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+          if (ok) App.Utils.showToast(`${withComponents.length} process sheet(s) exported to PDF!`, false);
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to prepare processes for export', true);
         }
       },
 
@@ -29756,6 +30082,7 @@
         const count = App.State.selectedDispatch.length;
         App.Selection.updateButton('btnBulkDeleteDispatch', count, '<i class="bi bi-trash"></i> Delete Selected');
         App.Selection.updateButton('btnBulkPrintDispatch', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfDispatch', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       // Populates #print-dispatch-container's fields from one Dispatch
@@ -29825,6 +30152,22 @@
         if (!records.length) return;
 
         App.Print.triggerBulk(records, d => this.buildDispatchPrintPageHtml(d), 'Delivery_Challans_Selected');
+      },
+
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedDispatch;
+        if (!selected.length) {
+          App.Utils.showToast('No dispatch records selected.', true);
+          return;
+        }
+
+        const records = App.State.globalDispatch.filter(d => App.Selection.isSelected(selected, String(d.rowIdx)));
+        if (!records.length) return;
+
+        App.Print.renderBulkPages(records, d => this.buildDispatchPrintPageHtml(d));
+        const filename = App.Print.bulkPdfFilename('Delivery_Challans', records.length);
+        const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+        if (ok) App.Utils.showToast(`${records.length} delivery challan(s) exported to PDF!`, false);
       },
 
       // Builds a fully self-contained "Delivery Challan" page (mirrors
@@ -31448,6 +31791,7 @@
           const count = App.State.selectedIssues.length;
           App.Selection.updateButton('btnBulkDeleteIssue', count, '<i class="bi bi-trash"></i> Delete Selected');
           App.Selection.updateButton('btnBulkPrintIssue', count, '<i class="bi bi-printer"></i> Print Selected');
+          App.Selection.updateButton('btnBulkDownloadPdfIssue', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
         },
 
         bulkPrint() {
@@ -31461,6 +31805,22 @@
           if (!issues.length) return;
 
           App.Print.triggerBulk(issues, iss => this.buildIssuePrintPageHtml(iss), 'Stock_Issue_Receipts_Selected');
+        },
+
+        async bulkDownloadPDF() {
+          const selected = App.State.selectedIssues;
+          if (!selected.length) {
+            App.Utils.showToast('No issue records selected.', true);
+            return;
+          }
+
+          const issues = App.State.globalIssues.filter(iss => App.Selection.isSelected(selected, String(iss.issueId)));
+          if (!issues.length) return;
+
+          App.Print.renderBulkPages(issues, iss => this.buildIssuePrintPageHtml(iss));
+          const filename = App.Print.bulkPdfFilename('Stock_Issue_Receipts', issues.length);
+          const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+          if (ok) App.Utils.showToast(`${issues.length} issue receipt(s) exported to PDF!`, false);
         },
 
         // Single-record print for the per-row "Print" button — reuses the
@@ -31910,6 +32270,7 @@
         const count = App.State.selectedVendors.length;
         App.Selection.updateButton('btnBulkDeleteVendors', count, '<i class="bi bi-trash"></i> Delete Selected');
         App.Selection.updateButton('btnBulkPrintVendors', count, '<i class="bi bi-printer"></i> Print Selected');
+        App.Selection.updateButton('btnBulkDownloadPdfVendors', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
       },
 
       async bulkDelete() {
@@ -31952,6 +32313,26 @@
           vendor => this.buildVendorLedgerPrintPageHtml(vendor),
           'Vendor_Ledgers_Selected'
         );
+      },
+
+      async bulkDownloadPDF() {
+        const selected = App.State.selectedVendors;
+        if (!selected.length) {
+          App.Utils.showToast('No vendors selected.', true);
+          return;
+        }
+
+        const vendors = App.State.globalVendors.filter(v => App.Selection.isSelected(selected, v.name));
+        if (!vendors.length) return;
+
+        if (typeof App.Issue !== 'undefined' && !App.State.globalIssues.length) {
+          await App.Issue.loadData();
+        }
+
+        App.Print.renderBulkPages(vendors, vendor => this.buildVendorLedgerPrintPageHtml(vendor));
+        const filename = App.Print.bulkPdfFilename('Vendor_Ledgers', vendors.length);
+        const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+        if (ok) App.Utils.showToast(`${vendors.length} vendor ledger(s) exported to PDF!`, false);
       },
 
       switchTab(tabId) {

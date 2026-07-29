@@ -2023,6 +2023,185 @@ function getProcessColorAxes(processId) {
 }
 
 /**
+ * TEMPORARY DIAGNOSTIC — run this directly from the Apps Script editor
+ * (select debugColorAxisDiagnostic from the function dropdown, click Run,
+ * then View > Logs or the Executions panel) to see exactly why a process's
+ * "Colors to Produce" checklist isn't detecting a color split that the
+ * Warehouse Pool apparently has. Pass either the Process ID (e.g. "PRC-6")
+ * or the Process Name (e.g. "Packing") — safe to delete once the mismatch
+ * is found; it only reads data, never writes anything.
+ * @param {string} processNameOrId
+ */
+function debugColorAxisDiagnostic(processNameOrId) {
+  const target = String(processNameOrId || '').trim().toLowerCase();
+  const allProcesses = _getAllProcessRecords();
+  if (!target) {
+    Logger.log('[DIAG] No process name/ID passed. Every known process (edit _runPackingDiagnostic below to target one): ' +
+      JSON.stringify(allProcesses.map(p => ({ id: p.processId, name: p.processName }))));
+    return;
+  }
+
+  let process = allProcesses.find(p =>
+    p.processId.toLowerCase() === target || p.processName.toLowerCase() === target);
+  if (!process) {
+    // Fall back to substring matching (e.g. "packing" against "Packing
+    // Crysta 16 inch D/Gaddi Steel Rim") before giving up entirely.
+    const partial = allProcesses.filter(p => p.processName.toLowerCase().includes(target));
+    if (partial.length === 1) {
+      process = partial[0];
+    } else if (partial.length > 1) {
+      Logger.log(`[DIAG] "${processNameOrId}" matches ${partial.length} processes, be more specific: ` +
+        JSON.stringify(partial.map(p => ({ id: p.processId, name: p.processName }))));
+      return;
+    }
+  }
+  if (!process) {
+    Logger.log(`[DIAG] No process found matching "${processNameOrId}". Known processes: ` +
+      JSON.stringify(allProcesses.map(p => ({ id: p.processId, name: p.processName }))));
+    return;
+  }
+  Logger.log(`[DIAG] Process: ${process.processId} / "${process.processName}" (primaryColorAxis="${process.primaryColorAxis || ''}")`);
+
+  const components = (getProcessComponentsData(process.processId).data || []);
+  const poolComps = components.filter(c => c.sourceType === COMPONENT_SOURCE_TYPES.POOL);
+  Logger.log(`[DIAG] Recipe rows: ${components.length} total, ${poolComps.length} sourceType=POOL: ` +
+    JSON.stringify(poolComps.map(c => ({ itemName: c.itemName, colorGroup: c.colorGroup }))));
+  if (poolComps.length === 0) {
+    Logger.log('[DIAG] No POOL-sourced recipe rows at all -> this process can never auto-detect a color axis.');
+    return;
+  }
+
+  const poolRows = (getWarehousePoolData().data || []);
+  poolComps.forEach(c => {
+    const itemLower = c.itemName.trim().toLowerCase();
+    const matches = poolRows.filter(r => r.outputItemName.trim().toLowerCase() === itemLower);
+    if (matches.length === 0) {
+      const nearMisses = Array.from(new Set(poolRows
+        .filter(r => r.outputItemName.trim().toLowerCase().includes(itemLower.slice(0, 6)))
+        .map(r => r.outputItemName)));
+      Logger.log(`[DIAG] "${c.itemName}" -> 0 Warehouse Pool rows. Near-miss item names present: ${JSON.stringify(nearMisses)}`);
+      return;
+    }
+    // One compact line per row: color, produced, available -- and crucially
+    // the RAW color string exactly as stored, so a composite bucket (e.g.
+    // "BCP / Blue" from two axes combined on one lot -- see
+    // recalculateWarehousePool's Pass 1 in module_warehouse.js) is visible
+    // instead of looking like a clean single color.
+    Logger.log(`[DIAG] "${c.itemName}" -> ${matches.length} Warehouse Pool row(s):`);
+    Logger.log('[DIAG]   ' + matches.map(r => `[color="${r.color}" produced=${r.producedQty} avail=${r.availableQty}]`).join(' '));
+    const hasComposite = matches.some(r => r.color.includes(' / '));
+    if (hasComposite) {
+      Logger.log('[DIAG]   *** At least one bucket color contains " / " -- this is a COMPOSITE bucket (two axes credited together on one lot). Its availability will be counted toward EVERY token it contains, e.g. "BCP / Blue" inflates both "BCP" and "Blue".');
+    }
+  });
+
+  Logger.log(`[DIAG] getProcessColorGroups -> ${JSON.stringify(getProcessColorGroups(process.processId))}`);
+  Logger.log(`[DIAG] getProcessColorAxes -> ${JSON.stringify(getProcessColorAxes(process.processId))}`);
+}
+
+/**
+ * TEMPORARY — one-click runner for debugColorAxisDiagnostic. The Apps
+ * Script editor's Run button can't pass arguments to a function, so select
+ * THIS one from the dropdown instead. Edit the string below to the exact
+ * Packing process's name (or Process ID) first if "Packing" isn't it —
+ * running with no match still logs every known process/ID so you can copy
+ * the right one. Safe to delete afterward, same as debugColorAxisDiagnostic.
+ */
+function _runPackingDiagnostic() {
+  debugColorAxisDiagnostic('Packing Crysta 16 inch D/Gaddi Steel Rim');
+}
+
+/**
+ * TEMPORARY DIAGNOSTIC — finds which Completed Production lot(s) consumed
+ * a given Warehouse Pool item via a blank/'COMMON' colorGroup instead of a
+ * real color, which is exactly what debits the untagged (blank-color)
+ * bucket in recalculateWarehousePool's Pass 2 (module_warehouse.js) — see
+ * the "color=''" bucket a previous debugColorAxisDiagnostic run surfaced.
+ * That bucket goes negative when nothing was ever credited into it (this
+ * item's own Production history only ever credits real colors), meaning
+ * some consuming lot recorded its usage without tagging which color batch
+ * it actually used — a traceability gap from before this item had 2+ pool
+ * colors (when a flat/COMMON entry was the only option), not a live bug.
+ * Safe to delete afterward; only reads the Production sheet.
+ * @param {string} itemName Exact Warehouse Pool item name (case-insensitive).
+ */
+function debugFindPhantomColorConsumers(itemName) {
+  const target = String(itemName || '').trim().toLowerCase();
+  if (!target) {
+    Logger.log('[DIAG] Pass the exact Warehouse Pool item name, e.g. debugFindPhantomColorConsumers("Fitted Frame 16 inch Crysta S/Rim")');
+    return;
+  }
+  const sheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    Logger.log('[DIAG] Production sheet is empty.');
+    return;
+  }
+  const data = sheet.getRange(2, 1, lastRow - 1, PRODUCTION_COL.COLOR_BREAKDOWN).getValues();
+
+  let found = 0;
+  let totalQty = 0;
+  data.forEach((row, i) => {
+    const status = String(row[PRODUCTION_COL.STATUS - 1] || '').trim().toLowerCase();
+    if (status !== 'completed') return;
+    const raw = String(row[PRODUCTION_COL.COMPONENTS_CONSUMED - 1] || '').trim();
+    if (!raw) return;
+    let comps;
+    try {
+      comps = JSON.parse(raw);
+    } catch (e) {
+      return;
+    }
+    if (!Array.isArray(comps)) return;
+
+    comps.forEach(c => {
+      if (String(c.sourceType || '').trim().toUpperCase() !== COMPONENT_SOURCE_TYPES.POOL) return;
+      if (String(c.itemName || '').trim().toLowerCase() !== target) return;
+      const colorGroup = String(c.colorGroup || '').trim();
+      const isBlankOrCommon = !colorGroup || colorGroup.toUpperCase() === COMPONENT_COLOR_GROUP_COMMON;
+      if (!isBlankOrCommon) return;
+
+      found++;
+      const qty = Number(c.qty) || 0;
+      totalQty += qty;
+      Logger.log(`[DIAG] sheet row ${i + 2}: lotNumber="${row[PRODUCTION_COL.LOT_NUMBER - 1]}" processId="${row[PRODUCTION_COL.PROCESS_ID - 1]}" date="${row[PRODUCTION_COL.DATE - 1]}" consumedQty=${qty} (colorGroup=${JSON.stringify(colorGroup)})`);
+    });
+  });
+
+  Logger.log(`[DIAG] Found ${found} blank/COMMON-tagged consumption entr${found === 1 ? 'y' : 'ies'} for "${itemName}", totaling ${totalQty}.`);
+}
+
+/**
+ * TEMPORARY — one-click runner for debugFindPhantomColorConsumers, same
+ * reasoning as _runPackingDiagnostic above (the Run button can't pass
+ * arguments). Select _runPhantomConsumerSearch from the dropdown and Run.
+ */
+function _runPhantomConsumerSearch() {
+  debugFindPhantomColorConsumers('Fitted Frame 16 inch Crysta S/Rim');
+}
+
+/**
+ * TEMPORARY DIAGNOSTIC — scans the WHOLE Warehouse Pool for any blank-color
+ * bucket sitting at a negative available qty, i.e. every item affected by
+ * the same historical pattern found on "Fitted Frame 16 inch Crysta S/Rim"
+ * (see debugFindPhantomColorConsumers): some Completed lot consumed it via
+ * a blank/'COMMON'-tagged component before that item had 2+ real pool
+ * colors, so the debit landed in an untagged bucket that was never
+ * credited. Run this once to see how widespread the pattern is across the
+ * whole system, not just this one item. Safe to delete afterward.
+ */
+function debugFindAllPhantomBlankBuckets() {
+  const poolRows = (getWarehousePoolData().data || []);
+  const offenders = poolRows.filter(r => !r.color && r.availableQty < 0);
+  if (offenders.length === 0) {
+    Logger.log('[DIAG] No blank-color buckets with negative availability found anywhere in the Warehouse Pool.');
+    return;
+  }
+  Logger.log(`[DIAG] Found ${offenders.length} item(s) with an orphaned blank-color bucket:`);
+  offenders.forEach(r => Logger.log(`[DIAG]   "${r.outputItemName}" (processId=${r.processId}, productTag="${r.productTag}"): produced=${r.producedQty} consumed=${r.consumedQty} available=${r.availableQty}`));
+}
+
+/**
  * @private
  * Stable node identity for one axis-linking endpoint: an axis contributed by
  * exactly one process, optionally disambiguated by an axis key. A blank

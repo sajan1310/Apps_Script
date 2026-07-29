@@ -1083,6 +1083,7 @@
           const count = App.State.selectedIssues.length;
           App.Selection.updateButton('btnBulkDeleteIssue', count, '<i class="bi bi-trash"></i> Delete Selected');
           App.Selection.updateButton('btnBulkPrintIssue', count, '<i class="bi bi-printer"></i> Print Selected');
+          App.Selection.updateButton('btnBulkDownloadPdfIssue', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
         },
 
         bulkPrint() {
@@ -1096,6 +1097,22 @@
           if (!issues.length) return;
 
           App.Print.triggerBulk(issues, iss => this.buildIssuePrintPageHtml(iss), 'Stock_Issue_Receipts_Selected');
+        },
+
+        async bulkDownloadPDF() {
+          const selected = App.State.selectedIssues;
+          if (!selected.length) {
+            App.Utils.showToast('No issue records selected.', true);
+            return;
+          }
+
+          const issues = App.State.globalIssues.filter(iss => App.Selection.isSelected(selected, String(iss.issueId)));
+          if (!issues.length) return;
+
+          App.Print.renderBulkPages(issues, iss => this.buildIssuePrintPageHtml(iss));
+          const filename = App.Print.bulkPdfFilename('Stock_Issue_Receipts', issues.length);
+          const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+          if (ok) App.Utils.showToast(`${issues.length} issue receipt(s) exported to PDF!`, false);
         },
 
         // Single-record print for the per-row "Print" button — reuses the

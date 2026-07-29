@@ -258,6 +258,7 @@
           const count = App.State.selectedBills.length;
           App.Selection.updateButton('btnBulkDeleteBills', count, '<i class="bi bi-trash"></i> Delete Selected');
           App.Selection.updateButton('btnBulkPrintBills', count, '<i class="bi bi-printer"></i> Print Selected');
+          App.Selection.updateButton('btnBulkDownloadPdfBills', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
         },
 
         // Populates #print-bill-container's fields from one Bill for the
@@ -364,6 +365,22 @@
             bill => this.buildBillPrintPageHtml(bill),
             'Goods_Receipts_Selected'
           );
+        },
+
+        async bulkDownloadPDF() {
+          const selected = App.State.selectedBills;
+          if (!selected.length) {
+            App.Utils.showToast('No bills selected.', true);
+            return;
+          }
+
+          const bills = App.State.globalBills.filter(bill => App.Selection.isSelected(selected, this.billKey(bill)));
+          if (!bills.length) return;
+
+          App.Print.renderBulkPages(bills, bill => this.buildBillPrintPageHtml(bill));
+          const filename = App.Print.bulkPdfFilename('Goods_Receipts', bills.length);
+          const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+          if (ok) App.Utils.showToast(`${bills.length} bill(s) exported to PDF!`, false);
         },
 
         // Builds a fully self-contained "Goods Receipt" page (mirrors
