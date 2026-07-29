@@ -142,37 +142,28 @@
        ───────────────────────────────────────────────────────────────── -->
   <div class="dash-section mb-4">
     <div class="dash-section-title">Quick Actions</div>
-    <div class="row row-cols-2 row-cols-sm-3 row-cols-lg-6 g-2">
-      <div class="col">
-        <button class="btn btn-success dash-action-tile w-100 h-100" onclick="App.PO.openCreateModal()">
-          <i class="bi bi-plus-circle"></i><span>Create PO</span>
-        </button>
-      </div>
-      <div class="col">
-        <button class="btn btn-primary dash-action-tile w-100 h-100" onclick="App.Bill.openReceiveModal()">
-          <i class="bi bi-receipt"></i><span>Receive Bill</span>
-        </button>
-      </div>
-      <div class="col">
-        <button class="btn btn-dark dash-action-tile w-100 h-100" onclick="App.Production.openCreateModal()">
-          <i class="bi bi-play-circle"></i><span>Log Production</span>
-        </button>
-      </div>
-      <div class="col">
-        <button class="btn btn-dark dash-action-tile w-100 h-100" onclick="App.Issue.openIssueModal()">
-          <i class="bi bi-box-arrow-up"></i><span>Issue Stock</span>
-        </button>
-      </div>
-      <div class="col">
-        <button class="btn btn-secondary dash-action-tile w-100 h-100" onclick="App.Wastage.openWastageModal()">
-          <i class="bi bi-trash3"></i><span>Log Wastage</span>
-        </button>
-      </div>
-      <div class="col">
-        <button class="btn btn-outline-danger dash-action-tile w-100 h-100" onclick="App.Return.openReturnModal()">
-          <i class="bi bi-arrow-return-left"></i><span>Return Goods</span>
-        </button>
-      </div>
+    <div class="d-flex gap-2 dash-action-row">
+      <button class="btn btn-success dash-action-tile flex-fill" onclick="App.PO.openCreateModal()">
+        <i class="bi bi-plus-circle"></i><span>Create PO</span>
+      </button>
+      <button class="btn btn-primary dash-action-tile flex-fill" onclick="App.Bill.openReceiveModal()">
+        <i class="bi bi-receipt"></i><span>Receive Bill</span>
+      </button>
+      <button class="btn btn-dark dash-action-tile flex-fill" onclick="App.Production.openCreateModal()">
+        <i class="bi bi-play-circle"></i><span>Log Production</span>
+      </button>
+      <button class="btn btn-dark dash-action-tile flex-fill" onclick="App.Issue.openIssueModal()">
+        <i class="bi bi-box-arrow-up"></i><span>Issue Stock</span>
+      </button>
+      <button class="btn btn-success dash-action-tile flex-fill" onclick="App.Navigation.showTab('dispatchTab'); App.Dispatch.enterTab().then(() => App.Dispatch.openCreateDispatchModal())">
+        <i class="bi bi-truck"></i><span>Record New Bill</span>
+      </button>
+      <button class="btn btn-secondary dash-action-tile flex-fill" onclick="App.Wastage.openWastageModal()">
+        <i class="bi bi-trash3"></i><span>Log Wastage</span>
+      </button>
+      <button class="btn btn-outline-danger dash-action-tile flex-fill" onclick="App.Return.openReturnModal()">
+        <i class="bi bi-arrow-return-left"></i><span>Return Goods</span>
+      </button>
     </div>
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 dash-quick-secondary">
       <button class="btn btn-outline-danger btn-sm fw-semibold" onclick="App.Stock.printLowStockReport()">

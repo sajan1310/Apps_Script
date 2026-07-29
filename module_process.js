@@ -354,7 +354,7 @@ function saveProcess(formData) {
     const dupComponent = _findDuplicateComponent(components);
     if (dupComponent) {
       return buildResponse(false, null,
-        `Duplicate component: "${dupComponent.itemName}"${dupComponent.size ? ' (' + dupComponent.size + ')' : ''} already exists in ${dupComponent.colorGroup === COMPONENT_COLOR_GROUP_COMMON ? 'Common Components' : 'the "' + dupComponent.colorGroup + '" color sub-group'}. Each item+size combination may only appear once per group — adjust its Qty / Unit instead of adding it twice.`);
+        `Duplicate component: "${dupComponent.itemName}"${dupComponent.size ? ' (' + dupComponent.size + ')' : ''} already exists in ${isCommonColorGroup(dupComponent.colorGroup) ? 'Common Components' : 'the "' + dupComponent.colorGroup + '" color sub-group'}. Each item+size combination may only appear once per group — adjust its Qty / Unit instead of adding it twice.`);
     }
 
     const isEdit = !!formData.processId;
@@ -470,7 +470,7 @@ function saveProcess(formData) {
       // saveProduction's fresh-row read-back).
       const freshProcess = _mapProcessRow(sheet.getRange(targetRow, 1, 1, Math.max(sheet.getLastColumn(), PROCESS_COL.PRIMARY_COLOR_AXIS)).getValues()[0]);
 
-      return buildResponse(true, { processId: processId, process: freshProcess }, 'Process updated successfully.');
+      return buildResponse(true, { processId: processId, process: freshProcess }, `Process "${processName}" updated successfully.`);
     }
 
     const newProcessId = getNextProcessId();
@@ -485,7 +485,7 @@ function saveProcess(formData) {
 
     const freshNewProcess = _mapProcessRow(sheet.getRange(sheet.getLastRow(), 1, 1, Math.max(sheet.getLastColumn(), PROCESS_COL.PRIMARY_COLOR_AXIS)).getValues()[0]);
 
-    return buildResponse(true, { processId: newProcessId, process: freshNewProcess }, 'Process created successfully.');
+    return buildResponse(true, { processId: newProcessId, process: freshNewProcess }, `Process "${processName}" created successfully.`);
   } catch (error) {
     Log.error('[saveProcess] Error:', error.message);
     logAction('ERROR', 'saveProcess', formData.processId || 'NEW', error.message, 'ERROR');
@@ -1181,7 +1181,7 @@ function getProcessesForItem(itemName, size) {
       if (!pid) return;
 
       const colorGroup = String(comp.colorGroup || '').trim() || COMPONENT_COLOR_GROUP_COMMON;
-      if (colorGroup.toLowerCase() === COMPONENT_COLOR_GROUP_COMMON.toLowerCase()) {
+      if (isCommonColorGroup(colorGroup)) {
         // A process can only hold one COMMON row per item+size — that is
         // the uniqueness key _findDuplicateComponent enforces on save — so
         // last-wins here is only a defence against pre-existing bad data.
@@ -1423,7 +1423,7 @@ function saveItemProcessMappings(itemName, size, mappings) {
         if (String(row[PROCESS_COMPONENTS_COL.SIZE - 1] || '').trim().toLowerCase() !== targetSize) continue;
 
         const colorGroup = String(row[PROCESS_COMPONENTS_COL.COLOR_GROUP - 1] || '').trim() || COMPONENT_COLOR_GROUP_COMMON;
-        if (colorGroup.toLowerCase() !== COMPONENT_COLOR_GROUP_COMMON.toLowerCase()) continue;
+        if (!isCommonColorGroup(colorGroup)) continue;
 
         const pidKey = String(row[PROCESS_COMPONENTS_COL.PROCESS_ID - 1] || '').trim().toLowerCase();
         if (!pidKey) continue;
@@ -1787,7 +1787,7 @@ function _colorNamesMatch(a, b) {
 function _legacyColorGroupList(components, poolRows, colorLinks) {
   const colors = new Map();
   components.forEach(c => {
-    if (c.colorGroup && c.colorGroup !== COMPONENT_COLOR_GROUP_COMMON) _addUniqueCaseInsensitive(colors, c.colorGroup);
+    if (c.colorGroup && !isCommonColorGroup(c.colorGroup)) _addUniqueCaseInsensitive(colors, c.colorGroup);
   });
 
   const poolItemNames = new Set(
@@ -1953,7 +1953,7 @@ function computeColorAxesForProcess(processId, components, poolRows, colorLinks)
   // without processId a tag axis could never be link-eligible at all.
   const rawTagGroups = new Map();
   components.forEach(c => {
-    if (!c.colorGroup || c.colorGroup === COMPONENT_COLOR_GROUP_COMMON) return;
+    if (!c.colorGroup || isCommonColorGroup(c.colorGroup)) return;
     const axisLabel = String(c.colorAxis || '').trim();
     if (!axisLabel) return;
     const axisKey = axisLabel.toLowerCase();
@@ -2158,7 +2158,7 @@ function debugFindPhantomColorConsumers(itemName) {
       if (String(c.sourceType || '').trim().toUpperCase() !== COMPONENT_SOURCE_TYPES.POOL) return;
       if (String(c.itemName || '').trim().toLowerCase() !== target) return;
       const colorGroup = String(c.colorGroup || '').trim();
-      const isBlankOrCommon = !colorGroup || colorGroup.toUpperCase() === COMPONENT_COLOR_GROUP_COMMON;
+      const isBlankOrCommon = !colorGroup || isCommonColorGroup(colorGroup);
       if (!isBlankOrCommon) return;
 
       found++;
@@ -2202,6 +2202,195 @@ function debugFindAllPhantomBlankBuckets() {
 }
 
 /**
+ * TEMPORARY REPAIR TOOL — backfills a specific historical gap left by the
+ * pre-fix bug in Script_Production.html: checking a brand-new color mid-
+ * Edit never stamped `data-qty-per-unit` on that color's Per-Process Pool
+ * Components cell, so the checklist's own live-sync (refreshPoolColorGroupCells)
+ * could never fill it in — the operator could type a real qty into the
+ * checklist all day and that cell stayed blank. If the lot was saved anyway
+ * with that cell blank, serializePoolColorGroups() (which skips a blank
+ * cell outright) silently produced a componentsConsumed array with NO entry
+ * at all for that color's actual Pool consumption — the lot's own
+ * colorBreakdown (driven directly by the checkbox+qty inputs, untouched by
+ * that bug) still correctly shows the color and qty, but nothing debited
+ * the matching Warehouse Pool bucket for it. This finds every already-saved
+ * Completed lot with that exact mismatch and can backfill the missing
+ * entry using the recipe's own qtyPerUnit x that color's own checked qty —
+ * the same starting-estimate basis Create mode already suggests elsewhere.
+ * ALWAYS review the dry-run report (and re-verify/adjust via Edit Lot
+ * afterward) since the true historical consumption may have differed from
+ * the recipe's flat ratio.
+ *
+ * Scoped per recipe pool item to that item's OWN color history
+ * (colorsByItem) — a lot's colorBreakdown can carry colors from a
+ * DIFFERENT axis entirely (e.g. a Mudguard Color alongside a Rim Color);
+ * checking every breakdown color against every pool component regardless
+ * of which axis it actually belongs to would flag a false "missing entry"
+ * for a color that was never supposed to apply to that item at all. A
+ * composite breakdown color (e.g. "BCP / Blue-White" — see
+ * COLOR_COMBO_DELIMITER) is split into its individual axis tokens first,
+ * since that's how a real componentsConsumed entry's own colorGroup is
+ * tagged (one literal axis color, never the joined composite string).
+ *
+ * @param {boolean} [dryRun=true] true: only logs what WOULD change, writes
+ *   nothing. false: patches the Production sheet's Components Consumed
+ *   column for every affected row, then triggers recalculateWarehousePool()
+ *   once at the end.
+ */
+function repairMissingPoolColorConsumption(dryRun) {
+  if (dryRun === undefined) dryRun = true;
+
+  const sheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    Logger.log('[REPAIR] Production sheet is empty.');
+    return;
+  }
+
+  const poolRows = (getWarehousePoolData().data || []);
+  const colorsByItem = new Map(); // itemNameLower -> Set(color)
+  poolRows.forEach(r => {
+    if (!r.color) return;
+    const key = r.outputItemName.trim().toLowerCase();
+    if (!colorsByItem.has(key)) colorsByItem.set(key, new Set());
+    colorsByItem.get(key).add(r.color);
+  });
+
+  const recipeCache = new Map(); // processId -> recipe components
+  function getRecipe(processId) {
+    if (!recipeCache.has(processId)) {
+      recipeCache.set(processId, (getProcessComponentsData(processId).data || []));
+    }
+    return recipeCache.get(processId);
+  }
+
+  const numCols = PRODUCTION_COL.COLOR_BREAKDOWN;
+  const data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+
+  let lotsChecked = 0;
+  let lotsFixed = 0;
+  let entriesAdded = 0;
+  let unfixableGaps = 0;
+
+  data.forEach((row, i) => {
+    const sheetRow = i + 2;
+    const status = String(row[PRODUCTION_COL.STATUS - 1] || '').trim().toLowerCase();
+    if (status !== 'completed') return;
+
+    const colorBreakdownRaw = String(row[PRODUCTION_COL.COLOR_BREAKDOWN - 1] || '').trim();
+    if (!colorBreakdownRaw) return;
+    let colorBreakdown;
+    try {
+      colorBreakdown = JSON.parse(colorBreakdownRaw);
+    } catch (e) {
+      return;
+    }
+    if (!Array.isArray(colorBreakdown) || colorBreakdown.length === 0) return;
+
+    const processId = String(row[PRODUCTION_COL.PROCESS_ID - 1] || '').trim();
+    if (!processId) return;
+
+    const componentsRaw = String(row[PRODUCTION_COL.COMPONENTS_CONSUMED - 1] || '').trim();
+    let components = [];
+    if (componentsRaw) {
+      try {
+        const parsed = JSON.parse(componentsRaw);
+        if (Array.isArray(parsed)) components = parsed;
+      } catch (e) {
+        return;
+      }
+    }
+
+    lotsChecked++;
+
+    const recipe = getRecipe(processId);
+    const poolCommonComps = recipe.filter(c =>
+      c.sourceType === COMPONENT_SOURCE_TYPES.POOL && (!c.colorGroup || isCommonColorGroup(c.colorGroup)));
+
+    const missing = [];
+    poolCommonComps.forEach(rc => {
+      const itemKey = rc.itemName.trim().toLowerCase();
+      const itemColors = colorsByItem.get(itemKey) || new Set();
+      if (itemColors.size <= 1) return; // not genuinely pool-color-aware
+      const itemColorsLower = new Set(Array.from(itemColors).map(c => c.toLowerCase()));
+
+      colorBreakdown.forEach(entry => {
+        const rawColor = String((entry && entry.color) || '').trim();
+        const qty = Number(entry && entry.qty) || 0;
+        if (!rawColor || qty <= 0) return;
+
+        // Split a composite (multi-axis) breakdown color into its own
+        // literal tokens -- only tokens that actually belong to THIS
+        // item's own pool history are checked against it.
+        rawColor.split(' / ').map(t => t.trim()).filter(Boolean).forEach(token => {
+          if (!itemColorsLower.has(token.toLowerCase())) return;
+
+          const hasEntry = components.some(c =>
+            String(c.sourceType || '').trim().toUpperCase() === COMPONENT_SOURCE_TYPES.POOL &&
+            String(c.itemName || '').trim().toLowerCase() === itemKey &&
+            String(c.colorGroup || '').trim().toLowerCase() === token.toLowerCase());
+          if (hasEntry) return;
+
+          const qtyPerUnit = Number(rc.qtyPerUnit) || 0;
+          if (qtyPerUnit <= 0) {
+            unfixableGaps++;
+            Logger.log(`[REPAIR] Row ${sheetRow} (lot "${row[PRODUCTION_COL.LOT_NUMBER - 1]}"): missing "${rc.itemName}" / "${token}" entry found, but recipe qtyPerUnit is 0 -- can't estimate, skipped. Needs manual attention.`);
+            return;
+          }
+
+          missing.push({
+            itemName: rc.itemName, size: rc.size || '', narration: rc.narration || '',
+            sourceType: 'POOL', qty: qtyPerUnit * qty, colorGroup: token
+          });
+        });
+      });
+    });
+
+    if (missing.length === 0) return;
+
+    lotsFixed++;
+    entriesAdded += missing.length;
+    const lotNumber = row[PRODUCTION_COL.LOT_NUMBER - 1];
+    Logger.log(`[REPAIR] Row ${sheetRow} (lot "${lotNumber}", process ${processId}) -- ${missing.length} missing entr${missing.length === 1 ? 'y' : 'ies'} to backfill: ` +
+      JSON.stringify(missing));
+
+    if (!dryRun) {
+      const updatedComponents = components.concat(missing);
+      sheet.getRange(sheetRow, PRODUCTION_COL.COMPONENTS_CONSUMED).setValue(JSON.stringify(updatedComponents));
+    }
+  });
+
+  Logger.log(`[REPAIR] Checked ${lotsChecked} Completed lot(s) with a color breakdown. ${lotsFixed} lot(s) had backfillable missing entries (${entriesAdded} total), ${unfixableGaps} gap(s) found with no recipe qtyPerUnit to estimate from.`);
+  if (dryRun) {
+    Logger.log('[REPAIR] DRY RUN -- nothing was written. Run _runRepairApply (or call repairMissingPoolColorConsumption(false)) to apply.');
+  } else {
+    Logger.log('[REPAIR] Applied. Recalculating Warehouse Pool...');
+    const recalc = recalculateWarehousePool();
+    Logger.log('[REPAIR] recalculateWarehousePool: ' + JSON.stringify(recalc));
+  }
+}
+
+/**
+ * TEMPORARY — one-click dry-run of repairMissingPoolColorConsumption.
+ * Select _runRepairDryRun from the function dropdown and Run; review the
+ * logged report, then run _runRepairApply only once you're satisfied it's
+ * correct (this one writes nothing).
+ */
+function _runRepairDryRun() {
+  repairMissingPoolColorConsumption(true);
+}
+
+/**
+ * TEMPORARY — one-click APPLY of repairMissingPoolColorConsumption. This
+ * WRITES to the Production sheet's Components Consumed column for every
+ * affected row, then recalculates the Warehouse Pool. Run _runRepairDryRun
+ * first and read its report before running this.
+ */
+function _runRepairApply() {
+  repairMissingPoolColorConsumption(false);
+}
+
+/**
  * @private
  * Stable node identity for one axis-linking endpoint: an axis contributed by
  * exactly one process, optionally disambiguated by an axis key. A blank
@@ -2215,7 +2404,11 @@ function debugFindAllPhantomBlankBuckets() {
  * @returns {string} '' when processId is blank (never matches anything).
  */
 function _axisLinkRef(processId, axisKey) {
-  const pid = String(processId || '').trim();
+  // Both halves lowercased: this ref is matched between a Process Color
+  // Links row and a pool/tag axis derived from a different sheet, so a
+  // casing difference in either stored Process ID would silently drop the
+  // link (the axes then cross-multiply instead of pairing).
+  const pid = String(processId || '').trim().toLowerCase();
   if (!pid) return '';
   const key = String(axisKey || '').trim().toLowerCase();
   return key ? (pid + '::' + key) : pid;

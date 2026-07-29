@@ -8,13 +8,22 @@
  *   completed Production lots minus what has already been dispatched (mirrors
  *   how recalculateStock derives raw-material stock, but needs no sheet of
  *   its own).
- * - Dispatched Goods ledger CRUD (Dispatch sheet). Entries may optionally
- *   reference a PI / Estimate (Order Number) or be standalone "direct
+ * - Dispatched Goods ledger CRUD (Dispatch sheet). Each entry is a "bill" —
+ *   one Dispatch Number shared by one-or-more line-item rows (same
+ *   header+lines pattern as Client Orders/PI-Estimates), so a single
+ *   dispatch/delivery can carry several different Ready-to-Dispatch
+ *   products at once, each with its own qty and an optional per-unit Rate
+ *   for record-keeping. Entries may optionally reference a PI / Estimate
+ *   (Order Number, shared by the whole bill) or be standalone "direct
  *   supply" dispatches.
  *
- * Sheet Layout (Dispatch):
+ * Sheet Layout (Dispatch) — one row per line item, DISPATCH_NUMBER repeated
+ * across every line of the same bill; header-level fields (date, order,
+ * client, transport, remarks, invoice/private-mark/GR, logistics contractor)
+ * are duplicated onto every line row, same convention as Client Orders'
+ * orderRemarks:
  * ───────────────────────────────────────────────────────────────────────────
- * Col A (1):   Dispatch Number (e.g. DSP-1001)
+ * Col A (1):   Dispatch Number (e.g. DSP-1001) — shared by every line of one bill
  * Col B (2):   Dispatch Date (DD/MM/YYYY)
  * Col C (3):   Order Number (optional reference to Client Orders sheet)
  * Col D (4):   Client Name
@@ -26,6 +35,11 @@
  * Col J (10):  Invoice Number (optional, can be added later)
  * Col K (11):  Private Mark (optional, can be added later)
  * Col L (12):  GR Number (optional, can be added later)
+ * Col M (13):  Logistics Contractor (optional)
+ * Col N (14):  Logistics Rate (snapshot)
+ * Col O (15):  Logistics Cost (= Logistics Rate x this line's Qty)
+ * Col P (16):  Rate (optional per-unit billing/sale rate, record-keeping only)
+ * Col Q (17):  Amount (= Qty x Rate)
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -57,7 +71,9 @@ function initDispatchSheet() {
       'GR Number',
       'Logistics Contractor',
       'Logistics Rate',
-      'Logistics Cost'
+      'Logistics Cost',
+      'Rate',
+      'Amount'
     ];
 
     sheet.getRange(1, 1, 1, headers.length)
@@ -110,6 +126,26 @@ function ensureDispatchLogisticsColumns(sheet) {
     }
   } catch (error) {
     Log.error('[ensureDispatchLogisticsColumns] Error:', error.message);
+  }
+}
+
+/**
+ * Backfills the "Rate" and "Amount" columns on Dispatch sheets created
+ * before per-line billing rate existed, so legacy rows don't throw when
+ * read/written.
+ */
+function ensureDispatchRateColumns(sheet) {
+  try {
+    if (sheet.getLastColumn() < DISPATCH_COL.AMOUNT) {
+      const startCol = sheet.getLastColumn() + 1;
+      sheet.insertColumnsAfter(sheet.getLastColumn(), DISPATCH_COL.AMOUNT - sheet.getLastColumn());
+      sheet.getRange(1, startCol, 1, DISPATCH_COL.AMOUNT - startCol + 1)
+        .setValues([['Rate', 'Amount']])
+        .setFontWeight('bold')
+        .setBackground('#f3f3f3');
+    }
+  } catch (error) {
+    Log.error('[ensureDispatchRateColumns] Error:', error.message);
   }
 }
 
@@ -210,12 +246,27 @@ function _computeReadyToDispatchMap() {
         productId: isTagged ? r.productTag : r.outputItemName,
         productName: isTagged ? (productNameById[key] || r.productTag) : r.outputItemName,
         producedQty: 0,
-        dispatchedQty: 0
+        dispatchedQty: 0,
+        // Same Product Tag can accumulate credits from several Completed
+        // lots logged at different times with different Colors to Produce
+        // combinations (e.g. one batch "Blue-White / BCP", another
+        // "Red-White / Black") — the aggregate above is color-blind by
+        // design (see getReadyToDispatchData), but this keeps each color's
+        // own produced/dispatched numbers so the operator can still tell
+        // which color batch they're actually dispatching.
+        colors: {} // colorLabel ('' = untagged/blank) -> { producedQty, dispatchedQty }
       };
     }
 
     map[key].producedQty += r.producedQty;
     map[key].dispatchedQty += r.consumedQty;
+
+    const colorLabel = String(r.color || '').trim();
+    if (!map[key].colors[colorLabel]) {
+      map[key].colors[colorLabel] = { producedQty: 0, dispatchedQty: 0 };
+    }
+    map[key].colors[colorLabel].producedQty += r.producedQty;
+    map[key].colors[colorLabel].dispatchedQty += r.consumedQty;
   });
 
   return map;
@@ -224,7 +275,13 @@ function _computeReadyToDispatchMap() {
 /**
  * Retrieves the "Ready to Dispatch" view: one row per Product ID with a
  * fully-packed, Product-tagged Warehouse Pool credit, with produced/
- * dispatched/ready quantities. Pure read — no persistence.
+ * dispatched/ready quantities. The row itself stays one-per-product (a
+ * Product Tag can legitimately span several Completed lots logged under
+ * different Colors to Produce combinations) — colorBreakdown carries each
+ * of those colors' own produced/dispatched/ready numbers alongside the
+ * aggregate, for a detail view (see App.Dispatch.openColorBreakdown) rather
+ * than splitting the main list into one row per color. Pure read — no
+ * persistence.
  */
 function getReadyToDispatchData() {
   try {
@@ -234,7 +291,15 @@ function getReadyToDispatchData() {
       productName: r.productName,
       producedQty: r.producedQty,
       dispatchedQty: r.dispatchedQty,
-      readyQty: r.producedQty - r.dispatchedQty
+      readyQty: r.producedQty - r.dispatchedQty,
+      colorBreakdown: Object.keys(r.colors)
+        .map(color => ({
+          color,
+          producedQty: r.colors[color].producedQty,
+          dispatchedQty: r.colors[color].dispatchedQty,
+          readyQty: r.colors[color].producedQty - r.colors[color].dispatchedQty
+        }))
+        .sort((a, b) => a.color.localeCompare(b.color))
     }));
 
     records.sort((a, b) => b.productId.localeCompare(a.productId, undefined, { numeric: true }));
@@ -282,7 +347,9 @@ function _mapDispatchRow(row, rowIdx) {
     grNumber: String(row[DISPATCH_COL.GR_NUMBER - 1] || '').trim(),
     logisticsContractor: String(row[DISPATCH_COL.LOGISTICS_CONTRACTOR - 1] || '').trim(),
     logisticsRate: Number(row[DISPATCH_COL.LOGISTICS_RATE - 1]) || 0,
-    logisticsCost: Number(row[DISPATCH_COL.LOGISTICS_COST - 1]) || 0
+    logisticsCost: Number(row[DISPATCH_COL.LOGISTICS_COST - 1]) || 0,
+    rate: Number(row[DISPATCH_COL.RATE - 1]) || 0,
+    amount: Number(row[DISPATCH_COL.AMOUNT - 1]) || 0
   };
 }
 
@@ -298,11 +365,12 @@ function getDispatchData() {
 
     ensureDispatchExtraColumns(sheet);
     ensureDispatchLogisticsColumns(sheet);
+    ensureDispatchRateColumns(sheet);
 
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) return buildResponse(true, []);
 
-    const data = sheet.getRange(2, 1, lastRow - 1, DISPATCH_COL.LOGISTICS_COST).getValues();
+    const data = sheet.getRange(2, 1, lastRow - 1, DISPATCH_COL.AMOUNT).getValues();
     const records = [];
 
     for (let i = 0; i < data.length; i++) {
@@ -366,22 +434,23 @@ function _getClientOrderLineQty(orderNumber, productId) {
 
 /**
  * Sums Dispatch Qty across every existing dispatch row matching
- * (orderNumber, productId), optionally excluding one row (the record
- * currently being edited, so it isn't double-counted against itself).
+ * (orderNumber, productId), optionally excluding every line belonging to
+ * one Dispatch Number (the bill currently being edited, so its own
+ * not-yet-rewritten lines aren't double-counted against themselves).
  * @private
  */
-function _getDispatchedQtyForOrder(dispatchSheet, orderNumber, productId, excludeRowIdx) {
+function _getDispatchedQtyForOrder(dispatchSheet, orderNumber, productId, excludeDispatchNumber) {
   const lastRow = dispatchSheet.getLastRow();
   if (lastRow < 2) return 0;
 
   const data = dispatchSheet.getRange(2, 1, lastRow - 1, DISPATCH_COL.QTY).getValues();
   const targetOrder = orderNumber.toLowerCase();
   const targetProduct = productId.toLowerCase();
+  const excludeKey = excludeDispatchNumber ? String(excludeDispatchNumber).trim().toLowerCase() : null;
   let total = 0;
 
-  data.forEach((row, idx) => {
-    const rowNum = idx + 2;
-    if (excludeRowIdx && rowNum === excludeRowIdx) return;
+  data.forEach(row => {
+    if (excludeKey && String(row[DISPATCH_COL.DISPATCH_NUMBER - 1] || '').trim().toLowerCase() === excludeKey) return;
     const rowOrder = String(row[DISPATCH_COL.ORDER_NUMBER - 1] || '').trim().toLowerCase();
     if (rowOrder !== targetOrder) return;
     const rowProduct = String(row[DISPATCH_COL.PRODUCT_ID - 1] || '').trim().toLowerCase();
@@ -414,17 +483,7 @@ function saveDispatch(formData) {
 
     ensureDispatchExtraColumns(sheet);
     ensureDispatchLogisticsColumns(sheet);
-
-    const productId = sanitizeString(formData.productId, 'productId');
-    const productName = sanitizeString(formData.productName, 'productName');
-    if (!productId || !productName) {
-      return buildResponse(false, null, 'Valid Product ID and Product Name are required.');
-    }
-
-    const qty = validateNumber(formData.qty, 0.001, 10000000);
-    if (qty <= 0) {
-      return buildResponse(false, null, 'Dispatch Quantity must be greater than zero.');
-    }
+    ensureDispatchRateColumns(sheet);
 
     let dateVal = formData.dispatchDate;
     if (!dateVal) dateVal = new Date();
@@ -439,42 +498,87 @@ function saveDispatch(formData) {
     const grNumber = sanitizeString(formData.grNumber || '', 'grNumber');
     const logisticsContractor = sanitizeString(formData.logisticsContractor || '', 'logisticsContractor');
 
-    const isEdit = !!formData.rowIdx;
-    let targetRow = isEdit ? parseInt(formData.rowIdx, 10) : -1;
-    let originalQty = 0;
-    // Populated below for an edit — Dispatch Number/Product ID/Qty all live
-    // within columns 1-7, so one batched read covers all three lookups that
-    // otherwise would have been separate getValue() round-trips.
-    let existingRow = null;
-
-    if (isEdit) {
-      if (isNaN(targetRow) || targetRow < 2 || targetRow > sheet.getLastRow()) {
-        return buildResponse(false, null, 'Invalid dispatch record selected for edit.');
-      }
-
-      existingRow = sheet.getRange(targetRow, 1, 1, DISPATCH_COL.QTY).getValues()[0];
-      const currentProductId = String(existingRow[DISPATCH_COL.PRODUCT_ID - 1]).trim();
-      if (currentProductId.toLowerCase() !== productId.toLowerCase()) {
-        return buildResponse(false, null, 'Data mismatch: Product ID does not match original row record.');
-      }
-
-      originalQty = Number(existingRow[DISPATCH_COL.QTY - 1]) || 0;
+    let lines;
+    try {
+      lines = typeof formData.lines === 'string' ? JSON.parse(formData.lines) : (formData.lines || []);
+    } catch (e) {
+      return buildResponse(false, null, 'Invalid item line data format.');
+    }
+    if (!Array.isArray(lines) || lines.length === 0) {
+      return buildResponse(false, null, 'A dispatch bill must contain at least one item.');
     }
 
-    // Validate against currently available Ready to Dispatch quantity.
+    const cleanLines = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] || {};
+      const productId = sanitizeString(line.productId || '', 'productId');
+      const productName = sanitizeString(line.productName || '', 'productName');
+      if (!productId || !productName) continue;
+
+      const qty = validateNumber(line.qty, 0.001, 10000000);
+      if (qty <= 0) continue;
+
+      const rate = validateNumber(line.rate, 0, 10000000);
+
+      cleanLines.push({ productId, productName, qty, rate });
+    }
+
+    if (cleanLines.length === 0) {
+      return buildResponse(false, null, 'Please specify at least one valid item with a Product and Quantity greater than zero.');
+    }
+
+    const isEdit = !!formData.dispatchNumber;
+    let dispatchNumber = isEdit ? sanitizeString(formData.dispatchNumber, 'dispatchNumber') : '';
+
+    // This bill's own previously-saved per-product quantities, captured
+    // BEFORE any write so they can be added back onto the Ready-to-Dispatch
+    // availability check below — otherwise editing a bill would fail
+    // against its own prior consumption (the Warehouse Pool snapshot
+    // _computeReadyToDispatchMap() reads from still reflects the old rows
+    // until recalculateWarehousePool() runs, further down, after the write).
+    const originalQtyByProduct = {};
+    if (isEdit) {
+      const lastRow = sheet.getLastRow();
+      let found = false;
+      if (lastRow >= 2) {
+        const existingData = sheet.getRange(2, 1, lastRow - 1, DISPATCH_COL.QTY).getValues();
+        existingData.forEach(row => {
+          if (String(row[DISPATCH_COL.DISPATCH_NUMBER - 1] || '').trim().toLowerCase() === dispatchNumber.toLowerCase()) {
+            found = true;
+            const pid = String(row[DISPATCH_COL.PRODUCT_ID - 1] || '').trim().toLowerCase();
+            if (pid) originalQtyByProduct[pid] = (originalQtyByProduct[pid] || 0) + (Number(row[DISPATCH_COL.QTY - 1]) || 0);
+          }
+        });
+      }
+      if (!found) {
+        return buildResponse(false, null, `Dispatch "${dispatchNumber}" not found.`);
+      }
+    } else {
+      dispatchNumber = getNextDispatchNumber();
+    }
+
+    // Validate against currently available Ready to Dispatch quantity,
+    // reserved cumulatively across this bill's own lines (two lines of the
+    // same product in one bill both draw from the same pool).
     // _computeReadyToDispatchMap() keys untagged final-stage rows under a
     // '__output__' prefixed key (see there) to keep them from colliding with
     // a differently-named Product Tag, but the productId the client echoes
     // back is always the unprefixed display value for both cases — so an
     // untagged product's lookup must fall back to the prefixed key.
     const readyMap = _computeReadyToDispatchMap();
-    const productIdKey = productId.toLowerCase();
-    const entry = readyMap[productIdKey] || readyMap['__output__' + productIdKey];
-    const currentReadyQty = entry ? (entry.producedQty - entry.dispatchedQty) : 0;
-    const availableQty = currentReadyQty + originalQty; // add back this record's own qty when editing
+    const reservedByProduct = {};
+    for (let i = 0; i < cleanLines.length; i++) {
+      const line = cleanLines[i];
+      const key = line.productId.toLowerCase();
+      const entry = readyMap[key] || readyMap['__output__' + key];
+      const currentReadyQty = entry ? (entry.producedQty - entry.dispatchedQty) : 0;
+      const availableQty = currentReadyQty + (originalQtyByProduct[key] || 0);
+      const reservedSoFar = reservedByProduct[key] || 0;
 
-    if (qty > availableQty + 0.0001) {
-      return buildResponse(false, null, `Only ${availableQty} unit(s) of "${productName}" are Ready to Dispatch.`);
+      if (reservedSoFar + line.qty > availableQty + 0.0001) {
+        return buildResponse(false, null, `Only ${availableQty} unit(s) of "${line.productName}" are Ready to Dispatch (requested ${reservedSoFar + line.qty} across this bill).`);
+      }
+      reservedByProduct[key] = reservedSoFar + line.qty;
     }
 
     // Validate against the SPECIFIC PI/Estimate line's own remaining qty, not
@@ -483,39 +587,53 @@ function saveDispatch(formData) {
     // over-fulfill a small order's line using stock meant for a different
     // order of the same product. Only checked when an Order Number is
     // actually referenced; a "Direct" dispatch (no orderNumber) has no order
-    // line to check against.
-    let orderLineQty = null;
+    // line to check against. This bill's own existing rows are excluded from
+    // "already dispatched" (they're about to be replaced), and reservations
+    // are cumulative across this bill's own lines the same way as above.
+    const linesWithNoOrderMatch = [];
     if (orderNumber) {
-      orderLineQty = _getClientOrderLineQty(orderNumber, productId);
-      if (orderLineQty !== null) {
-        const alreadyDispatchedForOrder = _getDispatchedQtyForOrder(sheet, orderNumber, productId, isEdit ? targetRow : null);
-        const availableForOrder = orderLineQty - alreadyDispatchedForOrder;
-        if (qty > availableForOrder + 0.0001) {
-          return buildResponse(false, null,
-            `Only ${availableForOrder} unit(s) of "${productName}" remain pending on PI/Estimate "${orderNumber}" (ordered ${orderLineQty}, already dispatched ${alreadyDispatchedForOrder} against it). Use a different order reference, or Direct, if this dispatch is really for other stock.`);
+      const reservedForOrderByProduct = {};
+      for (let i = 0; i < cleanLines.length; i++) {
+        const line = cleanLines[i];
+        const orderLineQty = _getClientOrderLineQty(orderNumber, line.productId);
+        if (orderLineQty === null) {
+          linesWithNoOrderMatch.push(line.productName);
+          continue;
         }
+        const key = line.productId.toLowerCase();
+        const alreadyDispatchedForOrder = _getDispatchedQtyForOrder(sheet, orderNumber, line.productId, isEdit ? dispatchNumber : null);
+        const availableForOrder = orderLineQty - alreadyDispatchedForOrder;
+        const reservedSoFar = reservedForOrderByProduct[key] || 0;
+
+        if (reservedSoFar + line.qty > availableForOrder + 0.0001) {
+          return buildResponse(false, null,
+            `Only ${availableForOrder} unit(s) of "${line.productName}" remain pending on PI/Estimate "${orderNumber}" (ordered ${orderLineQty}, already dispatched ${alreadyDispatchedForOrder} against it). Use a different order reference, or Direct, if this dispatch is really for other stock.`);
+        }
+        reservedForOrderByProduct[key] = reservedSoFar + line.qty;
       }
     }
 
-    const dispatchNumber = isEdit
-      ? String(existingRow[DISPATCH_COL.DISPATCH_NUMBER - 1]).trim()
-      : getNextDispatchNumber();
-
     // Snapshot the logistics contractor's rate at save time, same pattern
     // as Production's contractor payable. Optional — 0 if no rate card entry.
+    // Applied per-line (rate x that line's own qty) so the bill's per-row
+    // Logistics Cost values sum correctly to rate x total bill qty, instead
+    // of repeating one bill-wide total on every row.
     const logisticsRate = typeof _getContractorRate === 'function'
       ? _getContractorRate(logisticsContractor, LOGISTICS_PROCESS_NAME)
       : 0;
-    const logisticsCost = logisticsRate * qty;
 
-    const rowData = [
+    if (isEdit) {
+      deleteRowsById(dispatchNumber, sheet, 2, DISPATCH_COL.DISPATCH_NUMBER);
+    }
+
+    const rowsToWrite = cleanLines.map(line => [
       dispatchNumber,
       dateStr,
       orderNumber,
       clientName,
-      productId,
-      productName,
-      qty,
+      line.productId,
+      line.productName,
+      line.qty,
       transport,
       remarks,
       invoiceNumber,
@@ -523,15 +641,13 @@ function saveDispatch(formData) {
       grNumber,
       logisticsContractor,
       logisticsRate,
-      logisticsCost
-    ];
+      logisticsRate * line.qty,
+      line.rate,
+      line.qty * line.rate
+    ]);
 
-    if (isEdit) {
-      sheet.getRange(targetRow, 1, 1, rowData.length).setValues([rowData]);
-    } else {
-      sheet.appendRow(rowData);
-      targetRow = sheet.getLastRow();
-    }
+    const startRow = sheet.getLastRow() + 1;
+    sheet.getRange(startRow, 1, rowsToWrite.length, rowsToWrite[0].length).setValues(rowsToWrite);
 
     if (typeof recalculateWarehousePool === 'function') {
       recalculateWarehousePool();
@@ -539,32 +655,35 @@ function saveDispatch(formData) {
 
     SpreadsheetApp.flush();
 
+    const totalQty = cleanLines.reduce((sum, l) => sum + l.qty, 0);
     const logMsg = isEdit
-      ? `Dispatch updated: ${dispatchNumber} - ${productName} (${productId}), Qty: ${qty}`
-      : `Dispatch recorded: ${dispatchNumber} - ${productName} (${productId}), Qty: ${qty}`;
+      ? `Dispatch bill updated: ${dispatchNumber} (${cleanLines.length} item(s), total qty ${totalQty})`
+      : `Dispatch bill recorded: ${dispatchNumber} (${cleanLines.length} item(s), total qty ${totalQty})`;
 
     logAction(isEdit ? 'UPDATE' : 'CREATE', APP_CONFIG.SHEETS.DISPATCH, dispatchNumber, logMsg, 'SUCCESS');
 
-    let successMsg = isEdit ? 'Dispatch record updated successfully.' : 'Dispatch recorded successfully.';
+    let successMsg = isEdit ? 'Dispatch bill updated successfully.' : 'Dispatch bill recorded successfully.';
 
     // Soft-validate the optional Order Number reference (warn, don't block) —
-    // reuses the orderLineQty lookup above instead of re-reading the sheet.
-    // orderLineQty === null means no line for THIS product was found under
+    // reuses the per-line lookups above instead of re-reading the sheet.
+    // A product landing here means no line for THAT product was found under
     // that order number at all (order number itself may still exist with
     // other products on it, or may not exist/may have been removed).
-    if (orderNumber && orderLineQty === null) {
-      successMsg += ` Note: PI / Estimate "${orderNumber}" has no line for "${productName}" (it may have been edited or removed).`;
+    if (orderNumber && linesWithNoOrderMatch.length > 0) {
+      successMsg += ` Note: PI / Estimate "${orderNumber}" has no line for ${linesWithNoOrderMatch.map(n => `"${n}"`).join(', ')} (it may have been edited or removed).`;
     }
 
-    // Read this dispatch's own just-written row back (cheap — one row, not
-    // the whole sheet) so the client can patch it into an already-loaded
-    // Dispatch table in place instead of a full reload.
-    const freshRow = _mapDispatchRow(sheet.getRange(targetRow, 1, 1, DISPATCH_COL.LOGISTICS_COST).getValues()[0], targetRow);
+    // Read this bill's own just-written rows back (cheap — only its own
+    // block, not the whole sheet) so the client can patch it into an
+    // already-loaded Dispatch table in place instead of a full
+    // getDispatchData() reload.
+    const freshRawRows = sheet.getRange(startRow, 1, rowsToWrite.length, DISPATCH_COL.AMOUNT).getValues();
+    const freshRows = freshRawRows.map((row, i) => _mapDispatchRow(row, startRow + i));
 
-    return buildResponse(true, { dispatchNumber: dispatchNumber, row: freshRow }, successMsg);
+    return buildResponse(true, { dispatchNumber: dispatchNumber, rows: freshRows }, successMsg);
   } catch (error) {
     Log.error('[saveDispatch] Error:', error.message);
-    logAction('ERROR', 'saveDispatch', formData.productId || 'NEW', error.message, 'ERROR');
+    logAction('ERROR', 'saveDispatch', formData.dispatchNumber || 'NEW', error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to save dispatch: ' + error.message);
   } finally {
     lock.releaseLock();
@@ -572,9 +691,10 @@ function saveDispatch(formData) {
 }
 
 /**
- * Deletes a dispatch log entry.
+ * Deletes every line item of one dispatch bill (identified by Dispatch
+ * Number).
  */
-function deleteDispatch(rowIdx, expectedDispatchNumber, expectedQty) {
+function deleteDispatch(dispatchNumber, expectedItemCount, expectedTotalQty) {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(DISPATCH_LOCK_TIMEOUT_MS)) {
     return buildResponse(false, null, 'System is busy. Please try again.');
@@ -584,23 +704,33 @@ function deleteDispatch(rowIdx, expectedDispatchNumber, expectedQty) {
     const sheet = getSheet(APP_CONFIG.SHEETS.DISPATCH);
     if (!sheet) throw new Error('Dispatch sheet not found.');
 
-    const targetRow = parseInt(rowIdx, 10);
-    if (isNaN(targetRow) || targetRow < 2 || targetRow > sheet.getLastRow()) {
-      return buildResponse(false, null, 'Invalid dispatch record selected for deletion.');
-    }
+    const dispatchClean = sanitizeString(dispatchNumber, 'dispatchNumber');
 
-    const targetRowVals = sheet.getRange(targetRow, 1, 1, DISPATCH_COL.QTY).getValues()[0];
-    const dispatchNumber = String(targetRowVals[DISPATCH_COL.DISPATCH_NUMBER - 1]).trim();
-    const qty = Number(targetRowVals[DISPATCH_COL.QTY - 1]) || 0;
-
-    if (expectedDispatchNumber !== undefined && expectedQty !== undefined) {
-      if (dispatchNumber.toLowerCase() !== String(expectedDispatchNumber || '').trim().toLowerCase() ||
-          Math.abs(qty - Number(expectedQty)) > 0.0001) {
-        return buildResponse(false, null, 'Data mismatch: The record has been modified or shifted. Please refresh.');
+    // Optional guard (same intent as the old rowIdx-based mismatch check):
+    // skip the delete, rather than silently removing the wrong bill, if the
+    // bill's item count/total qty has changed since the client loaded it.
+    if (expectedItemCount !== undefined && expectedTotalQty !== undefined) {
+      const lastRow = sheet.getLastRow();
+      let itemCount = 0;
+      let totalQty = 0;
+      if (lastRow >= 2) {
+        const data = sheet.getRange(2, 1, lastRow - 1, DISPATCH_COL.QTY).getValues();
+        data.forEach(row => {
+          if (String(row[DISPATCH_COL.DISPATCH_NUMBER - 1] || '').trim().toLowerCase() === dispatchClean.toLowerCase()) {
+            itemCount++;
+            totalQty += Number(row[DISPATCH_COL.QTY - 1]) || 0;
+          }
+        });
+      }
+      if (itemCount !== Number(expectedItemCount) || Math.abs(totalQty - Number(expectedTotalQty)) > 0.0001) {
+        return buildResponse(false, null, 'Data mismatch: The bill has been modified since it was loaded. Please refresh.');
       }
     }
 
-    sheet.deleteRow(targetRow);
+    const rowsDeleted = deleteRowsById(dispatchClean, sheet, 2, DISPATCH_COL.DISPATCH_NUMBER);
+    if (rowsDeleted === 0) {
+      return buildResponse(false, null, `Dispatch "${dispatchClean}" not found.`);
+    }
 
     if (typeof recalculateWarehousePool === 'function') {
       recalculateWarehousePool();
@@ -608,13 +738,13 @@ function deleteDispatch(rowIdx, expectedDispatchNumber, expectedQty) {
 
     SpreadsheetApp.flush();
 
-    const msg = `Dispatch record "${dispatchNumber}" deleted (Qty was ${qty}).`;
-    logAction('DELETE', APP_CONFIG.SHEETS.DISPATCH, dispatchNumber, msg, 'SUCCESS');
+    const msg = `Dispatch "${dispatchClean}" deleted (${rowsDeleted} item(s) removed).`;
+    logAction('DELETE', APP_CONFIG.SHEETS.DISPATCH, dispatchClean, msg, 'SUCCESS');
 
-    return buildResponse(true, null, 'Dispatch record deleted successfully.');
+    return buildResponse(true, null, msg);
   } catch (error) {
     Log.error('[deleteDispatch] Error:', error.message);
-    logAction('ERROR', 'deleteDispatch', String(rowIdx), error.message, 'ERROR');
+    logAction('ERROR', 'deleteDispatch', String(dispatchNumber), error.message, 'ERROR');
     return buildResponse(false, null, 'Failed to delete dispatch: ' + error.message);
   } finally {
     lock.releaseLock();
@@ -622,14 +752,11 @@ function deleteDispatch(rowIdx, expectedDispatchNumber, expectedQty) {
 }
 
 /**
- * Deletes multiple dispatch log entries in a single batch.
- * @param {Array<number|string>} rowIdxs - 1-based sheet row indexes to delete
- * @param {Array<{rowIdx:number|string, expectedDispatchNumber:string, expectedQty:number}>} [expectedRows] -
- *   Optional per-row guard (same mismatch check as the single-row deleteDispatch)
- *   so a row that shifted/changed since the client loaded its list is skipped
- *   instead of silently deleting whatever now sits at that row number.
+ * Deletes multiple dispatch bills (every line item of each) in a single
+ * batch.
+ * @param {Array<string>} dispatchNumbers
  */
-function deleteDispatchBulk(rowIdxs, expectedRows) {
+function deleteDispatchBulk(dispatchNumbers) {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(DISPATCH_LOCK_TIMEOUT_MS)) {
     return buildResponse(false, null, 'System is busy. Please try again.');
@@ -639,47 +766,13 @@ function deleteDispatchBulk(rowIdxs, expectedRows) {
     const sheet = getSheet(APP_CONFIG.SHEETS.DISPATCH);
     if (!sheet) throw new Error('Dispatch sheet not found.');
 
-    const lastRow = sheet.getLastRow();
-    let targetRows = (rowIdxs || [])
-      .map(r => parseInt(r, 10))
-      .filter(r => !isNaN(r) && r >= 2 && r <= lastRow);
-
-    if (targetRows.length === 0) {
-      return buildResponse(true, null, 'No dispatch records selected.');
+    const requested = (dispatchNumbers || []).map(d => String(d || '').trim()).filter(Boolean);
+    if (requested.length === 0) {
+      return buildResponse(true, null, 'No dispatch bills selected.');
     }
 
-    const expectedByRow = {};
-    (expectedRows || []).forEach(e => {
-      if (e && e.rowIdx !== undefined) expectedByRow[String(e.rowIdx)] = e;
-    });
-
-    // Single batched read (Dispatch Number through Qty) covering every row
-    // in range, instead of one getRange().getValue() round-trip per row.
-    const idQtyRows = sheet.getRange(2, 1, lastRow - 1, DISPATCH_COL.QTY).getValues();
-
-    let skippedMismatch = 0;
-    targetRows = targetRows.filter(rowNum => {
-      const expected = expectedByRow[String(rowNum)];
-      if (!expected || expected.expectedDispatchNumber === undefined || expected.expectedQty === undefined) {
-        return true;
-      }
-      const rowVals = idQtyRows[rowNum - 2];
-      const dispatchNumber = String(rowVals[DISPATCH_COL.DISPATCH_NUMBER - 1]).trim();
-      const qty = Number(rowVals[DISPATCH_COL.QTY - 1]) || 0;
-      if (dispatchNumber.toLowerCase() !== String(expected.expectedDispatchNumber || '').trim().toLowerCase() ||
-          Math.abs(qty - Number(expected.expectedQty)) > 0.0001) {
-        skippedMismatch++;
-        return false;
-      }
-      return true;
-    });
-
-    if (targetRows.length === 0) {
-      return buildResponse(false, null, 'Data mismatch: the selected record(s) have been modified or shifted. Please refresh.');
-    }
-
-    const targetRowSet = new Set(targetRows);
-    const { rowsDeleted } = rewriteSheetExcludingRows(sheet, 2, (_row, rowNum) => targetRowSet.has(rowNum));
+    const targetSet = new Set(requested);
+    const { rowsDeleted } = _rewriteWithoutMatchingRowsBulk(sheet, 2, DISPATCH_COL.DISPATCH_NUMBER, targetSet);
 
     if (typeof recalculateWarehousePool === 'function') {
       recalculateWarehousePool();
@@ -687,9 +780,7 @@ function deleteDispatchBulk(rowIdxs, expectedRows) {
 
     SpreadsheetApp.flush();
 
-    const msg = skippedMismatch > 0
-      ? `Deleted ${rowsDeleted} dispatch record(s). Skipped ${skippedMismatch} that were modified or shifted — please refresh and retry those.`
-      : `Deleted ${rowsDeleted} dispatch record(s).`;
+    const msg = `Deleted ${requested.length} dispatch bill(s) (${rowsDeleted} item(s) removed).`;
     logAction('BULK_DELETE', APP_CONFIG.SHEETS.DISPATCH, 'multiple', msg, 'SUCCESS');
 
     return buildResponse(true, null, msg);

@@ -1545,7 +1545,7 @@
         if (groupSelect) groupSelect.value = '';
 
         const row = $$('#productionColorChecklist .production-color-row')
-          .find(r => r.dataset.group === groupKey && r.dataset.color === name);
+          .find(r => r.dataset.group === groupKey && App.Utils.sameColor(r.dataset.color, name));
         const checkbox = row?.querySelector('.production-color-check');
         if (checkbox) {
           checkbox.checked = true;
@@ -1754,7 +1754,7 @@
 
         checklistEl.innerHTML = '';
 
-        const multiColorItems = comps.filter(c => c.sourceType === 'POOL' && (!c.colorGroup || c.colorGroup === 'COMMON')
+        const multiColorItems = comps.filter(c => c.sourceType === 'POOL' && (!c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup))
           && (poolColorMap.get((c.itemName || '').trim().toLowerCase()) || []).length > 1);
 
         const groups = new Map();
@@ -2244,7 +2244,7 @@
 
           const commonPoolItems = new Set(
             comps
-              .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || c.colorGroup === 'COMMON'))
+              .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup)))
               .map(c => (c.itemName || '').trim().toLowerCase())
           );
 
@@ -2285,7 +2285,7 @@
           ]);
           if (seq !== undefined && seq !== this._compLoadSeq) return;
           const all = res.success ? (res.data || []) : [];
-          const commonComps = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON');
+          const commonComps = all.filter(c => !c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup));
           const totalQty = this._currentLotTotalQty();
 
           const poolColorsFor = c => poolColorMap.get((c.itemName || '').trim().toLowerCase()) || [];
@@ -2699,6 +2699,61 @@
         // an "Other" row currently riding along as a matched duplicate; on a
         // fully flat checklist (no grouping at all) it's just everything.
         this._applyQtyPerUnit('#productionComponentsBody tr', this._currentLotTotalQty());
+        this._updateColorCombinationPreview();
+      },
+
+      // Live preview of this lot's own combined output identity, mirroring
+      // EXACTLY the same unambiguous-pairing rule recalculateWarehousePool's
+      // Pass 1 (module_warehouse.js) uses server-side to decide the actual
+      // saved/credited Warehouse Pool bucket color — shown here so the
+      // operator sees "Blue-White / Black / BCP" while still filling in the
+      // form, not just after saving. A redundant axis (its checked value
+      // name-matches the primary, e.g. Mudguard "Red" against Frame
+      // "Red-White") is excluded from the combination the same way the
+      // backend excludes it. Any number of independent axes combine as
+      // long as each contributes exactly one checked color; if some axis
+      // has 2+ (no way to tell which pairs with which), this shows each
+      // axis's own colors instead of guessing at one combined string —
+      // exactly the cases the backend itself falls back on.
+      _updateColorCombinationPreview() {
+        const el = document.getElementById('productionColorCombinationPreview');
+        if (!el) return;
+
+        const checked = this.getCheckedColorQtys().filter(c => c.qty > 0 && c.color);
+        const primaryEntries = checked.filter(c => c.countsTowardTotal !== false);
+        const otherEntries = checked.filter(c => c.countsTowardTotal === false);
+
+        if (primaryEntries.length === 0) {
+          el.style.display = 'none';
+          el.innerText = '';
+          return;
+        }
+
+        const primaryColors = primaryEntries.map(e => e.color);
+        // Only the primary's OWN color (first segment) can make another axis
+        // redundant — segments after it were inherited from an upstream
+        // process, so a colliding name there is a different axis, not a
+        // mirror. Mirrors module_warehouse.js's Pass 1 exactly.
+        const primaryOwnColors = primaryColors.map(c => String(c || '').split(' / ')[0].trim());
+        const independent = otherEntries.filter(e => !primaryOwnColors.some(pc => this._colorNamesMatch(pc, e.color)));
+
+        const axisCounts = new Map();
+        independent.forEach(e => {
+          const key = String(e.axisKey || '').trim().toLowerCase() || '__no_axis_key__';
+          axisCounts.set(key, (axisCounts.get(key) || 0) + 1);
+        });
+        const ambiguous = Array.from(axisCounts.values()).some(c => c > 1);
+
+        el.style.display = '';
+        if (ambiguous) {
+          el.innerText = `Now producing: ${primaryColors.join(', ')} — plus ${independent.length} other color(s) tracked separately (can't combine unambiguously)`;
+        } else {
+          // One combined identity per primary color — the backend credits
+          // one pool bucket per line shown here.
+          const suffix = independent.map(e => e.color);
+          const combos = primaryColors.map(pc => [pc, ...suffix].join(' / '));
+          el.innerText = `Now producing: ${combos.join(', ')}`;
+        }
       },
 
       // Loads the process's component recipe — Common rows plus, if colorGroup
@@ -2713,7 +2768,7 @@
           const res = await this._fetchProcessComponents(processId);
           if (seq !== undefined && seq !== this._compLoadSeq) return;
           const all = res.success ? (res.data || []) : [];
-          const components = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON' || App.Utils.sameText(c.colorGroup, colorGroup));
+          const components = all.filter(c => !c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup) || App.Utils.sameText(c.colorGroup, colorGroup));
           const lotQty = toNumber(document.getElementById('productionQty')?.value) || 0;
           components.forEach(c => this.addComponentRow({
             itemName: c.itemName,
@@ -2926,7 +2981,7 @@
       getMatrixColumnIndex(color) {
         const headerRow = document.getElementById('productionColorMatrixHeaderRow');
         if (!headerRow) return -1;
-        return Array.from(headerRow.children).findIndex(th => th.dataset.color === color);
+        return Array.from(headerRow.children).findIndex(th => App.Utils.sameColor(th.dataset.color, color));
       },
 
       // The Per-Color matrix's column identity is color-string-only, shared
@@ -3262,7 +3317,7 @@
             // toggling/quantifying one axis's color could silently populate
             // recipe quantities from a DIFFERENT axis's coincidentally
             // same-named row instead.
-            const thisColorQty = (this._axisScopedCheckedColorQtys(axisKey).find(c => c.color === color) || {}).qty || 0;
+            const thisColorQty = (this._axisScopedCheckedColorQtys(axisKey).find(c => App.Utils.sameColor(c.color, color)) || {}).qty || 0;
 
             if (colIndex !== -1) {
               // Explicitly color-tagged recipe rows may be genuinely
@@ -3477,7 +3532,7 @@
           const colorGroup = c.colorGroup || 'COMMON';
           
           let derivedQtyPerUnit = 1;
-          if (colorGroup === 'COMMON') {
+          if (App.Utils.isCommonColorGroup(colorGroup)) {
             derivedQtyPerUnit = lotTotalQty > 0 ? (c.qty / lotTotalQty) : 0;
           } else {
             const b = breakdown.find(entry => entry.color.toLowerCase() === colorGroup.toLowerCase());
@@ -3514,7 +3569,7 @@
               entry.qtyPerUnit = derivedQtyPerUnit;
             }
 
-            if (colorGroup === 'COMMON') {
+            if (App.Utils.isCommonColorGroup(colorGroup)) {
               // Legacy shape: one combined qty — split evenly across colors
               // as a starting point for the operator to correct and re-save.
               upgradedAny = true;
@@ -3554,7 +3609,7 @@
             upgradedCommonOverride = true;
             const overriddenColors = new Set(
               (components || [])
-                .filter(o => o.colorGroup && o.colorGroup !== 'COMMON' &&
+                .filter(o => o.colorGroup && !App.Utils.isCommonColorGroup(o.colorGroup) &&
                   this._itemSlotKey(this._stripColorSubstring(o.itemName || '', o.colorGroup), o.size) === this._itemSlotKey(c.itemName, c.size))
                 .map(o => o.colorGroup)
             );
@@ -3571,12 +3626,12 @@
             return;
           }
 
-          if (colorGroup === 'COMMON' || !colors.includes(colorGroup)) {
+          if (App.Utils.isCommonColorGroup(colorGroup) || !colors.some(c => App.Utils.sameColor(c, colorGroup))) {
             // A saved row whose colorGroup is a real single pool color (not
             // 'COMMON', and not one of this lot's own output colors) is the
             // single-pool-color case — re-lock it the same way addComponentRow
             // does for a freshly populated recipe row.
-            const isLockedPoolColor = c.sourceType === 'POOL' && colorGroup !== 'COMMON';
+            const isLockedPoolColor = c.sourceType === 'POOL' && !App.Utils.isCommonColorGroup(colorGroup);
             this.addComponentRow({
               itemName: c.itemName,
               size: c.size,
@@ -3616,7 +3671,7 @@
           const recipeRes = await this._fetchProcessComponents(processId);
           const recipeComps = recipeRes.success ? (recipeRes.data || []) : [];
           recipeComps
-            .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || c.colorGroup === 'COMMON'))
+            .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup)))
             .forEach(c => {
               const itemColors = poolColorMap.get((c.itemName || '').trim().toLowerCase()) || [];
               if (itemColors.length <= 1) return;
@@ -4142,6 +4197,8 @@
         if (colorWrapper) colorWrapper.style.display = 'none';
         const revertColorsBtn = document.getElementById('productionRevertColorsBtn');
         if (revertColorsBtn) revertColorsBtn.style.display = 'none';
+        const comboPreview = document.getElementById('productionColorCombinationPreview');
+        if (comboPreview) { comboPreview.style.display = 'none'; comboPreview.innerText = ''; }
 
         const form = document.getElementById('productionForm');
         if (form) form.reset();
@@ -4376,8 +4433,8 @@
           const claimedRows = new Set();
           const findChecklistRow = (color, axisKey) => {
             const rows = $$('#productionColorChecklist .production-color-row').filter(r => !claimedRows.has(r));
-            let row = axisKey ? rows.find(r => r.dataset.group === axisKey && r.dataset.color === color) : null;
-            if (!row) row = rows.find(r => r.dataset.color === color);
+            let row = axisKey ? rows.find(r => r.dataset.group === axisKey && App.Utils.sameColor(r.dataset.color, color)) : null;
+            if (!row) row = rows.find(r => App.Utils.sameColor(r.dataset.color, color));
             return row || null;
           };
 
@@ -4413,7 +4470,7 @@
                 const isPrimaryFlag = entry.countsTowardTotal !== false;
                 checklistEl.insertAdjacentHTML('beforeend', this._colorRowHtml(color, 'custom', true, isPrimaryFlag));
                 colorRow = $$('#productionColorChecklist .production-color-row')
-                  .find(r => r.dataset.group === 'custom' && r.dataset.color === color && !claimedRows.has(r));
+                  .find(r => r.dataset.group === 'custom' && App.Utils.sameColor(r.dataset.color, color) && !claimedRows.has(r));
               }
             }
 
@@ -4424,6 +4481,13 @@
             if (qtyInput) { qtyInput.disabled = false; qtyInput.value = qty; }
           });
           this._syncColorGroupMasterCheckbox('custom');
+          // The rows above were checked/quantified by setting checkbox.checked
+          // and qtyInput.value directly (not via handleColorCheckToggle/
+          // onColorQtyChanged), so refreshCommonSuggestedQty's own preview
+          // update never fires on this initial load path — call it directly
+          // so a reopened multi-axis lot shows its combination immediately
+          // instead of only after the operator's first checklist edit.
+          this._updateColorCombinationPreview();
 
           if (p.componentsConsumed && p.componentsConsumed.length > 0) {
             await this.populateComponentsConsumedDirect(p.componentsConsumed, breakdown);
@@ -4564,7 +4628,7 @@
       // predating colorGroup). '' means Common.
       _resolveSheetColorKey(comp) {
         const colorGroup = String(comp.colorGroup || '').trim();
-        if (colorGroup && colorGroup.toUpperCase() !== 'COMMON') return colorGroup;
+        if (colorGroup && !App.Utils.isCommonColorGroup(colorGroup)) return colorGroup;
         return String(comp.color || '').trim();
       },
 
@@ -4636,11 +4700,11 @@
       // (see getPoolColorAwareItemNames/renderPoolColorSplitGroups).
       _getCommonItemsWithColorOverride(components) {
         const overrideKeys = new Set((components || [])
-          .filter(c => c.colorGroup && c.colorGroup !== 'COMMON' && c.sourceType !== 'POOL')
+          .filter(c => c.colorGroup && !App.Utils.isCommonColorGroup(c.colorGroup) && c.sourceType !== 'POOL')
           .map(c => this._itemSlotKey(this._stripColorSubstring(c.itemName || '', c.colorGroup), c.size))
         );
         return (components || []).filter(c =>
-          (!c.colorGroup || c.colorGroup === 'COMMON') &&
+          (!c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup)) &&
           c.sourceType !== 'POOL' &&
           overrideKeys.has(this._itemSlotKey(c.itemName, c.size))
         );
@@ -4980,6 +5044,25 @@
         }
       },
 
+      // The physical unit to print alongside a component's Qty (e.g. "Pcs",
+      // "Kg", "Dozen") — looked up fresh from Items Master by name+size at
+      // export time rather than carried through from componentsConsumed/
+      // customComponents, since a customized-and-resaved sheet's own
+      // serializeProductionSheet schema (itemName/size/narration/colorGroup/
+      // requiredQty) never retained sourceType or the recipe's own Unit
+      // field in the first place — resolving here instead means a manually
+      // typed row (or one whose item name was edited) still gets a correct
+      // label without extra plumbing. 'Pcs' is the fallback for a Warehouse
+      // Pool WIP item (no Items Master entry of its own) or any name Items
+      // Master doesn't recognize.
+      _resolveDisplayUnit(itemName, size) {
+        const name = String(itemName || '').trim();
+        if (!name) return '';
+        const match = (App.State.globalItems || []).find(i =>
+          App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size || ''));
+        return (match && match.baseUnit) || 'Pcs';
+      },
+
       // Populates #print-production-sheet-container from the currently-open
       // Production Sheet dialog. Shared by printProductionSheet (feeds
       // window.print()) and downloadProductionSheetPDF (feeds html2pdf) so
@@ -5023,7 +5106,8 @@
           name: get(row, '.prod-sheet-item-name'),
           size: get(row, '.prod-sheet-size'),
           narration: get(row, '.prod-sheet-narration'),
-          qty: row.querySelector('.prod-sheet-qty')?.value || ''
+          qty: row.querySelector('.prod-sheet-qty')?.value || '',
+          unit: this._resolveDisplayUnit(getRaw(row, '.prod-sheet-item-name'), getRaw(row, '.prod-sheet-size'))
         }));
 
         // One row per item, one column per lot color — replaces the old
@@ -5034,8 +5118,9 @@
           name: get(row, '.prod-sheet-item-name'),
           size: get(row, '.prod-sheet-size'),
           narration: get(row, '.prod-sheet-narration'),
+          unit: this._resolveDisplayUnit(getRaw(row, '.prod-sheet-item-name'), getRaw(row, '.prod-sheet-size')),
           colorQty: colors.map(c => {
-            const input = $$('.prod-sheet-color-qty', row).find(el => el.dataset.color === c);
+            const input = $$('.prod-sheet-color-qty', row).find(el => App.Utils.sameColor(el.dataset.color, c));
             return input?.value || '';
           })
         }));
@@ -5055,10 +5140,16 @@
         ];
         const HEAD_BG = '#d4edda', HEAD_INK = '#0b5132', ZEBRA = '#f6f8f6', RULE = '#999';
 
+        // Headers are stepped one size ABOVE the body's own tier.font
+        // (previously a size BELOW it, e.g. 11px header over 12px body) —
+        // a column header being smaller than the data it labels reads
+        // backwards, especially on the color-matrix table where getting
+        // the wrong header/column pairing means misreading which color a
+        // number belongs to. Floor raised to 10 (from 9) to match.
         const headCell = (label, tier, opts = {}) => {
           const width = opts.width ? `width:${opts.width};` : '';
           return `<th style="padding:${tier.pad};border:1px solid ${RULE};background:${HEAD_BG};color:${HEAD_INK};
-                    font-weight:700;text-align:${opts.align || 'center'};font-size:${Math.max(tier.font - 1, 9)}px;${width}
+                    font-weight:700;text-align:${opts.align || 'center'};font-size:${Math.max(tier.font + 1, 10)}px;${width}
                     -webkit-print-color-adjust:exact;print-color-adjust:exact;">${label}</th>`;
         };
         const bodyCell = (content, tier, opts = {}) => {
@@ -5081,7 +5172,8 @@
             let row = bodyCell(r.name, tier, { zebra, bold: true, emphasis: true });
             if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra });
             row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
-            row += bodyCell(r.qty ? escapeHtml(this.formatQty(r.qty)) : '&#8211;', tier, { align: 'right', bold: !!r.qty, zebra, emphasis: true });
+            const qtyText = r.qty ? `${escapeHtml(this.formatQty(r.qty))}${r.unit ? ' ' + escapeHtml(r.unit) : ''}` : '&#8211;';
+            row += bodyCell(qtyText, tier, { align: 'right', bold: !!r.qty, zebra, emphasis: true });
             return `<tr>${row}</tr>`;
           }).join('');
 
@@ -5102,7 +5194,8 @@
             if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra });
             row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
             r.colorQty.forEach(val => {
-              row += bodyCell(val ? escapeHtml(this.formatQty(val)) : '&#8211;', tier, { align: 'right', bold: !!val, zebra, emphasis: true });
+              const cellText = val ? `${escapeHtml(this.formatQty(val))}${r.unit ? ' ' + escapeHtml(r.unit) : ''}` : '&#8211;';
+              row += bodyCell(cellText, tier, { align: 'right', bold: !!val, zebra, emphasis: true });
             });
             return `<tr>${row}</tr>`;
           }).join('');

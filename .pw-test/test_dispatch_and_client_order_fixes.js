@@ -164,17 +164,22 @@ console.log('\n=== Fix #5: Dispatch qty is validated against the specific PI lin
   // own POST-write recalc would otherwise build it for the first time.
   recalculateWarehousePool();
 
-  const res1 = saveDispatch({ productId: 'PRD-1', productName: 'Test Bike', qty: 6, orderNumber: 'ORD-1' });
+  // saveDispatch now takes a bill's item lines as a JSON array (see
+  // feature_dispatch_record_new_bill_multiitem in project memory) instead
+  // of a single top-level productId/qty — each call below is a one-item bill.
+  const oneLine = (productId, qty) => JSON.stringify([{ productId, productName: 'Test Bike', qty }]);
+
+  const res1 = saveDispatch({ lines: oneLine('PRD-1', 6), orderNumber: 'ORD-1' });
   assert(res1.success, 'first dispatch of 6 against ORD-1 (10 ordered) succeeds: ' + res1.message);
 
-  const res2 = saveDispatch({ productId: 'PRD-1', productName: 'Test Bike', qty: 6, orderNumber: 'ORD-1' });
+  const res2 = saveDispatch({ lines: oneLine('PRD-1', 6), orderNumber: 'ORD-1' });
   assert(res2.success === false, `a second dispatch of 6 (12 total > 10 ordered on ORD-1) is rejected even though 20 units of aggregate stock remain: ${res2.message}`);
   assert(/only 4/i.test(res2.message || ''), `message reports exactly 4 remaining on the order (10 - 6) (got "${res2.message}")`);
 
-  const res3 = saveDispatch({ productId: 'PRD-1', productName: 'Test Bike', qty: 6, orderNumber: '' });
+  const res3 = saveDispatch({ lines: oneLine('PRD-1', 6), orderNumber: '' });
   assert(res3.success, `a Direct dispatch (no order reference) for the same product is unaffected by ORD-1's own limit: ${res3.message}`);
 
-  const res4 = saveDispatch({ productId: 'PRD-1', productName: 'Test Bike', qty: 4, orderNumber: 'ORD-1' });
+  const res4 = saveDispatch({ lines: oneLine('PRD-1', 4), orderNumber: 'ORD-1' });
   assert(res4.success, `dispatching exactly the remaining 4 against ORD-1 succeeds: ${res4.message}`);
 }
 

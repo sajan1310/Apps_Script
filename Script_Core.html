@@ -1558,9 +1558,31 @@
         // it happens to already lowercase both sides. Use this instead of
         // === any time two user-typed/stored strings are compared for
         // "is this the same real-world thing", as opposed to programmatic
-        // IDs/enums (status, sourceType, colorGroup) which stay as-typed.
+        // IDs/enums (status, sourceType) which stay as-typed. Color
+        // Sub-Group is NOT such an enum outside its one COMMON sentinel —
+        // it holds a real color name, so compare it with sameColor and test
+        // the sentinel with isCommonColorGroup.
         sameText(a, b) {
           return String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
+        },
+
+        // Same real color, ignoring case/whitespace. A color name reaches
+        // the browser from several independent places at once — Color
+        // Master, a recipe's Color Sub-Group, a Warehouse Pool bucket an
+        // upstream process credited, a saved lot's Color Breakdown — and
+        // "Blue"/"BLUE"/"blue" are one color in every one of them. Mirrors
+        // sameColor() in utils.js; keep the two in step. For the segment
+        // heuristic that decides whether "Blue" describes the same batch as
+        // "Blue-White", see App.Production._colorNamesMatch instead.
+        sameColor(a, b) {
+          return this.sameText(a, b);
+        },
+
+        // True when a component row's Color Sub-Group is the COMMON
+        // sentinel rather than a real color. Mirrors isCommonColorGroup()
+        // in utils.js — see there for why case must not matter.
+        isCommonColorGroup(colorGroup) {
+          return String(colorGroup == null ? '' : colorGroup).trim().toUpperCase() === 'COMMON';
         },
 
         // Keyword search: splits the search term on whitespace and checks that every
@@ -1902,8 +1924,8 @@
             tab: 'dispatchTab',
             async goto(value) {
               await App.Dispatch.enterTab();
-              const idx = App.State.globalDispatch.findIndex(d => String(d.rowIdx) === String(value));
-              if (idx > -1) App.Dispatch.openEditDispatchModal(idx);
+              App.Dispatch.switchSubTab('dispatchedGoodsSubTab');
+              App.Dispatch.openEditDispatchModal(String(value));
             }
           },
           client: {

@@ -626,25 +626,44 @@ function recalculateWarehousePool() {
         // bucket(s). A color-agnostic lot credits the single blank-color
         // bucket. A multi-color lot's Color Breakdown entries (one per
         // checked color across every axis — see getCheckedColorQtys,
-        // Script_Production.html) are combined into ONE bucket whenever the
-        // pairing is unambiguous: exactly one entry counts toward the lot's
-        // total (countsTowardTotal !== false — the primary axis, or the
-        // only entry on a single-axis/legacy lot) AND at most one OTHER
-        // entry is a genuinely independent axis, i.e. its color doesn't
-        // _colorNamesMatch the primary's (e.g. a Rim Color sharing no name
-        // segment with any Frame color — see module_process.js). A
-        // redundant axis (e.g. Mudguard Color, whose checked value DOES
-        // name-match the primary — the same batch described a second way,
-        // per the exact heuristic the Production checklist itself uses to
-        // auto-sync such rows) is folded into that one combined bucket
-        // instead of getting a separate credit of its own — this is what
-        // turns two independent credits (10 under "Red-White", 10 under
-        // "Black") into one real "Red-White / Black" bucket. Anything less
-        // clean-cut (no single counted entry, or 2+ independent-axis
-        // entries with no stored cross-axis pairing to tell which goes with
-        // which) falls back to crediting every entry under its own single
-        // color, exactly as before this combining logic existed — never
-        // guessing at a quantity attribution.
+        // Script_Production.html) are combined into composite buckets
+        // whenever the pairing is unambiguous: every OTHER
+        // genuinely-independent axis (its color doesn't _colorNamesMatch
+        // any primary color — e.g. a Rim Color sharing no name segment with
+        // any Frame color, see module_process.js) contributes at most ONE
+        // checked entry of its own. Any number of independent axes can
+        // combine this way — not just a single extra one — as long as each
+        // DISTINCT axis (its own axisKey) is only represented once; two
+        // axes each contributing exactly one color (e.g. Frame=Blue-White,
+        // Rim=BCP, Mudguard=Black) is just as unambiguous as one, and
+        // combines into one 3-way "Blue-White / BCP / Black" bucket the
+        // same way two would combine into "Blue-White / BCP". A redundant
+        // axis (e.g. Mudguard Color, whose checked value DOES name-match
+        // a primary — the same batch described a second way, per the
+        // exact heuristic the Production checklist itself uses to
+        // auto-sync such rows) is excluded from this combination entirely
+        // — this is what turns two independent credits (10 under
+        // "Red-White", 10 under "Black") into one real "Red-White / Black"
+        // bucket.
+        //
+        // The PRIMARY axis (countsTowardTotal !== false) may hold any
+        // number of checked colors — one composite bucket is emitted per
+        // primary color, carrying that color's own qty, so a lot producing
+        // 10 each of Blue/Pink/Purple/Red-White frames on Black rims yields
+        // four "<frame> / Black" buckets totalling the lot's 40 units.
+        // Until 2026-07-29 combining required EXACTLY ONE primary entry, so
+        // any real multi-color lot fell back to per-entry crediting and
+        // fragmented into loose half-colors (Blue-White AND Blue AND Black
+        // as if each were a complete producible output), inflating the
+        // credited total by one full lot per redundant axis and leaving the
+        // downstream process's checklist unable to see the composite it was
+        // actually meant to consume.
+        //
+        // Anything less clean-cut (no counted entry at all, or any one
+        // axis contributing 2+ entries with no stored cross-axis pairing to
+        // tell which goes with which) falls back to crediting every entry
+        // under its own single color, exactly as before this combining
+        // logic existed — never guessing at a quantity attribution.
         data.forEach(row => {
           const status = String(row[PRODUCTION_COL.STATUS - 1] || '').trim().toLowerCase();
           if (status !== 'completed') return;
@@ -678,13 +697,65 @@ function recalculateWarehousePool() {
             const otherEntries = colorBreakdown.filter(e => e && e.countsTowardTotal === false && String(e.color || '').trim());
 
             let combined = false;
-            if (primaryEntries.length === 1) {
-              const primaryColor = String(primaryEntries[0].color).trim();
-              const independent = otherEntries.filter(e => !_colorNamesMatch(primaryColor, e.color));
-              if (independent.length <= 1) {
-                const parts = [primaryColor];
-                if (independent.length === 1) parts.push(String(independent[0].color).trim());
-                creditColor(parts.join(COLOR_COMBO_DELIMITER), primaryEntries[0].qty);
+            if (primaryEntries.length >= 1) {
+              // Redundancy is judged against the primary axis's OWN color
+              // only — the FIRST segment of its (possibly composite) value.
+              // Segments after the first were inherited from an upstream
+              // process's independent axes (see the parts.join below: a
+              // credited bucket is always "<own color> / <inherited...>"),
+              // so a downstream axis can never be a mirror of one. Matching
+              // the whole composite instead silently swallowed a genuine
+              // axis whose color happened to equal an inherited segment —
+              // e.g. a Seat Color axis of "Black" fitted onto a frame
+              // credited "Blue-White / Black" was dropped as redundant, and
+              // black-seat and brown-seat output merged into one bucket.
+              // The deeper the process chain, the more inherited segments
+              // accumulate and the likelier that collision becomes.
+              const primaryOwnColors = primaryEntries.map(
+                e => String(e.color || '').split(COLOR_COMBO_DELIMITER)[0].trim()
+              );
+              // Redundant against ANY of the primary colors, not just a
+              // single one — a mirror axis (e.g. Mudguard) checked across a
+              // multi-color lot contributes one entry per primary color
+              // (Blue against Blue-White, Red against Red-White, ...), and
+              // every one of them is the same batch described a second way.
+              const independent = otherEntries.filter(e => !primaryOwnColors.some(pc => _colorNamesMatch(pc, e.color)));
+
+              // Each distinct axis among the independent entries must
+              // contribute exactly one. Entries that DO carry a real
+              // axisKey are grouped by it, so two DIFFERENT axes (e.g.
+              // Mudguard + Rim) each contributing one entry combine safely
+              // no matter how many total independent entries that adds up
+              // to. An entry with NO axisKey at all (legacy data, or a
+              // custom/free-form color with no real axis structure) has no
+              // grouping info to disambiguate by at all — unlike a missing
+              // axisKey meaning "this entry's own unique axis" (which would
+              // wrongly treat 2 independent unstructured entries as always
+              // safe to combine), every blank-axisKey entry shares ONE
+              // pooled key, so a SINGLE such entry still combines (matches
+              // the original 1-independent-entry case) but 2+ of them
+              // collide and correctly fall back to the old per-entry
+              // crediting — the exact "no stored cross-axis pairing to
+              // tell which goes with which" case this whole function's
+              // opening comment describes.
+              const axisCounts = new Map();
+              independent.forEach(e => {
+                const key = String(e.axisKey || '').trim().toLowerCase() || '__no_axis_key__';
+                axisCounts.set(key, (axisCounts.get(key) || 0) + 1);
+              });
+              const ambiguous = Array.from(axisCounts.values()).some(c => c > 1);
+
+              if (!ambiguous) {
+                // One composite bucket PER primary color, each carrying its
+                // own primary qty. An independent axis holding a single
+                // color for the whole lot (e.g. Rim = Black on all 40 units)
+                // pairs with every primary color — which color goes with
+                // which is not in question when that axis only has one.
+                const suffix = independent.map(e => String(e.color).trim());
+                primaryEntries.forEach(pe => {
+                  const parts = [String(pe.color).trim(), ...suffix];
+                  creditColor(parts.join(COLOR_COMBO_DELIMITER), pe.qty);
+                });
                 combined = true;
               }
             }
@@ -756,7 +827,7 @@ function recalculateWarehousePool() {
             }
 
             const colorGroup = String(comp.colorGroup || '').trim();
-            let color = colorGroup && colorGroup.toUpperCase() !== COMPONENT_COLOR_GROUP_COMMON ? colorGroup : '';
+            let color = colorGroup && !isCommonColorGroup(colorGroup) ? colorGroup : '';
 
             // See _resolveCompositeColorToken — a manually-configured single
             // -token Color Sub-Group can legitimately refer to one part of a

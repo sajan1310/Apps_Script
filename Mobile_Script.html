@@ -1833,9 +1833,11 @@
       const formData = {
         dispatchDate: document.getElementById('dispatch-date')?.value || MApp.Util.todayInputValue(),
         clientName: this.selection.clientName || '',
-        productId: this.selection.productId,
-        productName: this.selection.productName,
-        qty: qty,
+        // Backend now takes a bill's item lines as one JSON array (a bill
+        // can carry several products at once from the desktop "Record New
+        // Bill" flow) — mobile only ever records one item per dispatch, so
+        // it just sends a single-line array.
+        lines: JSON.stringify([{ productId: this.selection.productId, productName: this.selection.productName, qty: qty, rate: 0 }]),
         transport: (document.getElementById('dispatch-transport')?.value || '').trim(),
         logisticsContractor: this.selection.logisticsContractor || '',
         orderNumber: (document.getElementById('dispatch-order-number')?.value || '').trim(),

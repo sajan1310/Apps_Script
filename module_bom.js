@@ -666,7 +666,7 @@ function getBomProcessComponentsDrift() {
         const map = {};
         comps.forEach(c => {
           if (c.sourceType !== COMPONENT_SOURCE_TYPES.ITEM) return;
-          if (c.colorGroup !== COMPONENT_COLOR_GROUP_COMMON) return;
+          if (!isCommonColorGroup(c.colorGroup)) return;
           map[c.itemName.toLowerCase() + '|' + (c.size || '').toLowerCase()] = c.qtyPerUnit;
         });
         recipeCache[key] = map;

@@ -521,7 +521,7 @@
 
         let rowsHtml = '';
         (p.components || []).forEach(c => {
-          const colorGroup = c.colorGroup && c.colorGroup !== 'COMMON' ? c.colorGroup : 'Common';
+          const colorGroup = c.colorGroup && !App.Utils.isCommonColorGroup(c.colorGroup) ? c.colorGroup : 'Common';
           rowsHtml += `<tr>
           <td style="padding:6px;border:1px solid #e5e5e5;font-weight:600;">${escapeHtml(c.itemName)}</td>
           <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(c.size || '-')}</td>
@@ -1773,12 +1773,12 @@
         this.clearColorGroups();
 
         const all = components || [];
-        const common = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON');
+        const common = all.filter(c => !c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup));
         common.forEach(comp => this.addComponentRow(comp, null));
 
         const byColor = {};
         all.forEach(c => {
-          if (c.colorGroup && c.colorGroup !== 'COMMON') {
+          if (c.colorGroup && !App.Utils.isCommonColorGroup(c.colorGroup)) {
             (byColor[c.colorGroup] = byColor[c.colorGroup] || []).push(c);
           }
         });
@@ -2166,7 +2166,7 @@
           const components = App.Process.serializeComponents();
           const dupComponent = App.Process.findDuplicateComponent(components);
           if (dupComponent) {
-            const groupLabel = dupComponent.colorGroup === 'COMMON' ? 'Common Components' : `the "${dupComponent.colorGroup}" color sub-group`;
+            const groupLabel = App.Utils.isCommonColorGroup(dupComponent.colorGroup) ? 'Common Components' : `the "${dupComponent.colorGroup}" color sub-group`;
             App.Utils.showToast(`Duplicate component: "${dupComponent.itemName}"${dupComponent.size ? ' (' + dupComponent.size + ')' : ''} already exists in ${groupLabel}. Each item+size may only appear once per group — adjust its Qty / Unit instead of adding it twice.`, true);
             return;
           }

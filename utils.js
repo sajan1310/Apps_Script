@@ -203,6 +203,41 @@ function buildErrorResponse(errorCode, details = '') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// COLOR NAME COMPARISON
+// ─────────────────────────────────────────────────────────────────────────
+// Color names are user-typed and reach the app from many independent places
+// — Color Master, a Process Component's Color Sub-Group, a Warehouse Pool
+// bucket credited by an upstream process, a saved lot's Color Breakdown, a
+// hand-edited sheet cell. "Blue", "BLUE" and "blue" are one real color
+// everywhere, so every comparison that asks "is this the same color" must
+// go through sameColor()/isCommonColorGroup() rather than ===. Client-side
+// equivalents live in Script_Core.html (App.Utils.sameColor /
+// App.Utils.isCommonColorGroup) — the two runtimes can't share code, so
+// keep them in step.
+
+/**
+ * True when two color names refer to the same real color, ignoring case and
+ * surrounding whitespace. Exact-name comparison only — for the segment
+ * heuristic that decides whether "Blue" describes the same batch as
+ * "Blue-White", see _colorNamesMatch in module_process.js.
+ */
+function sameColor(a, b) {
+  return String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
+}
+
+/**
+ * True when a Process Component row's Color Sub-Group is the COMMON
+ * sentinel ("applies to every color") rather than a real color name.
+ * COMMON is written by the app itself, but the column is a plain sheet cell
+ * a user can retype — "Common"/"common" must not be mistaken for a color
+ * sub-group literally named "Common", which would invent a phantom color
+ * axis and pull that row out of every lot's Common Components table.
+ */
+function isCommonColorGroup(colorGroup) {
+  return String(colorGroup == null ? '' : colorGroup).trim().toUpperCase() === COMPONENT_COLOR_GROUP_COMMON;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // ID GENERATION & MANAGEMENT
 // ─────────────────────────────────────────────────────────────────────────
 // FILE OPERATIONS & CACHING

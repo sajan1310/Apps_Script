@@ -891,8 +891,8 @@ function saveBill(formData) {
     SpreadsheetApp.flush();
 
     let msg = isEdit
-      ? `Bill #${billNumber} updated successfully.`
-      : `Bill #${billNumber} recorded successfully.`;
+      ? `Bill #${billNumber} (${vendor}) updated successfully.`
+      : `Bill #${billNumber} (${vendor}) recorded successfully.`;
 
     const overageWarnings = _computeBillOverageWarnings(items);
     if (overageWarnings.length > 0) {

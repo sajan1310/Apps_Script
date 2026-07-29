@@ -278,7 +278,7 @@ function getProcessWipData(processId) {
       .map(c => {
         const entry = poolQtyMap[String(c.itemName || '').trim().toLowerCase()];
         const colorGroup = String(c.colorGroup || '').trim();
-        const isColorScoped = colorGroup && colorGroup.toUpperCase() !== COMPONENT_COLOR_GROUP_COMMON;
+        const isColorScoped = colorGroup && !isCommonColorGroup(colorGroup);
         const availableQty = !entry ? 0 : (isColorScoped ? (entry.byColor[colorGroup.toLowerCase()] || 0) : entry.total);
         return {
           outputItemName: c.itemName,
@@ -454,7 +454,7 @@ function getProductionData() {
  * so both validate pool availability the same way.
  */
 function _poolNeedKey(itemNameLower, colorGroup) {
-  const isColorScoped = colorGroup && colorGroup.toUpperCase() !== COMPONENT_COLOR_GROUP_COMMON;
+  const isColorScoped = colorGroup && !isCommonColorGroup(colorGroup);
   return itemNameLower + '||' + (isColorScoped ? colorGroup.toLowerCase() : '');
 }
 
@@ -481,7 +481,7 @@ function _buildPoolNeededMap(components) {
     if (!itemName) return;
     const colorGroup = String(c.colorGroup || '').trim();
     const itemNameLower = itemName.toLowerCase();
-    const isColorScoped = colorGroup && colorGroup.toUpperCase() !== COMPONENT_COLOR_GROUP_COMMON;
+    const isColorScoped = colorGroup && !isCommonColorGroup(colorGroup);
     const key = _poolNeedKey(itemNameLower, colorGroup);
     if (!poolNeeded[key]) poolNeeded[key] = { itemName, colorGroup: isColorScoped ? colorGroup : '', isColorScoped, qty: 0 };
 
@@ -840,7 +840,7 @@ function saveProduction(formData) {
         c.color.split(COLOR_COMBO_DELIMITER).forEach(token => breakdownColorsLower.add(token.trim().toLowerCase()));
       });
       cleanComponents = cleanComponents.filter(c =>
-        c.colorGroup === COMPONENT_COLOR_GROUP_COMMON || breakdownColorsLower.has(c.colorGroup.toLowerCase())
+        isCommonColorGroup(c.colorGroup) || breakdownColorsLower.has(c.colorGroup.toLowerCase())
       );
     }
 

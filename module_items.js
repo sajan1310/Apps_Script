@@ -959,7 +959,8 @@ function saveItem(formData) {
       syncStockForItem('ensure', { name: newName, size: newSize, initialStock });
     }
 
-    const msg = isEdit ? 'Item updated successfully.' : 'Item added successfully.';
+    const itemLabel = `"${newName}"${newSize ? ` (${newSize})` : ''}`;
+    const msg = isEdit ? `Item ${itemLabel} updated successfully.` : `Item ${itemLabel} added successfully.`;
     logAction(
       isEdit ? 'UPDATE' : 'CREATE',
       APP_CONFIG.SHEETS.ITEMS,

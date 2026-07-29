@@ -1140,7 +1140,9 @@ const DISPATCH_COL = Object.freeze({
   GR_NUMBER:       12,     // Optional GR (Goods Receipt) number
   LOGISTICS_CONTRACTOR: 13, // Optional logistics contractor name (Select2 tag, same pattern as Production Assigned To)
   LOGISTICS_RATE:  14,     // Rate/unit snapshot from Contractor Rates (Dispatch / Logistics category) at save time
-  LOGISTICS_COST:  15      // = QTY x LOGISTICS_RATE, snapshot at save time
+  LOGISTICS_COST:  15,     // = QTY x LOGISTICS_RATE, snapshot at save time
+  RATE:            16,     // Optional per-unit billing/sale rate for this line item (record-keeping only)
+  AMOUNT:          17      // = QTY x RATE, 0 when RATE is blank
 });
 
 const DISPATCH_COL_NAMES = Object.freeze({
@@ -1158,7 +1160,9 @@ const DISPATCH_COL_NAMES = Object.freeze({
   'grNumber': DISPATCH_COL.GR_NUMBER,
   'logisticsContractor': DISPATCH_COL.LOGISTICS_CONTRACTOR,
   'logisticsRate': DISPATCH_COL.LOGISTICS_RATE,
-  'logisticsCost': DISPATCH_COL.LOGISTICS_COST
+  'logisticsCost': DISPATCH_COL.LOGISTICS_COST,
+  'rate': DISPATCH_COL.RATE,
+  'amount': DISPATCH_COL.AMOUNT
 });
 
 // ─────────────────────────────────────────────────────────────────────────

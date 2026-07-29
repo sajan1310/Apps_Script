@@ -1444,8 +1444,8 @@ function savePO(formData) {
     SpreadsheetApp.flush();
 
     const msg = isEdit
-      ? `PO updated successfully to #${poNumToSave}.`
-      : `PO #${poNumToSave} created successfully.`;
+      ? `PO #${poNumToSave} (${header.vendor}) updated successfully.`
+      : `PO #${poNumToSave} (${header.vendor}) created successfully.`;
 
     logAction('CREATE', APP_CONFIG.SHEETS.PO, poNumToSave, `Items: ${items.length}`, 'SUCCESS');
 

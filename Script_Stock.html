@@ -1689,7 +1689,7 @@
               if (String(comp.sourceType || '').trim().toUpperCase() !== 'POOL') return;
               if ((comp.itemName || '').toLowerCase() !== nameLower) return;
               const colorGroup = String(comp.colorGroup || '').trim();
-              const compColor = colorGroup && colorGroup.toUpperCase() !== 'COMMON' ? colorGroup.toLowerCase() : '';
+              const compColor = colorGroup && !App.Utils.isCommonColorGroup(colorGroup) ? colorGroup.toLowerCase() : '';
               if (compColor !== colorLower) return;
               const qty = Number(comp.qty) || 0;
               // A negative consumption qty is a correction that credits the

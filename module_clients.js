@@ -823,7 +823,7 @@ function _pushOrderLinesToProduction(orderNumber, clientName, lines) {
     const componentsResp = getProcessComponentsData(process.processId);
     const recipeComponents = (componentsResp && componentsResp.data) || [];
     const componentsConsumed = recipeComponents
-      .filter(c => c.colorGroup === COMPONENT_COLOR_GROUP_COMMON)
+      .filter(c => isCommonColorGroup(c.colorGroup))
       .map(c => ({
         itemName: c.itemName,
         size: c.size || '',
