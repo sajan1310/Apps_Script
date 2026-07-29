@@ -6119,7 +6119,7 @@
             </div>
             <div class="col-md-6">
               <div class="form-check form-switch mt-1">
-                <input class="form-check-input" type="checkbox" name="isFinalStage" id="processFormIsFinalStage" value="true">
+                <input class="form-check-input" type="checkbox" name="isFinalStage" id="processFormIsFinalStage" value="true" onchange="App.Process.refreshDispatchDifferentiatorOptions()">
                 <label class="form-check-label fw-bold" for="processFormIsFinalStage">Final Stage (feeds Dispatch)</label>
               </div>
             </div>
@@ -6171,6 +6171,14 @@
               <option value="">— None (legacy: sum every checked color) —</option>
             </select>
             <div class="form-text">This process has more than one independent color choice (e.g. a Base plus a separate Mudguard Color). Pick which one's checked quantities on the Production Lot form should count as the lot's total output — the others are recorded per-color but won't add to the total.</div>
+          </div>
+
+          <div id="processDispatchDifferentiatorWrapper" class="mb-3" style="display:none;">
+            <label class="form-label fw-bold mb-1" for="processDispatchDifferentiator">Dispatch Differentiator</label>
+            <select class="form-select form-select-sm" name="dispatchDifferentiator" id="processDispatchDifferentiator" style="max-width:320px;">
+              <option value="">— None (one row per output item) —</option>
+            </select>
+            <div class="form-text">Final stage only. This stage's output carries the whole chain's color (e.g. <code>Black / Blue-White / Brown</code>). Pick the one axis that identifies the product for dispatch — Ready to Dispatch then shows a separate row per value of it, named <code>Output Item Name / value</code>, so a specific variant can be dispatched directly instead of drilling into a combined row.</div>
           </div>
 
           <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
@@ -24660,13 +24668,41 @@
         return tokens;
       },
 
-      // Subset of `colors` that are currently checked (with a qty > 0),
-      // directly or as one token of a checked composite color — see
-      // renderPoolColorSplitGroups / _checkedColorTokensLower. `axisKey`
+      // Do this table's own columns match a checked color EXACTLY? A pool
+      // item's colors are whatever its upstream process credited, and since
+      // composite crediting those are themselves composites ("Blue-White /
+      // BCP"), identical to the checked color. Token matching must not be
+      // used then: it would light up a legacy plain "Blue-White" column
+      // instead of the real "Blue-White / BCP" one, and the qty would be
+      // saved against a color the lot never produced — the phantom negative
+      // buckets seen on the plain names.
+      //
+      // Token matching is still right for the ORIGINAL shape, where a pool
+      // item carries plain colors and the OUTPUT color is a composite built
+      // by pairing two such axes ("Blue-White" from the frame table, "BCP"
+      // from the rim table). So: exact wins when it matches anything at all,
+      // tokens are the fallback.
+      _poolGroupColumnsMatchExactly(colors, axisKey) {
+        const exact = new Set(this._axisScopedCheckedColorQtys(axisKey)
+          .filter(cc => cc.qty > 0)
+          .map(cc => String(cc.color || '').trim().toLowerCase()));
+        return colors.some(c => exact.has(String(c).trim().toLowerCase()));
+      },
+
+      // Subset of `colors` that are currently checked (with a qty > 0) —
+      // by exact color where this table's columns are the checked colors
+      // themselves, otherwise as one token of a checked composite (see
+      // _poolGroupColumnsMatchExactly / _checkedColorTokensLower). `axisKey`
       // (this table's own resolved axis, see _axisKeyForPoolItemNames)
       // keeps a DIFFERENT axis's same-named checked color from making this
       // table think one of its own colors is checked when it isn't.
       _checkedPoolGroupColors(colors, axisKey) {
+        if (this._poolGroupColumnsMatchExactly(colors, axisKey)) {
+          const exact = new Set(this._axisScopedCheckedColorQtys(axisKey)
+            .filter(cc => cc.qty > 0)
+            .map(cc => String(cc.color || '').trim().toLowerCase()));
+          return colors.filter(c => exact.has(String(c).trim().toLowerCase()));
+        }
         const tokensLower = this._checkedColorTokensLower(axisKey);
         return colors.filter(c => tokensLower.has(c.toLowerCase()));
       },
@@ -24689,8 +24725,14 @@
         if (mode === 'edit') {
           return row.colorsQty ? row.colorsQty[color.toLowerCase()] : undefined;
         }
-        const colorLower = color.toLowerCase();
-        const total = this._axisScopedCheckedColorQtys(axisKey).reduce((sum, cc) => {
+        const colorLower = color.trim().toLowerCase();
+        const checked = this._axisScopedCheckedColorQtys(axisKey);
+        // Exact first — a composite column must draw only from the one
+        // checked color it names, never from every checked color that
+        // happens to share a token with it (see _poolGroupColumnsMatchExactly).
+        const exactTotal = checked.reduce(
+          (sum, cc) => (String(cc.color || '').trim().toLowerCase() === colorLower ? sum + cc.qty : sum), 0);
+        const total = exactTotal > 0 ? exactTotal : checked.reduce((sum, cc) => {
           const tokens = (cc.color || '').split(' / ').map(t => t.trim().toLowerCase());
           return tokens.includes(colorLower) ? sum + cc.qty : sum;
         }, 0);
@@ -24955,12 +24997,21 @@
         }
 
         const primaryColors = primaryEntries.map(e => e.color);
-        // Only the primary's OWN color (first segment) can make another axis
-        // redundant — segments after it were inherited from an upstream
-        // process, so a colliding name there is a different axis, not a
-        // mirror. Mirrors module_warehouse.js's Pass 1 exactly.
-        const primaryOwnColors = primaryColors.map(c => String(c || '').split(' / ')[0].trim());
-        const independent = otherEntries.filter(e => !primaryOwnColors.some(pc => this._colorNamesMatch(pc, e.color)));
+        // An entry that exactly equals one segment of a COMPOSITE primary is
+        // an inherited-segment collision, not a mirror — it belongs to a
+        // different axis that merely shares the name. Everything else that
+        // name-matches a primary color is the same batch described twice.
+        // Mirrors module_warehouse.js's Pass 1 exactly.
+        const inheritedSegments = new Set();
+        primaryColors.forEach(pc => {
+          const segs = String(pc || '').split(' / ').map(s => s.trim()).filter(Boolean);
+          if (segs.length < 2) return;
+          segs.forEach(s => inheritedSegments.add(s.toLowerCase()));
+        });
+        const independent = otherEntries.filter(e => {
+          if (inheritedSegments.has(String(e.color || '').trim().toLowerCase())) return true;
+          return !primaryColors.some(pc => this._colorNamesMatch(pc, e.color));
+        });
 
         const axisCounts = new Map();
         independent.forEach(e => {
@@ -24973,10 +25024,22 @@
         if (ambiguous) {
           el.innerText = `Now producing: ${primaryColors.join(', ')} — plus ${independent.length} other color(s) tracked separately (can't combine unambiguously)`;
         } else {
-          // One combined identity per primary color — the backend credits
-          // one pool bucket per line shown here.
-          const suffix = independent.map(e => e.color);
-          const combos = primaryColors.map(pc => [pc, ...suffix].join(' / '));
+          // One combined identity per primary color, each listing its axes
+          // in the order this process's recipe declares them — the checklist
+          // renders axes in that same order, so reading the checked rows top
+          // to bottom reproduces exactly what the backend will credit.
+          const axisPos = new Map();
+          $$('#productionColorChecklist .production-color-row').forEach((row, i) => {
+            const k = String(row.dataset.group || '').trim().toLowerCase();
+            if (k && !axisPos.has(k)) axisPos.set(k, i);
+          });
+          const posOf = (e) => {
+            const k = String(e.axisKey || '').trim().toLowerCase();
+            return axisPos.has(k) ? axisPos.get(k) : Number.MAX_SAFE_INTEGER;
+          };
+          const combos = primaryEntries.map(pe =>
+            [pe].concat(independent).sort((a, b) => posOf(a) - posOf(b))
+              .map(e => e.color).join(' / '));
           el.innerText = `Now producing: ${combos.join(', ')}`;
         }
       },
@@ -25247,6 +25310,40 @@
         return td;
       },
 
+      // Header TEXT for the Per-Color Components columns. The column stays
+      // KEYED by the full composite (th.dataset.color) — that is the lot's
+      // real color identity, what gets saved as each component's Color
+      // Sub-Group and what the matrix is re-matched against when the lot is
+      // reopened — but the operator does not need to read the parts that
+      // every column shares. With Blue-White / BCP, Pink-White / BCP,
+      // Purple-White / BCP and Red-White / BCP all checked, "BCP" is
+      // context, not identity: the columns read Blue-White, Pink-White,
+      // Purple-White, Red-White, and the full composite stays available on
+      // hover. Nothing is dropped from the data, only from the label.
+      //
+      // Recomputed on every add/remove because which segments are shared
+      // depends on the whole checked set. A single column has nothing to
+      // differentiate against, so it keeps its full composite.
+      _refreshMatrixColumnLabels() {
+        const headerRow = document.getElementById('productionColorMatrixHeaderRow');
+        if (!headerRow) return;
+        const ths = Array.from(headerRow.querySelectorAll('th[data-color]'));
+        const segLists = ths.map(th => String(th.dataset.color || '')
+          .split(' / ').map(x => x.trim()).filter(Boolean));
+        const commonLower = new Set();
+        if (segLists.length > 1) {
+          segLists[0].forEach(seg => {
+            const segLower = seg.toLowerCase();
+            if (segLists.every(list => list.some(x => x.toLowerCase() === segLower))) commonLower.add(segLower);
+          });
+        }
+        ths.forEach((th, i) => {
+          const kept = segLists[i].filter(x => !commonLower.has(x.toLowerCase()));
+          th.textContent = kept.length > 0 ? kept.join(' / ') : String(th.dataset.color || '');
+          th.title = String(th.dataset.color || '');
+        });
+      },
+
       addMatrixColorColumn(color) {
         if (this.getMatrixColumnIndex(color) !== -1) return;
         const headerRow = document.getElementById('productionColorMatrixHeaderRow');
@@ -25264,6 +25361,7 @@
           row.insertBefore(td, row.lastElementChild);
           if (isMerged) this.initMergedCellItemSelect2(td.querySelector('.prod-comp-item-select'));
         });
+        this._refreshMatrixColumnLabels();
         this._syncMatrixTableMinWidth();
       },
 
@@ -25294,6 +25392,7 @@
           }
           cell.remove();
         });
+        this._refreshMatrixColumnLabels();
         this._syncMatrixTableMinWidth();
       },
 
@@ -25618,17 +25717,24 @@
       refreshPoolColorGroupCells(color, colorQty, axisKey) {
         const container = document.getElementById('productionPoolColorGroupsContainer');
         if (!container) return;
+        const changedLower = String(color || '').trim().toLowerCase();
         const tokensLower = (color || '').split(' / ').map(t => t.trim().toLowerCase()).filter(Boolean);
         container.querySelectorAll('table.prod-color-table').forEach(table => {
           const tableAxisKey = table.dataset.axisKey || '';
           if (axisKey && tableAxisKey && axisKey !== tableAxisKey) return;
           const checkedColorQtys = this._axisScopedCheckedColorQtys(tableAxisKey);
           table.querySelectorAll('.pool-group-qty').forEach(input => {
-            const inputColorLower = (input.dataset.color || '').toLowerCase();
-            if (!tokensLower.includes(inputColorLower)) return;
+            const inputColorLower = (input.dataset.color || '').trim().toLowerCase();
+            // A column naming the changed color exactly is the one to update
+            // when this table's columns ARE the checked colors; otherwise
+            // fall back to the token relationship (see _poolGroupCellValue).
+            const isExactColumn = inputColorLower === changedLower;
+            if (!isExactColumn && !tokensLower.includes(inputColorLower)) return;
             const qtyPerUnit = input.dataset.qtyPerUnit;
             if (qtyPerUnit === undefined || qtyPerUnit === '') return;
-            const total = checkedColorQtys.reduce((sum, cc) => {
+            const exactTotal = checkedColorQtys.reduce(
+              (sum, cc) => (String(cc.color || '').trim().toLowerCase() === inputColorLower ? sum + cc.qty : sum), 0);
+            const total = exactTotal > 0 ? exactTotal : checkedColorQtys.reduce((sum, cc) => {
               const ccTokens = (cc.color || '').split(' / ').map(t => t.trim().toLowerCase()).filter(Boolean);
               return ccTokens.includes(inputColorLower) ? sum + cc.qty : sum;
             }, 0);
@@ -28380,6 +28486,16 @@
         document.getElementById('processFormActive').checked = true;
         document.getElementById('processFormIsFinalStage').checked = false;
         document.getElementById('processFormOutputItemName').value = '';
+        // Dispatch Differentiator only applies to a final stage, so a reset
+        // form must forget both the stored choice and the picker's state —
+        // otherwise creating a process right after editing a final-stage one
+        // carries its differentiator across (same class of edit->create leak
+        // as the Size dropdown fix).
+        this._presetDispatchDifferentiator = '';
+        const diffPicker = document.getElementById('processDispatchDifferentiator');
+        if (diffPicker) diffPicker.value = '';
+        const diffWrapper = document.getElementById('processDispatchDifferentiatorWrapper');
+        if (diffWrapper) diffWrapper.style.display = 'none';
 
         const prefixEl = document.getElementById('processFormLotPrefix');
         prefixEl.readOnly = false;
@@ -28459,6 +28575,7 @@
           if (seq !== this._modalLoadSeq) return;
           this.renderComponentsGrouped(compRes.success ? compRes.data : []);
           this.renderColorLinksData(linksRes.success ? linksRes.data : []);
+          this._presetDispatchDifferentiator = p.dispatchDifferentiator || '';
           await this.loadPoolColorAxisLabels(p.processId, p.primaryColorAxis || '');
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to load process components', true);
@@ -29227,6 +29344,31 @@
         // Only meaningful once there's something to pick between — a single
         // (or zero) axis process has nothing for "primary" to disambiguate.
         if (wrapper) wrapper.style.display = labels.length >= 2 ? '' : 'none';
+
+        this.refreshDispatchDifferentiatorOptions(labels);
+      },
+
+      // Companion to the Primary Axis picker: which single axis identifies
+      // this process's output on Ready to Dispatch (see
+      // PROCESS_COL.DISPATCH_DIFFERENTIATOR). Offered from the same label
+      // list, but shown only for a FINAL-STAGE process — that is the only
+      // stage whose output reaches Dispatch at all — and only once there is
+      // at least one axis to pick. Unlike Primary Axis a single axis is
+      // still worth differentiating by, so the threshold is 1, not 2.
+      refreshDispatchDifferentiatorOptions(labels) {
+        const picker = document.getElementById('processDispatchDifferentiator');
+        const wrapper = document.getElementById('processDispatchDifferentiatorWrapper');
+        if (!picker || !wrapper) return;
+
+        const all = labels || Array.from(new Set([...(this._poolAxisLabels || []), ...this.collectColorAxisLabels()]))
+          .sort((a, b) => a.localeCompare(b));
+        const current = picker.value;
+        picker.innerHTML = '<option value="">— None (one row per output item) —</option>'
+          + all.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+        picker.value = all.includes(current) ? current : '';
+
+        const isFinal = !!document.getElementById('processFormIsFinalStage')?.checked;
+        wrapper.style.display = (isFinal && all.length >= 1) ? '' : 'none';
       },
 
       // Fetches this (already-saved) process's auto-detected Warehouse Pool
@@ -29256,6 +29398,10 @@
         this.refreshColorAxisOptions();
         const picker = document.getElementById('processPrimaryColorAxis');
         if (picker && presetPrimary) picker.value = presetPrimary;
+        const diffPicker = document.getElementById('processDispatchDifferentiator');
+        if (diffPicker && this._presetDispatchDifferentiator) {
+          diffPicker.value = this._presetDispatchDifferentiator;
+        }
       },
 
       // Uniqueness = Item Name + Size + Color Group (Common counts as its own

@@ -200,11 +200,54 @@ function getNextDispatchNumber() {
 function _computeReadyToDispatchMap() {
   const map = {};
 
+  const allProcesses = (typeof _getAllProcessRecords === 'function' ? _getAllProcessRecords() : []);
   const finalStageIds = new Set(
-    (typeof _getAllProcessRecords === 'function' ? _getAllProcessRecords() : [])
-      .filter(p => p.isFinalStage)
-      .map(p => p.processId.toLowerCase())
+    allProcesses.filter(p => p.isFinalStage).map(p => p.processId.toLowerCase())
   );
+
+  // Dispatch Differentiator (see PROCESS_COL.DISPATCH_DIFFERENTIATOR): the
+  // one axis of a final-stage process whose value identifies the product on
+  // this list. A final-stage pool color is the whole chain's composite
+  // ("Black / Blue-White / Brown / Kraft"), but dispatch usually cares about
+  // just one part of it, so rows are split per distinct value of that axis
+  // and labelled "<Output Item Name> / <value>".
+  //
+  // The value is resolved by matching the composite's segments against the
+  // chosen axis's OWN colors, never by segment position: mirror axes are
+  // folded away and unchecked axes contribute nothing, so a composite has no
+  // fixed slot per axis (see _composeLotColorKey in module_warehouse.js).
+  const differentiatorByProcess = {}; // processIdLower -> { colorsLower:Set, label }
+  allProcesses.forEach(p => {
+    if (!p.isFinalStage) return;
+    // Stored as the axis LABEL, same convention as PRIMARY_COLOR_AXIS, so
+    // the two pickers on the Process form offer the same option list.
+    const axisLabel = String(p.dispatchDifferentiator || '').trim().toLowerCase();
+    if (!axisLabel) return;
+    try {
+      const comps = (getProcessComponentsData(p.processId).data || []);
+      const poolAll = (getWarehousePoolData().data || []);
+      const links = typeof _getAllProcessColorLinks === 'function' ? _getAllProcessColorLinks() : [];
+      const axes = computeColorAxesForProcess(p.processId, comps, poolAll, links) || [];
+      const axis = axes.find(a => String(a.label || '').trim().toLowerCase() === axisLabel);
+      if (!axis) return; // axis renamed or removed — fall back to one aggregate row
+      differentiatorByProcess[p.processId.toLowerCase()] = {
+        label: axis.label,
+        colorsLower: new Set((axis.colors || []).map(c => String(c).trim().toLowerCase()))
+      };
+    } catch (e) { /* leave this process undifferentiated */ }
+  });
+
+  // The segment of `color` belonging to this process's differentiator axis,
+  // or '' when the process has none configured or nothing matches.
+  function differentiatorValue(processId, color) {
+    const def = differentiatorByProcess[String(processId || '').trim().toLowerCase()];
+    if (!def) return '';
+    const segments = typeof _colorSegments === 'function'
+      ? _colorSegments(color)
+      : String(color || '').split(COLOR_COMBO_DELIMITER).map(x => x.trim()).filter(Boolean);
+    const hit = segments.find(seg => def.colorsLower.has(seg.toLowerCase()));
+    return hit || '';
+  }
 
   const poolResp = getWarehousePoolData();
   const poolRows = (poolResp && poolResp.data) || [];
@@ -240,11 +283,18 @@ function _computeReadyToDispatchMap() {
     // Tagged rows surface under their Product; untagged final-stage rows
     // still surface, under their own Output Item Name, so a completed
     // final-stage lot is always visible to Dispatch even with no tag.
-    const key = isTagged ? r.productTag.toLowerCase() : ('__output__' + r.outputItemName.toLowerCase());
+    // One row per differentiator value when the producing process names one
+    // — the key and the displayed name both carry it, so Dispatch acts on a
+    // specific variant instead of an aggregate the operator has to drill into.
+    const diffValue = differentiatorValue(r.processId, r.color);
+    const baseKey = isTagged ? r.productTag.toLowerCase() : ('__output__' + r.outputItemName.toLowerCase());
+    const key = diffValue ? (baseKey + '||' + diffValue.toLowerCase()) : baseKey;
+    const baseName = isTagged ? (productNameById[baseKey] || r.productTag) : r.outputItemName;
     if (!map[key]) {
       map[key] = {
         productId: isTagged ? r.productTag : r.outputItemName,
-        productName: isTagged ? (productNameById[key] || r.productTag) : r.outputItemName,
+        productName: diffValue ? (baseName + ' / ' + diffValue) : baseName,
+        differentiator: diffValue,
         producedQty: 0,
         dispatchedQty: 0,
         // Same Product Tag can accumulate credits from several Completed
@@ -289,6 +339,9 @@ function getReadyToDispatchData() {
     const records = Object.values(map).map(r => ({
       productId: r.productId,
       productName: r.productName,
+      // Blank unless the producing final-stage process names a Dispatch
+      // Differentiator; productName already embeds it as "<output> / <value>".
+      differentiator: r.differentiator || '',
       producedQty: r.producedQty,
       dispatchedQty: r.dispatchedQty,
       readyQty: r.producedQty - r.dispatchedQty,

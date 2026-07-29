@@ -9,16 +9,22 @@
  * segments, so a downstream axis whose color equalled an INHERITED segment
  * was silently swallowed:
  *
- *   primary "Blue-White / Black" (frame + upstream rim)
+ *   primary "Black / Blue-White" (upstream rim + frame)
  *   + Seat Color axis = "Black"   -> dropped as "redundant"
- *   -> credited "Blue-White / Black", losing the seat entirely, merging
+ *   -> credited "Black / Blue-White", losing the seat entirely, merging
  *      black-seat and brown-seat output into one bucket.
  *
- * Fix: redundancy is judged against the primary's OWN color (first segment)
- * only. Segments after the first came from an upstream process's
- * independent axes, so no downstream axis can be a mirror of one. Plain
- * (non-composite) primaries are unaffected, so every pre-existing
- * single-stage case behaves byte-for-byte as before.
+ * Fix: an entry that equals one segment of a COMPOSITE primary EXACTLY is
+ * an inherited-segment collision, not a mirror — those segments belong to
+ * upstream processes' axes, which nothing downstream can mirror. A real
+ * mirror is a variant of the primary color ("Blue" against "Blue-White"),
+ * matched by the segment heuristic but not equal to a segment verbatim.
+ * Only composite primaries get the exception, so a plain single-axis
+ * primary behaves byte-for-byte as it always did.
+ *
+ * Note the segment order: composites list axes in the order the consuming
+ * process's recipe declares them (see test_composite_follows_recipe_order),
+ * so a rim-before-frame recipe reads "Black / Blue-White".
  *
  * Run: node .pw-test/test_chained_composite_axis_collision.js
  */
@@ -109,7 +115,7 @@ seedStageA();
 recalculateWarehousePool();
 let pool = bucketsFor('Fitted Frame');
 console.log('  ', JSON.stringify(pool));
-assert(JSON.stringify(pool.map(b => b.color)) === JSON.stringify(['Blue-White / Black', 'Green-White / Black', 'Red-White / Black']),
+assert(JSON.stringify(pool.map(b => b.color)) === JSON.stringify(['Black / Blue-White', 'Black / Green-White', 'Black / Red-White']),
   'A produces one composite bucket per frame color');
 
 console.log('\n=== Test 2: Process B sees A\'s composites as one axis, its own colors as another ===');
@@ -129,36 +135,36 @@ console.log('  axes:', JSON.stringify(axes.map(a => ({ key: a.key, colors: a.col
 assert(axes.length === 2, `B renders 2 independent axes (got ${axes.length})`);
 const poolAxis = axes.find(a => a.source === 'pool');
 const tagAxis = axes.find(a => a.source === 'tag');
-assert(poolAxis && JSON.stringify(poolAxis.colors) === JSON.stringify(['Blue-White / Black', 'Green-White / Black', 'Red-White / Black']),
+assert(poolAxis && JSON.stringify(poolAxis.colors) === JSON.stringify(['Black / Blue-White', 'Black / Green-White', 'Black / Red-White']),
   "B's pool axis offers A's composite colors verbatim");
 assert(tagAxis && JSON.stringify(tagAxis.colors) === JSON.stringify(['Black', 'Brown']), "B's own Seat Color axis offers Black/Brown");
 const groups = getProcessColorGroups(bId).data || [];
-assert(groups.indexOf('Blue-White / Black') !== -1 && groups.indexOf('Brown') !== -1,
+assert(groups.indexOf('Black / Blue-White') !== -1 && groups.indexOf('Brown') !== -1,
   'saveProduction validation accepts both an inherited composite and B\'s own color');
 
 console.log('\n=== Test 3: B adds a NON-colliding color -> identity deepens by one segment ===');
 addLot({
   processId: bId, qty: 10, lotNumber: 'B-1', outputItemName: 'Seated Cycle',
   colorBreakdown: [
-    { color: 'Blue-White / Black', qty: 5, countsTowardTotal: true, axisKey: 'pool:fitted frame' },
-    { color: 'Red-White / Black', qty: 5, countsTowardTotal: true, axisKey: 'pool:fitted frame' },
+    { color: 'Black / Blue-White', qty: 5, countsTowardTotal: true, axisKey: 'pool:fitted frame' },
+    { color: 'Black / Red-White', qty: 5, countsTowardTotal: true, axisKey: 'pool:fitted frame' },
     { color: 'Brown', qty: 10, countsTowardTotal: false, axisKey: 'tag:seat color' }
   ],
   componentsConsumed: [
-    { itemName: 'Fitted Frame', sourceType: 'POOL', qty: 5, colorGroup: 'Blue-White / Black' },
-    { itemName: 'Fitted Frame', sourceType: 'POOL', qty: 5, colorGroup: 'Red-White / Black' }
+    { itemName: 'Fitted Frame', sourceType: 'POOL', qty: 5, colorGroup: 'Black / Blue-White' },
+    { itemName: 'Fitted Frame', sourceType: 'POOL', qty: 5, colorGroup: 'Black / Red-White' }
   ]
 });
 recalculateWarehousePool();
 pool = bucketsFor('Seated Cycle');
 console.log('  ', JSON.stringify(pool));
-assert(JSON.stringify(pool.map(b => b.color)) === JSON.stringify(['Blue-White / Black / Brown', 'Red-White / Black / Brown']),
+assert(JSON.stringify(pool.map(b => b.color)) === JSON.stringify(['Black / Blue-White / Brown', 'Black / Red-White / Brown']),
   "B's own axis is appended to each inherited composite");
 assert(pool.every(b => b.produced === 5), 'each composite carries its own primary qty (5)');
 const frameAfter = bucketsFor('Fitted Frame');
 console.log('  upstream:', JSON.stringify(frameAfter));
-assert(frameAfter.find(b => b.color === 'Blue-White / Black').consumed === 5
-  && frameAfter.find(b => b.color === 'Green-White / Black').consumed === 0,
+assert(frameAfter.find(b => b.color === 'Black / Blue-White').consumed === 5
+  && frameAfter.find(b => b.color === 'Black / Green-White').consumed === 0,
   'consumption debits exactly the composite buckets B actually consumed');
 
 console.log('\n=== Test 4: SEGMENT COLLISION -- B\'s own color equals an INHERITED segment ===');
@@ -167,8 +173,8 @@ seedStageA();
 addLot({
   processId: bId, qty: 10, lotNumber: 'B-2', outputItemName: 'Seated Cycle',
   colorBreakdown: [
-    { color: 'Blue-White / Black', qty: 5, countsTowardTotal: true, axisKey: 'pool:fitted frame' },
-    { color: 'Red-White / Black', qty: 5, countsTowardTotal: true, axisKey: 'pool:fitted frame' },
+    { color: 'Black / Blue-White', qty: 5, countsTowardTotal: true, axisKey: 'pool:fitted frame' },
+    { color: 'Black / Red-White', qty: 5, countsTowardTotal: true, axisKey: 'pool:fitted frame' },
     // "Black" is a real, independent Seat Color -- it only LOOKS redundant
     // because the frame composite inherited a "Black" rim segment upstream.
     { color: 'Black', qty: 10, countsTowardTotal: false, axisKey: 'tag:seat color' }
@@ -177,7 +183,7 @@ addLot({
 recalculateWarehousePool();
 pool = bucketsFor('Seated Cycle');
 console.log('  ', JSON.stringify(pool));
-assert(JSON.stringify(pool.map(b => b.color)) === JSON.stringify(['Blue-White / Black / Black', 'Red-White / Black / Black']),
+assert(JSON.stringify(pool.map(b => b.color)) === JSON.stringify(['Black / Blue-White / Black', 'Black / Red-White / Black']),
   'the seat color survives instead of being swallowed by the inherited "Black" segment');
 
 console.log('\n=== Test 5: single-color lot, same collision (the pre-existing shape) ===');
@@ -186,14 +192,14 @@ seedStageA();
 addLot({
   processId: bId, qty: 5, lotNumber: 'B-3', outputItemName: 'Seated Cycle Solo',
   colorBreakdown: [
-    { color: 'Blue-White / Black', qty: 5, countsTowardTotal: true, axisKey: 'pool:fitted frame' },
+    { color: 'Black / Blue-White', qty: 5, countsTowardTotal: true, axisKey: 'pool:fitted frame' },
     { color: 'Black', qty: 5, countsTowardTotal: false, axisKey: 'tag:seat color' }
   ]
 });
 recalculateWarehousePool();
 pool = bucketsFor('Seated Cycle Solo');
 console.log('  ', JSON.stringify(pool));
-assert(JSON.stringify(pool.map(b => b.color)) === JSON.stringify(['Blue-White / Black / Black']),
+assert(JSON.stringify(pool.map(b => b.color)) === JSON.stringify(['Black / Blue-White / Black']),
   'a one-color lot keeps its seat color too (collision is not multi-color-specific)');
 
 console.log('\n=== Test 6: a genuine mirror of the primary\'s OWN color is still dropped ===');

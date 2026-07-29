@@ -644,6 +644,16 @@
         document.getElementById('processFormActive').checked = true;
         document.getElementById('processFormIsFinalStage').checked = false;
         document.getElementById('processFormOutputItemName').value = '';
+        // Dispatch Differentiator only applies to a final stage, so a reset
+        // form must forget both the stored choice and the picker's state —
+        // otherwise creating a process right after editing a final-stage one
+        // carries its differentiator across (same class of edit->create leak
+        // as the Size dropdown fix).
+        this._presetDispatchDifferentiator = '';
+        const diffPicker = document.getElementById('processDispatchDifferentiator');
+        if (diffPicker) diffPicker.value = '';
+        const diffWrapper = document.getElementById('processDispatchDifferentiatorWrapper');
+        if (diffWrapper) diffWrapper.style.display = 'none';
 
         const prefixEl = document.getElementById('processFormLotPrefix');
         prefixEl.readOnly = false;
@@ -723,6 +733,7 @@
           if (seq !== this._modalLoadSeq) return;
           this.renderComponentsGrouped(compRes.success ? compRes.data : []);
           this.renderColorLinksData(linksRes.success ? linksRes.data : []);
+          this._presetDispatchDifferentiator = p.dispatchDifferentiator || '';
           await this.loadPoolColorAxisLabels(p.processId, p.primaryColorAxis || '');
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to load process components', true);
@@ -1491,6 +1502,31 @@
         // Only meaningful once there's something to pick between — a single
         // (or zero) axis process has nothing for "primary" to disambiguate.
         if (wrapper) wrapper.style.display = labels.length >= 2 ? '' : 'none';
+
+        this.refreshDispatchDifferentiatorOptions(labels);
+      },
+
+      // Companion to the Primary Axis picker: which single axis identifies
+      // this process's output on Ready to Dispatch (see
+      // PROCESS_COL.DISPATCH_DIFFERENTIATOR). Offered from the same label
+      // list, but shown only for a FINAL-STAGE process — that is the only
+      // stage whose output reaches Dispatch at all — and only once there is
+      // at least one axis to pick. Unlike Primary Axis a single axis is
+      // still worth differentiating by, so the threshold is 1, not 2.
+      refreshDispatchDifferentiatorOptions(labels) {
+        const picker = document.getElementById('processDispatchDifferentiator');
+        const wrapper = document.getElementById('processDispatchDifferentiatorWrapper');
+        if (!picker || !wrapper) return;
+
+        const all = labels || Array.from(new Set([...(this._poolAxisLabels || []), ...this.collectColorAxisLabels()]))
+          .sort((a, b) => a.localeCompare(b));
+        const current = picker.value;
+        picker.innerHTML = '<option value="">— None (one row per output item) —</option>'
+          + all.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+        picker.value = all.includes(current) ? current : '';
+
+        const isFinal = !!document.getElementById('processFormIsFinalStage')?.checked;
+        wrapper.style.display = (isFinal && all.length >= 1) ? '' : 'none';
       },
 
       // Fetches this (already-saved) process's auto-detected Warehouse Pool
@@ -1520,6 +1556,10 @@
         this.refreshColorAxisOptions();
         const picker = document.getElementById('processPrimaryColorAxis');
         if (picker && presetPrimary) picker.value = presetPrimary;
+        const diffPicker = document.getElementById('processDispatchDifferentiator');
+        if (diffPicker && this._presetDispatchDifferentiator) {
+          diffPicker.value = this._presetDispatchDifferentiator;
+        }
       },
 
       // Uniqueness = Item Name + Size + Color Group (Common counts as its own

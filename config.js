@@ -715,7 +715,8 @@ const PROCESS_COL = Object.freeze({
   REMARKS:        7,      // Free text
   OUTPUT_ITEM_NAME: 8,    // Warehouse Pool item this process produces per unit (e.g. "Painted Frame")
   PROCESS_TYPE:   9,      // Reference to Process Type Master.Name — categorizes the process (e.g. "Painting", "Welding") for grouping; optional, blank reads as "General"
-  PRIMARY_COLOR_AXIS: 10  // Optional Color Axis label (see PROCESS_COMPONENTS_COL.COLOR_AXIS) whose checked "Colors to Produce" rows determine a lot's total quantity, when this process has 2+ independent color axes. Blank = legacy single-list/cross-product behavior (see computeColorGroupsForProcess).
+  PRIMARY_COLOR_AXIS: 10, // Optional Color Axis label (see PROCESS_COMPONENTS_COL.COLOR_AXIS) whose checked "Colors to Produce" rows determine a lot's total quantity, when this process has 2+ independent color axes. Blank = legacy single-list/cross-product behavior (see computeColorGroupsForProcess).
+  DISPATCH_DIFFERENTIATOR: 11 // FINAL-STAGE ONLY. Optional axis key (see computeColorAxesForProcess's `key`) naming which one of this process's color axes identifies the product on the Ready to Dispatch list. A final-stage output's pool color is a composite of every axis it combined (e.g. "Black / Blue-White / Brown / Kraft"); dispatch usually cares about ONE of those (the frame color, say), so the list is split into one row per distinct value of this axis and labelled "<Output Item Name> / <value>". Blank = one aggregate row per output, exactly as before this column existed.
 });
 
 const PROCESS_COL_NAMES = Object.freeze({
@@ -728,7 +729,8 @@ const PROCESS_COL_NAMES = Object.freeze({
   'remarks': PROCESS_COL.REMARKS,
   'outputItemName': PROCESS_COL.OUTPUT_ITEM_NAME,
   'processType': PROCESS_COL.PROCESS_TYPE,
-  'primaryColorAxis': PROCESS_COL.PRIMARY_COLOR_AXIS
+  'primaryColorAxis': PROCESS_COL.PRIMARY_COLOR_AXIS,
+  'dispatchDifferentiator': PROCESS_COL.DISPATCH_DIFFERENTIATOR
 });
 
 // ─────────────────────────────────────────────────────────────────────────

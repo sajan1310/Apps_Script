@@ -5,7 +5,7 @@
  * Link between them (e.g. Fitted Frame Assembly consuming a Painted Frame
  * axis + a Fitted Rim axis) used to credit its own Warehouse Pool output as
  * TWO separate single-color buckets ("Red-White":10 and "Black":10)
- * instead of ONE real combined bucket ("Red-White / Black":10) — there was
+ * instead of ONE real combined bucket ("Black / Red-White":10) — there was
  * no way to answer "how many Black+Red-White units are in stock" from the
  * data as stored. recalculateWarehousePool's Pass 1 (module_warehouse.js)
  * now combines a lot's colorBreakdown entries into one bucket whenever the
@@ -162,8 +162,8 @@ console.log('\n=== Test 1: Frame + Rim (2 independent axes, no link) combine int
   recalculateWarehousePool();
 
   const buckets = bucketsFor('Fitted Frame Assembled');
-  const combined = buckets.find(b => b.color === `Red-White${COLOR_COMBO_DELIMITER}Black`);
-  assert(!!combined && combined.producedQty === 10, `ONE combined "Red-White / Black" bucket with producedQty 10 (got ${JSON.stringify(combined)})`);
+  const combined = buckets.find(b => b.color === `Black${COLOR_COMBO_DELIMITER}Red-White`);
+  assert(!!combined && combined.producedQty === 10, `ONE combined "Black / Red-White" bucket with producedQty 10 (got ${JSON.stringify(combined)})`);
   assert(!buckets.some(b => b.color === 'Red-White'), 'no separate standalone "Red-White" bucket exists');
   assert(!buckets.some(b => b.color === 'Black'), 'no separate standalone "Black" bucket exists');
   assert(buckets.length === 1, `exactly one bucket total for this process so far (got ${buckets.length}: ${JSON.stringify(buckets.map(b => b.color))})`);
@@ -180,8 +180,8 @@ console.log('\n=== Test 2: a redundant, name-matching axis (Mudguard "Red" match
   recalculateWarehousePool();
 
   const buckets = bucketsFor('Fitted Frame Assembled');
-  const combined = buckets.find(b => b.color === `Red-White${COLOR_COMBO_DELIMITER}Black`);
-  assert(!!combined && combined.producedQty === 15, `combined "Red-White / Black" bucket accumulated to 15 (10 from Test 1 + 5 here) (got ${JSON.stringify(combined)})`);
+  const combined = buckets.find(b => b.color === `Black${COLOR_COMBO_DELIMITER}Red-White`);
+  assert(!!combined && combined.producedQty === 15, `combined "Black / Red-White" bucket accumulated to 15 (10 from Test 1 + 5 here) (got ${JSON.stringify(combined)})`);
   assert(!buckets.some(b => b.color === 'Red'), 'no separate "Red" (Mudguard) bucket was created - redundant entry silently folded in, not separately credited');
   assert(!buckets.some(b => (b.color || '').includes('Red-White') && (b.color || '').includes('Red') && (b.color || '').split(COLOR_COMBO_DELIMITER).length > 2),
     'no 3-way combo was created either (Mudguard must not add a 3rd dimension)');

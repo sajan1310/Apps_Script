@@ -140,7 +140,10 @@ let processId;
   assert(!!processId, 'processId returned (got "' + processId + '")');
 
   const procSheet = ss.getSheetByName(APP_CONFIG.SHEETS.PROCESS_MASTER);
-  assert(procSheet.getLastColumn() === 10, 'Process Master sheet has 10 columns (got ' + procSheet.getLastColumn() + ')');
+  // Grew to 11 when Dispatch Differentiator was added (PROCESS_COL.DISPATCH_DIFFERENTIATOR)
+  // — pinned to the constant so the next column addition updates this by itself.
+  assert(procSheet.getLastColumn() === PROCESS_COL.DISPATCH_DIFFERENTIATOR,
+    'Process Master sheet spans every defined column (got ' + procSheet.getLastColumn() + ')');
   assert(procSheet.getRange(1, 10, 1, 1).getValue() === 'Primary Color Axis', 'column 10 header is "Primary Color Axis"');
 
   // initProcessMasterSheet seeds 4 default rows on first creation, so this

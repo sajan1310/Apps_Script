@@ -105,6 +105,89 @@ function _poolKey(outputItemName, productTag, color) {
  * @param {string} tokenLower - lowercased, trimmed single-axis token being sought
  * @returns {string|null} the one matching composite color string, or null if there's an exact match already / nothing resolves
  */
+/**
+ * @private Splits a (possibly composite) pool color into its axis segments.
+ * "Blue-White / Black / Grey" -> ["Blue-White", "Black", "Grey"]; a plain
+ * single-axis color yields a one-element array.
+ */
+function _colorSegments(color) {
+  return String(color || '').split(COLOR_COMBO_DELIMITER).map(s => s.trim()).filter(Boolean);
+}
+
+/**
+ * @private Order-independent identity for a composite color: its segments
+ * lowercased and sorted, joined with a delimiter that can't occur in a color
+ * name. "Blue-White / Black / Grey" and "Blue-White / Grey / Black" describe
+ * the SAME physical unit — one frame color, one rim color, one mudguard
+ * color — so they must resolve to one bucket. Used to catch (and heal)
+ * historical rows credited before _composeLotColorKey imposed a canonical
+ * order, and by verifyProductionColorChain to report the split.
+ */
+function _colorOrderKey(color) {
+  return _colorSegments(color).map(s => s.toLowerCase()).sort().join('\u0000');
+}
+
+/**
+ * @private Builds a lot's composite bucket color in a CANONICAL, repeatable
+ * segment order, so the same real combination always keys the same bucket.
+ *
+ * EVERY axis takes the position THIS PROCESS'S OWN RECIPE gives it — the
+ * primary included (see getAxisOrderByProcess / computeColorAxesForProcess).
+ * A POOL recipe row is the association with the upstream process that
+ * produces it, so recipe row order is exactly "this process's inputs, in
+ * the sequence the operator arranged them", and it is also the order the
+ * Production checklist renders. So a recipe listing Fitted Rim above
+ * Painted Frame credits "Black / Blue-White", and the operator can change
+ * that reading by reordering the recipe.
+ *
+ * The primary axis is NOT anchored first. It was until 2026-07-29, which
+ * meant a lot of frames-on-black-rims read "Blue-White / Black" no matter
+ * where the recipe put the rim — the quantity-bearing axis is not
+ * necessarily the one you name first.
+ *
+ * Order previously came straight from the Color Breakdown array, i.e. from
+ * checklist DOM order, which followed Warehouse Pool sheet row order — and
+ * that is itself rebuilt on every recalculation. Two lots of the very same
+ * product could therefore be credited as "Blue-White / Black / Grey" and
+ * "Blue-White / Grey / Black" and have their stock split across two buckets.
+ * Needs 3+ axes (2+ independent ones) to bite.
+ *
+ * A primary color that is itself a composite (inherited from upstream)
+ * stays intact as one unit — only its position among this stage's axes is
+ * decided here, never its internal order.
+ *
+ * @param {{color:string, axisKey:string}} primaryEntry This lot's primary-axis entry.
+ * @param {Array<{color:string, axisKey:string}>} independentEntries
+ * @param {Object} [axisOrder] { [axisKeyLower]: position } for this lot's own
+ *   process — see getAxisOrderByProcess. An axis missing from it (renamed,
+ *   removed, or a legacy entry with no axisKey at all) sorts after every
+ *   known one, then by axis key and color, so the result is always fully
+ *   determined even when the recipe can no longer explain an entry.
+ */
+function _composeLotColorKey(primaryEntry, independentEntries, axisOrder) {
+  const order = axisOrder || {};
+  const positionOf = (e) => {
+    const k = String((e && e.axisKey) || '').trim().toLowerCase();
+    return (k && Object.prototype.hasOwnProperty.call(order, k)) ? order[k] : Number.MAX_SAFE_INTEGER;
+  };
+  const ordered = [primaryEntry].concat(independentEntries || [])
+    .filter(e => e && String(e.color || '').trim())
+    .sort((a, b) => {
+      const pa = positionOf(a);
+      const pb = positionOf(b);
+      if (pa !== pb) return pa - pb;
+      const ka = String(a.axisKey || '').trim().toLowerCase();
+      const kb = String(b.axisKey || '').trim().toLowerCase();
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      // Same (or absent) axis key — fall back to the color itself so the
+      // result is still fully determined rather than input-order dependent.
+      const ca = String(a.color || '').trim().toLowerCase();
+      const cb = String(b.color || '').trim().toLowerCase();
+      return ca < cb ? -1 : (ca > cb ? 1 : 0);
+    });
+  return ordered.map(e => String(e.color || '').trim()).join(COLOR_COMBO_DELIMITER);
+}
+
 function _resolveCompositeColorToken(candidateColors, tokenLower) {
   if (!tokenLower || candidateColors.indexOf(tokenLower) !== -1) return null;
   const matches = new Set(
@@ -622,6 +705,14 @@ function recalculateWarehousePool() {
         const numCols = PRODUCTION_COL.COLOR_BREAKDOWN;
         const data = prodSheet.getRange(2, 1, lastRow - 1, numCols).getValues();
 
+        // Axis order for every process, read once — the composite color a
+        // lot is credited under lists its axes in that process's own recipe
+        // order (see _composeLotColorKey / getAxisOrderByProcess), which is
+        // also the order the operator saw them on the checklist.
+        const axisOrderByProcess = typeof getAxisOrderByProcess === 'function'
+          ? getAxisOrderByProcess()
+          : {};
+
         // Pass 1: credit every Completed lot's own output to its pool
         // bucket(s). A color-agnostic lot credits the single blank-color
         // bucket. A multi-color lot's Color Breakdown entries (one per
@@ -698,28 +789,36 @@ function recalculateWarehousePool() {
 
             let combined = false;
             if (primaryEntries.length >= 1) {
-              // Redundancy is judged against the primary axis's OWN color
-              // only — the FIRST segment of its (possibly composite) value.
-              // Segments after the first were inherited from an upstream
-              // process's independent axes (see the parts.join below: a
-              // credited bucket is always "<own color> / <inherited...>"),
-              // so a downstream axis can never be a mirror of one. Matching
-              // the whole composite instead silently swallowed a genuine
-              // axis whose color happened to equal an inherited segment —
-              // e.g. a Seat Color axis of "Black" fitted onto a frame
-              // credited "Blue-White / Black" was dropped as redundant, and
-              // black-seat and brown-seat output merged into one bucket.
-              // The deeper the process chain, the more inherited segments
-              // accumulate and the likelier that collision becomes.
-              const primaryOwnColors = primaryEntries.map(
-                e => String(e.color || '').split(COLOR_COMBO_DELIMITER)[0].trim()
-              );
-              // Redundant against ANY of the primary colors, not just a
-              // single one — a mirror axis (e.g. Mudguard) checked across a
-              // multi-color lot contributes one entry per primary color
-              // (Blue against Blue-White, Red against Red-White, ...), and
-              // every one of them is the same batch described a second way.
-              const independent = otherEntries.filter(e => !primaryOwnColors.some(pc => _colorNamesMatch(pc, e.color)));
+              // A mirror axis (e.g. Mudguard) describes the same batch a
+              // second way, so it must not become its own segment. It is
+              // recognised by _colorNamesMatch against ANY of the primary
+              // colors — not just one — because across a multi-color lot it
+              // contributes one entry per primary color (Blue against
+              // Blue-White, Red against Red-White, ...).
+              //
+              // The exception is an INHERITED-SEGMENT COLLISION. When the
+              // primary color is itself a composite carried down from
+              // upstream, its segments include other processes' axes, and a
+              // downstream axis cannot be a mirror of one of those — it just
+              // happens to share the name. Such an entry matches a whole
+              // segment EXACTLY (seat "Black" against a frame credited
+              // "Black / Blue-White"), whereas a real mirror is a variant of
+              // the primary color rather than one of its segments verbatim
+              // ("Blue" against "Blue-White"). Only composite primaries get
+              // this exception, so a plain single-axis primary keeps exactly
+              // the behavior it always had.
+              const primaryColors = primaryEntries.map(e => String(e.color || '').trim());
+              const inheritedSegmentsLower = new Set();
+              primaryColors.forEach(pc => {
+                const segs = _colorSegments(pc);
+                if (segs.length < 2) return; // not a chained/composite primary
+                segs.forEach(s => inheritedSegmentsLower.add(s.toLowerCase()));
+              });
+              const independent = otherEntries.filter(e => {
+                const colorLower = String(e.color || '').trim().toLowerCase();
+                if (inheritedSegmentsLower.has(colorLower)) return true; // collision, keep as its own axis
+                return !primaryColors.some(pc => _colorNamesMatch(pc, e.color));
+              });
 
               // Each distinct axis among the independent entries must
               // contribute exactly one. Entries that DO carry a real
@@ -751,10 +850,13 @@ function recalculateWarehousePool() {
                 // color for the whole lot (e.g. Rim = Black on all 40 units)
                 // pairs with every primary color — which color goes with
                 // which is not in question when that axis only has one.
-                const suffix = independent.map(e => String(e.color).trim());
+                // Segment order is canonical (see _composeLotColorKey), not
+                // Color Breakdown array order — otherwise two lots of the
+                // same product credit two differently-ordered buckets and
+                // split its stock.
+                const axisOrder = axisOrderByProcess[processId.toLowerCase()];
                 primaryEntries.forEach(pe => {
-                  const parts = [String(pe.color).trim(), ...suffix];
-                  creditColor(parts.join(COLOR_COMBO_DELIMITER), pe.qty);
+                  creditColor(_composeLotColorKey(pe, independent, axisOrder), pe.qty);
                 });
                 combined = true;
               }
@@ -836,11 +938,26 @@ function recalculateWarehousePool() {
             // a phantom single-token bucket that was never credited.
             if (color && !buckets[_poolKey(itemName, '', color.toLowerCase())]) {
               const itemNameLower = itemName.toLowerCase();
-              const candidateColors = Object.values(buckets)
-                .filter(b => b.outputItemName.toLowerCase() === itemNameLower && !b.productTag)
-                .map(b => b.color.toLowerCase());
-              const resolved = _resolveCompositeColorToken(candidateColors, color.toLowerCase());
-              if (resolved) color = resolved;
+              const candidates = Object.values(buckets)
+                .filter(b => b.outputItemName.toLowerCase() === itemNameLower && !b.productTag);
+
+              // A consumption recorded before _composeLotColorKey imposed a
+              // canonical segment order names the same combination in a
+              // different order ("Blue-White / Grey / Black" for what is now
+              // credited as "Blue-White / Black / Grey"). Match on the
+              // order-independent identity first, so historical rows debit
+              // the real bucket instead of opening a phantom negative one.
+              // Only when exactly one bucket carries that segment set —
+              // otherwise there is nothing to disambiguate with.
+              const wantOrderKey = _colorOrderKey(color);
+              const orderMatches = candidates.filter(b => _colorOrderKey(b.color) === wantOrderKey);
+              if (orderMatches.length === 1) {
+                color = orderMatches[0].color;
+              } else {
+                const resolved = _resolveCompositeColorToken(
+                  candidates.map(b => b.color.toLowerCase()), color.toLowerCase());
+                if (resolved) color = resolved;
+              }
             }
 
             const bucket = getBucket(itemName, '', '', color);
@@ -1102,4 +1219,258 @@ function getPoolAvailableQty(outputItemName) {
   if (!target) return 0;
   const entry = getPoolAvailableQtyMap()[target];
   return entry ? entry.total : 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PRODUCTION COLOR-CHAIN VERIFICATION
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Read-only audit of the color identity every Production lot carries
+ * through the process chain. Writes nothing — run it any time to answer
+ * "is my composite color data self-consistent, and is any product's stock
+ * silently split across two buckets?".
+ *
+ * A composite pool color (see COLOR_COMBO_DELIMITER, and Pass 1 of
+ * recalculateWarehousePool) is a chain: its first segment is the producing
+ * lot's primary-axis color — itself possibly a composite inherited from
+ * upstream — followed by one segment per independent axis that lot combined
+ * in. This walks that structure back and reports where it fails to hold up:
+ *
+ *  - order-split       Two or more live buckets for the SAME item whose
+ *                      segments are the same set in a different order (e.g.
+ *                      "Blue-White / Black / Grey" vs "Blue-White / Grey /
+ *                      Black"). One real product, stock halved across two
+ *                      rows. Since _composeLotColorKey imposed a canonical
+ *                      order this can only be historical data, and a
+ *                      recalculation heals it — this finding names what
+ *                      will merge.
+ *  - unknown-axis      A lot's Color Breakdown entry carries an axisKey that
+ *                      is not an axis of its own process (renamed/removed
+ *                      axis, or a lot moved between processes).
+ *  - color-off-axis    An entry's color is not one its process's axes
+ *                      actually offer, and it is not flagged isCustom —
+ *                      usually a Color Master rename whose cascade did not
+ *                      reach this lot.
+ *  - orphan-segment    A live composite bucket contains a segment that no
+ *                      axis of its producing process can account for.
+ *  - unresolved-debit  A lot consumes a POOL component under a color that
+ *                      matches no bucket of that item, so the consumption
+ *                      opens a phantom negative bucket instead of debiting
+ *                      real stock.
+ *
+ * Cost: one Production read plus one recipe read per distinct process, so
+ * it is safe to run against a full sheet. Findings are returned AND written
+ * to the execution log, so this is equally usable from the Apps Script
+ * editor (see _runVerifyColorChain) and from a UI caller later.
+ *
+ * @param {Object} [options]
+ * @param {number} [options.limit] Max findings RETURNED per category (all are counted). Default 50.
+ * @returns {Object} buildResponse with { lotsChecked, bucketsChecked, countsByType, findings }
+ */
+function verifyProductionColorChain(options) {
+  try {
+    const limit = (options && Number(options.limit)) || 50;
+    const findings = [];
+    const countsByType = {};
+    function addFinding(type, message, detail) {
+      countsByType[type] = (countsByType[type] || 0) + 1;
+      if (countsByType[type] <= limit) {
+        findings.push({ type: type, message: message, detail: detail || {} });
+      }
+    }
+
+    const poolRows = (getWarehousePoolData().data || []);
+
+    // ── order-split: same item, same segment set, different segment order.
+    const byItemAndOrderKey = new Map();
+    poolRows.forEach(r => {
+      if (!r.color || _colorSegments(r.color).length < 2) return;
+      const key = r.outputItemName.trim().toLowerCase() + '||' + _colorOrderKey(r.color);
+      if (!byItemAndOrderKey.has(key)) byItemAndOrderKey.set(key, []);
+      byItemAndOrderKey.get(key).push(r);
+    });
+    byItemAndOrderKey.forEach(rows => {
+      const distinct = Array.from(new Set(rows.map(r => r.color)));
+      if (distinct.length < 2) return;
+      addFinding('order-split',
+        '"' + rows[0].outputItemName + '" has ' + distinct.length +
+        ' buckets that are the same color combination in a different order: ' +
+        distinct.map(c => '"' + c + '"').join(' vs ') +
+        '. Their stock is split; a Warehouse Pool recalculation merges them.',
+        { outputItemName: rows[0].outputItemName, colors: distinct,
+          qtys: rows.map(r => ({ color: r.color, available: r.availableQty })) });
+    });
+
+    // ── per-lot checks against each process's real axes.
+    const sheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+    const lastRow = sheet.getLastRow();
+    const colorLinks = typeof _getAllProcessColorLinks === 'function' ? _getAllProcessColorLinks() : [];
+    const axesCache = new Map(); // processIdLower -> { axes, byKey, allColorsLower }
+    function axesFor(processId) {
+      const key = String(processId || '').trim().toLowerCase();
+      if (!axesCache.has(key)) {
+        let axes = [];
+        try {
+          const comps = (getProcessComponentsData(processId).data || []);
+          axes = computeColorAxesForProcess(processId, comps, poolRows, colorLinks) || [];
+        } catch (e) {
+          axes = [];
+        }
+        const byKey = new Map();
+        const allColorsLower = new Set();
+        axes.forEach(a => {
+          byKey.set(String(a.key || '').toLowerCase(), a);
+          (a.colors || []).forEach(c => allColorsLower.add(String(c).trim().toLowerCase()));
+        });
+        axesCache.set(key, { axes: axes, byKey: byKey, allColorsLower: allColorsLower });
+      }
+      return axesCache.get(key);
+    }
+
+    let lotsChecked = 0;
+    let prodData = [];
+    if (lastRow >= 2) {
+      prodData = sheet.getRange(2, 1, lastRow - 1, PRODUCTION_COL.COLOR_BREAKDOWN).getValues();
+      prodData.forEach((row, i) => {
+        const rowIdx = i + 2;
+        const status = String(row[PRODUCTION_COL.STATUS - 1] || '').trim().toLowerCase();
+        if (status !== 'completed') return;
+        const processId = String(row[PRODUCTION_COL.PROCESS_ID - 1] || '').trim();
+        const lotNumber = String(row[PRODUCTION_COL.LOT_NUMBER - 1] || '').trim() || ('row ' + rowIdx);
+
+        let breakdown = [];
+        try {
+          const parsed = JSON.parse(String(row[PRODUCTION_COL.COLOR_BREAKDOWN - 1] || '').trim() || '[]');
+          if (Array.isArray(parsed)) breakdown = parsed;
+        } catch (e) {
+          return;
+        }
+        if (breakdown.length === 0) return;
+        lotsChecked++;
+
+        const info = axesFor(processId);
+        if (info.axes.length === 0) return; // no color dimension to check against
+
+        breakdown.forEach(e => {
+          const color = String((e && e.color) || '').trim();
+          if (!color) return;
+          const axisKey = String((e && e.axisKey) || '').trim().toLowerCase();
+          // A blank axisKey is legacy data, not an error — those lots simply
+          // predate axis tagging.
+          if (axisKey && axisKey !== 'other' && axisKey !== 'custom' && !info.byKey.has(axisKey)) {
+            addFinding('unknown-axis',
+              'Lot ' + lotNumber + ' records color "' + color + '" under axis "' + axisKey +
+              '", which its process no longer has.',
+              { rowIdx: rowIdx, lotNumber: lotNumber, processId: processId, color: color, axisKey: axisKey });
+            return;
+          }
+          if (e && e.isCustom) return; // operator-typed one-off, exempt by design
+          if (!info.allColorsLower.has(color.toLowerCase())) {
+            addFinding('color-off-axis',
+              'Lot ' + lotNumber + ' records color "' + color +
+              '", which none of its process\'s axes offer.',
+              { rowIdx: rowIdx, lotNumber: lotNumber, processId: processId, color: color, axisKey: axisKey });
+          }
+        });
+      });
+    }
+
+    // ── orphan segments in live composite buckets.
+    let bucketsChecked = 0;
+    poolRows.forEach(r => {
+      const segments = _colorSegments(r.color);
+      if (segments.length < 2) return;
+      bucketsChecked++;
+      const info = axesFor(r.processId);
+      if (info.axes.length === 0) return;
+      segments.forEach(seg => {
+        if (!info.allColorsLower.has(seg.toLowerCase())) {
+          addFinding('orphan-segment',
+            'Bucket "' + r.color + '" of "' + r.outputItemName + '" contains segment "' + seg +
+            '", which no axis of its producing process accounts for.',
+            { outputItemName: r.outputItemName, color: r.color, segment: seg, processId: r.processId });
+        }
+      });
+    });
+
+    // ── phantom buckets: a color that was only ever CONSUMED, never
+    // produced. Detected from the rebuilt pool itself rather than by
+    // re-deriving Pass 2's lookup, because an unresolved consumption
+    // creates the very bucket it failed to find — checking "does a bucket
+    // with this name exist" would therefore always say yes and hide the
+    // problem.
+    //
+    // Deliberately NOT a negative-stock check: a bucket that was genuinely
+    // produced and has gone negative is a real physical counting signal and
+    // is left alone. Only producedQty === 0 with consumption against it is
+    // reported, which means the color was never produced under that name at
+    // all — a reference problem (a rename that missed, or a recipe Color
+    // Sub-Group naming a combination that does not exist), not a count.
+    const consumersByItemColor = new Map(); // itemLower||colorLower -> [lotNumber]
+    prodData.forEach((row, i) => {
+      const status = String(row[PRODUCTION_COL.STATUS - 1] || '').trim().toLowerCase();
+      if (status !== 'completed') return;
+      const lotNumber = String(row[PRODUCTION_COL.LOT_NUMBER - 1] || '').trim() || ('row ' + (i + 2));
+      let comps = [];
+      try {
+        const parsed = JSON.parse(String(row[PRODUCTION_COL.COMPONENTS_CONSUMED - 1] || '').trim() || '[]');
+        if (Array.isArray(parsed)) comps = parsed;
+      } catch (e) {
+        return;
+      }
+      comps.forEach(c => {
+        if (String((c && c.sourceType) || '').toUpperCase() !== COMPONENT_SOURCE_TYPES.POOL) return;
+        const itemName = String((c && c.itemName) || '').trim();
+        const cg = String((c && c.colorGroup) || '').trim();
+        if (!itemName || !cg || isCommonColorGroup(cg)) return;
+        const k = itemName.toLowerCase() + '||' + cg.toLowerCase();
+        if (!consumersByItemColor.has(k)) consumersByItemColor.set(k, []);
+        consumersByItemColor.get(k).push(lotNumber);
+      });
+    });
+    poolRows.forEach(r => {
+      if (!r.color) return;
+      if (!(Number(r.producedQty) === 0 && Number(r.consumedQty) > 0)) return;
+      const lots = consumersByItemColor.get(r.outputItemName.trim().toLowerCase() + '||' + r.color.toLowerCase()) || [];
+      addFinding('unresolved-debit',
+        '"' + r.outputItemName + '" is consumed in color "' + r.color + '" (' + r.consumedQty +
+        ') but was never produced in it' +
+        (lots.length ? ' — see lot(s) ' + lots.slice(0, 5).join(', ') : '') +
+        '. That consumption is drawing on a color that does not exist rather than on real stock.',
+        { outputItemName: r.outputItemName, color: r.color, consumedQty: r.consumedQty, lotNumbers: lots });
+    });
+
+    const total = Object.keys(countsByType).reduce((s, k) => s + countsByType[k], 0);
+    Logger.log('[VERIFY COLOR CHAIN] lots checked: ' + lotsChecked +
+      ', composite buckets checked: ' + bucketsChecked + ', findings: ' + total);
+    if (total === 0) {
+      Logger.log('[VERIFY COLOR CHAIN] No problems found - every lot color chain is consistent.');
+    } else {
+      Object.keys(countsByType).sort().forEach(t => Logger.log('  ' + t + ': ' + countsByType[t]));
+      findings.forEach(f => Logger.log('  [' + f.type + '] ' + f.message));
+      if (total > findings.length) {
+        Logger.log('  ... ' + (total - findings.length) + ' more (raise options.limit to see them).');
+      }
+    }
+
+    return buildResponse(true, {
+      lotsChecked: lotsChecked,
+      bucketsChecked: bucketsChecked,
+      countsByType: countsByType,
+      findings: findings
+    }, total === 0 ? 'No color-chain problems found.' : total + ' color-chain finding(s).');
+  } catch (error) {
+    Log.error('[verifyProductionColorChain] Error:', error.message);
+    return buildResponse(false, null, 'Failed to verify production color chain: ' + error.message);
+  }
+}
+
+/**
+ * One-click entry point for the Apps Script editor: pick
+ * _runVerifyColorChain from the function dropdown and Run, then read the
+ * execution log. Writes nothing.
+ */
+function _runVerifyColorChain() {
+  verifyProductionColorChain();
 }

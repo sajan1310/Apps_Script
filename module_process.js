@@ -102,7 +102,8 @@ function _mapProcessRow(row) {
     remarks: String(row[PROCESS_COL.REMARKS - 1] || '').trim(),
     outputItemName: String(row[PROCESS_COL.OUTPUT_ITEM_NAME - 1] || '').trim(),
     processType: String(row[PROCESS_COL.PROCESS_TYPE - 1] || '').trim(),
-    primaryColorAxis: String(row[PROCESS_COL.PRIMARY_COLOR_AXIS - 1] || '').trim()
+    primaryColorAxis: String(row[PROCESS_COL.PRIMARY_COLOR_AXIS - 1] || '').trim(),
+    dispatchDifferentiator: String(row[PROCESS_COL.DISPATCH_DIFFERENTIATOR - 1] || '').trim()
   };
 }
 
@@ -121,11 +122,12 @@ function getProcessData(activeOnly) {
       ensureProcessOutputItemColumn(sheet);
       ensureProcessTypeColumn(sheet);
       ensureProcessPrimaryColorAxisColumn(sheet);
+      ensureProcessDispatchDifferentiatorColumn(sheet);
 
       const lastRow = sheet.getLastRow();
       if (lastRow < 2) return buildResponse(true, []);
 
-      const data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
+      const data = sheet.getRange(2, 1, lastRow - 1, PROCESS_COL.DISPATCH_DIFFERENTIATOR).getValues();
       const records = [];
 
       for (let i = 0; i < data.length; i++) {
@@ -200,6 +202,26 @@ function ensureProcessPrimaryColorAxisColumn(sheet) {
 }
 
 /**
+ * Backfills the "Dispatch Differentiator" column on Process Master sheets
+ * created before that setting existed (see PROCESS_COL.DISPATCH_DIFFERENTIATOR).
+ * Blank on every pre-existing row, which reads as "no differentiator" — the
+ * exact Ready to Dispatch behavior those processes already had.
+ */
+function ensureProcessDispatchDifferentiatorColumn(sheet) {
+  try {
+    if (sheet.getLastColumn() < PROCESS_COL.DISPATCH_DIFFERENTIATOR) {
+      sheet.insertColumnsAfter(sheet.getLastColumn(), PROCESS_COL.DISPATCH_DIFFERENTIATOR - sheet.getLastColumn());
+      sheet.getRange(1, PROCESS_COL.DISPATCH_DIFFERENTIATOR, 1, 1)
+        .setValues([['Dispatch Differentiator']])
+        .setFontWeight('bold')
+        .setBackground('#f3f3f3');
+    }
+  } catch (error) {
+    Log.error('[ensureProcessDispatchDifferentiatorColumn] Error:', error.message);
+  }
+}
+
+/**
  * @private Updates just one process's Primary Color Axis cell, without
  * touching its recipe/components/color links — used when the operator picks
  * or changes the Primary Axis directly on the Production Lot form (see
@@ -214,6 +236,7 @@ function _setProcessPrimaryColorAxis(processId, primaryColorAxis) {
   try {
     const sheet = getSheet(APP_CONFIG.SHEETS.PROCESS_MASTER);
     ensureProcessPrimaryColorAxisColumn(sheet);
+    ensureProcessDispatchDifferentiatorColumn(sheet);
 
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) return;
@@ -288,6 +311,7 @@ function saveProcess(formData) {
     ensureProcessOutputItemColumn(sheet);
     ensureProcessTypeColumn(sheet);
     ensureProcessPrimaryColorAxisColumn(sheet);
+    ensureProcessDispatchDifferentiatorColumn(sheet);
 
     const processName = sanitizeString(formData.processName, 'processName');
     if (!processName) {
@@ -350,6 +374,9 @@ function saveProcess(formData) {
     // already used for colorLinks below) — a stale/mismatched label just
     // falls back to legacy behavior client-side rather than blocking save.
     const primaryColorAxis = sanitizeString(formData.primaryColorAxis || '', 'primaryColorAxis');
+    // Only meaningful on a final-stage process (see PROCESS_COL.DISPATCH_DIFFERENTIATOR);
+    // stored regardless so toggling Is Final Stage off and back on keeps the choice.
+    const dispatchDifferentiator = sanitizeString(formData.dispatchDifferentiator || '', 'dispatchDifferentiator');
 
     const dupComponent = _findDuplicateComponent(components);
     if (dupComponent) {
@@ -371,7 +398,7 @@ function saveProcess(formData) {
     // further down can reuse this same read to locate its target row,
     // instead of issuing a second getRange().getValues() read of the
     // identical Process ID column.
-    const existing = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 10).getValues() : [];
+    const existing = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, PROCESS_COL.DISPATCH_DIFFERENTIATOR).getValues() : [];
     if (lastRow >= 2) {
       for (let i = 0; i < existing.length; i++) {
         const rowProcessId = String(existing[i][PROCESS_COL.PROCESS_ID - 1] || '').trim();
@@ -412,14 +439,14 @@ function saveProcess(formData) {
         return buildResponse(false, null, `Process with ID "${processId}" not found.`);
       }
 
-      const oldRow = sheet.getRange(targetRow, 1, 1, 10).getValues()[0];
+      const oldRow = sheet.getRange(targetRow, 1, 1, PROCESS_COL.DISPATCH_DIFFERENTIATOR).getValues()[0];
       const oldOutputItemName = String(oldRow[PROCESS_COL.OUTPUT_ITEM_NAME - 1] || '').trim();
       const oldProcessName = String(oldRow[PROCESS_COL.PROCESS_NAME - 1] || '').trim();
       const oldIsFinalStageCell = oldRow[PROCESS_COL.IS_FINAL_STAGE - 1];
       const oldIsFinalStage = oldIsFinalStageCell === true || String(oldIsFinalStageCell).toUpperCase() === 'TRUE';
 
       sheet.getRange(targetRow, 1, 1, 10).setValues([[
-        processId, processName, sequence, lotPrefix, isFinalStage, active, remarks, outputItemName, processType, primaryColorAxis
+        processId, processName, sequence, lotPrefix, isFinalStage, active, remarks, outputItemName, processType, primaryColorAxis, dispatchDifferentiator
       ]]);
 
       _saveProcessComponentsForProcess(processId, components);
@@ -468,13 +495,13 @@ function saveProcess(formData) {
       // PRIMARY_COLOR_AXIS), but honor getLastColumn() so a future column
       // added past it is still picked up without touching this line (mirrors
       // saveProduction's fresh-row read-back).
-      const freshProcess = _mapProcessRow(sheet.getRange(targetRow, 1, 1, Math.max(sheet.getLastColumn(), PROCESS_COL.PRIMARY_COLOR_AXIS)).getValues()[0]);
+      const freshProcess = _mapProcessRow(sheet.getRange(targetRow, 1, 1, Math.max(sheet.getLastColumn(), PROCESS_COL.DISPATCH_DIFFERENTIATOR)).getValues()[0]);
 
       return buildResponse(true, { processId: processId, process: freshProcess }, `Process "${processName}" updated successfully.`);
     }
 
     const newProcessId = getNextProcessId();
-    sheet.appendRow([newProcessId, processName, sequence, lotPrefix, isFinalStage, active, remarks, outputItemName, processType, primaryColorAxis]);
+    sheet.appendRow([newProcessId, processName, sequence, lotPrefix, isFinalStage, active, remarks, outputItemName, processType, primaryColorAxis, dispatchDifferentiator]);
 
     _saveProcessComponentsForProcess(newProcessId, components);
     _saveProcessColorLinksForProcess(newProcessId, colorLinks);
@@ -483,7 +510,7 @@ function saveProcess(formData) {
     invalidateListCache(MASTER_DATA_CACHE_KEYS.PROCESS_ALL, MASTER_DATA_CACHE_KEYS.PROCESS_ACTIVE);
     logAction('CREATE', APP_CONFIG.SHEETS.PROCESS_MASTER, newProcessId, `Process created: ${processName}`, 'SUCCESS');
 
-    const freshNewProcess = _mapProcessRow(sheet.getRange(sheet.getLastRow(), 1, 1, Math.max(sheet.getLastColumn(), PROCESS_COL.PRIMARY_COLOR_AXIS)).getValues()[0]);
+    const freshNewProcess = _mapProcessRow(sheet.getRange(sheet.getLastRow(), 1, 1, Math.max(sheet.getLastColumn(), PROCESS_COL.DISPATCH_DIFFERENTIATOR)).getValues()[0]);
 
     return buildResponse(true, { processId: newProcessId, process: freshNewProcess }, `Process "${processName}" created successfully.`);
   } catch (error) {
@@ -1089,7 +1116,7 @@ function getProcessComponentsData(processId) {
     if (lastRow < 2) return buildResponse(true, []);
 
     const targetId = String(processId || '').trim().toLowerCase();
-    const data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
+    const data = sheet.getRange(2, 1, lastRow - 1, PROCESS_COL.DISPATCH_DIFFERENTIATOR).getValues();
 
     const components = data
       .map(row => ({
@@ -1416,7 +1443,7 @@ function saveItemProcessMappings(itemName, size, mappings) {
     const poolRowByProcess = {};       // a COMMON POOL row that blocks adding
 
     if (lastRow >= 2) {
-      const data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
+      const data = sheet.getRange(2, 1, lastRow - 1, PROCESS_COL.DISPATCH_DIFFERENTIATOR).getValues();
       for (let i = 0; i < data.length; i++) {
         const row = data[i];
         if (String(row[PROCESS_COMPONENTS_COL.ITEM_NAME - 1] || '').trim().toLowerCase() !== targetName) continue;
@@ -1822,7 +1849,7 @@ function _legacyColorGroupList(components, poolRows, colorLinks) {
     // correlated, in which case they're paired instead of cross-multiplied.
     const axesBySignature = new Map();
     colorsByItem.forEach((itemColors, itemKey) => {
-      if (itemColors.size <= 1) return;
+      if (!_poolItemIsColorAxis(itemColors)) return;
       const sorted = Array.from(itemColors.values()).sort((a, b) => a.localeCompare(b));
       const signature = sorted.map(c => c.toLowerCase()).join('|');
       if (!axesBySignature.has(signature)) {
@@ -1853,6 +1880,31 @@ function _legacyColorGroupList(components, poolRows, colorLinks) {
   }
 
   return Array.from(colors.values()).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * @private Does this POOL-sourced recipe item contribute a color axis?
+ *
+ * Normally only when it has 2+ pool colors: an item that exists in exactly
+ * one color (e.g. a Fitted Rim that is always Black) is a fixed input, not
+ * a per-output-color choice, and must not leak into the output checklist.
+ *
+ * The exception is a single color that is ITSELF a composite (it contains
+ * COLOR_COMBO_DELIMITER). That color is the accumulated identity of every
+ * upstream process in the chain, so excluding it does not drop a
+ * non-choice — it truncates the chain, silently discarding everything
+ * earlier stages recorded. A process layer added on top of an upstream
+ * stage that has so far produced only ONE combination would otherwise
+ * credit its output under just its own axis's color, losing the "/"-joined
+ * history the operator expects to keep seeing.
+ *
+ * @param {Map|Set} itemColors This item's live pool colors.
+ */
+function _poolItemIsColorAxis(itemColors) {
+  if (!itemColors) return false;
+  if (itemColors.size > 1) return true;
+  const only = Array.from(itemColors.values())[0];
+  return String(only || '').indexOf(COLOR_COMBO_DELIMITER) !== -1;
 }
 
 /**
@@ -1891,6 +1943,30 @@ function _legacyColorGroupList(components, poolRows, colorLinks) {
 function computeColorAxesForProcess(processId, components, poolRows, colorLinks) {
   const rawAxes = [];
 
+  // Where each axis first appears in THIS process's own recipe. That row
+  // order is the operator's authored sequence — and for a POOL row it is
+  // also the association with the upstream process that produces it — so it
+  // is what orders the axes everywhere downstream: the checklist the
+  // operator fills in, and the composite color key a lot is credited under
+  // (see _composeLotColorKey in module_warehouse.js). Deriving order from
+  // the recipe instead of from Warehouse Pool row order matters because the
+  // pool sheet is rebuilt on every recalculation and its row order can
+  // change, which silently re-ordered composite color strings.
+  const recipeIndexByPoolItem = new Map(); // itemNameLower -> first recipe row index
+  const recipeIndexByTagAxis = new Map();  // axisLabelLower -> first recipe row index
+  components.forEach((c, idx) => {
+    if (c.sourceType === COMPONENT_SOURCE_TYPES.POOL) {
+      const key = String(c.itemName || '').toLowerCase();
+      if (key && !recipeIndexByPoolItem.has(key)) recipeIndexByPoolItem.set(key, idx);
+    }
+    const axisLabel = String(c.colorAxis || '').trim().toLowerCase();
+    if (axisLabel && c.colorGroup && !isCommonColorGroup(c.colorGroup)
+      && !recipeIndexByTagAxis.has(axisLabel)) {
+      recipeIndexByTagAxis.set(axisLabel, idx);
+    }
+  });
+  const MAX_RECIPE_INDEX = components.length + 1;
+
   const poolItemNames = new Set(
     components.filter(c => c.sourceType === COMPONENT_SOURCE_TYPES.POOL).map(c => c.itemName.toLowerCase())
   );
@@ -1913,13 +1989,14 @@ function computeColorAxesForProcess(processId, components, poolRows, colorLinks)
 
     const axesBySignature = new Map();
     colorsByItem.forEach((itemColors, itemKey) => {
-      if (itemColors.size <= 1) return;
+      if (!_poolItemIsColorAxis(itemColors)) return;
       const sorted = Array.from(itemColors.values()).sort((a, b) => a.localeCompare(b));
       const signature = sorted.map(c => c.toLowerCase()).join('|');
       if (!axesBySignature.has(signature)) {
-        axesBySignature.set(signature, { colors: sorted, processIds: new Set(), itemNames: new Set() });
+        axesBySignature.set(signature, { colors: sorted, processIds: new Set(), itemNames: new Set(), itemKeys: new Set() });
       }
       const entry = axesBySignature.get(signature);
+      entry.itemKeys.add(itemKey);
       const pid = processIdByItem.get(itemKey);
       if (pid) entry.processIds.add(pid);
       const itemName = itemNameByKey.get(itemKey);
@@ -1934,10 +2011,18 @@ function computeColorAxesForProcess(processId, components, poolRows, colorLinks)
       // _axisKeyForPoolItemNames (Script_Production.html) can still resolve
       // a merged pool axis by its constituent item names.
       const itemNames = Array.from(axis.itemNames).sort((a, b) => a.localeCompare(b));
+      // An axis fed by several recipe rows takes the EARLIEST of them, so
+      // it sits where the operator first introduced it.
+      let recipeIndex = MAX_RECIPE_INDEX;
+      axis.itemKeys.forEach(k => {
+        const idx = recipeIndexByPoolItem.has(k) ? recipeIndexByPoolItem.get(k) : MAX_RECIPE_INDEX;
+        if (idx < recipeIndex) recipeIndex = idx;
+      });
       rawAxes.push({
         colors: axis.colors,
         processIds: axis.processIds,
         label: itemNames.length > 0 ? itemNames.join(', ') : undefined,
+        recipeIndex: recipeIndex,
         source: 'pool'
       });
     });
@@ -1961,11 +2046,13 @@ function computeColorAxesForProcess(processId, components, poolRows, colorLinks)
     _addUniqueCaseInsensitive(rawTagGroups.get(axisKey).colors, c.colorGroup);
   });
   rawTagGroups.forEach(({ label, colors: colorMap }) => {
+    const labelLower = label.toLowerCase();
     rawAxes.push({
       colors: Array.from(colorMap.values()).sort((a, b) => a.localeCompare(b)),
       processIds: processId ? new Set([processId]) : new Set(),
-      axisKey: 'tag:' + label.toLowerCase(),
+      axisKey: 'tag:' + labelLower,
       label,
+      recipeIndex: recipeIndexByTagAxis.has(labelLower) ? recipeIndexByTagAxis.get(labelLower) : MAX_RECIPE_INDEX,
       source: 'tag'
     });
   });
@@ -1978,16 +2065,77 @@ function computeColorAxesForProcess(processId, components, poolRows, colorLinks)
     ? _mergeLinkedAxes(rawAxes, colorLinks)
     : rawAxes;
 
+  // Recipe order is the app's ONE canonical axis order: it drives the
+  // checklist the operator sees and the composite color key the lot is
+  // credited under, so those two can never disagree. Ties (an axis with no
+  // resolvable recipe row) fall back to the label so the result is still
+  // fully determined rather than dependent on Warehouse Pool row order.
+  const orderedAxes = mergedAxes.slice().sort((a, b) => {
+    const ia = typeof a.recipeIndex === 'number' ? a.recipeIndex : MAX_RECIPE_INDEX;
+    const ib = typeof b.recipeIndex === 'number' ? b.recipeIndex : MAX_RECIPE_INDEX;
+    if (ia !== ib) return ia - ib;
+    return String(a.label || '').toLowerCase().localeCompare(String(b.label || '').toLowerCase());
+  });
+
   let poolAxisCounter = 0;
-  return mergedAxes.map(axis => {
+  return orderedAxes.map((axis, position) => {
     if (axis.source === 'tag') {
-      return { key: 'tag:' + axis.label.toLowerCase(), label: axis.label, colors: axis.colors, source: 'tag' };
+      return { key: 'tag:' + axis.label.toLowerCase(), label: axis.label, colors: axis.colors, source: 'tag', position: position };
     }
     poolAxisCounter++;
     const label = axis.label || `Color Group ${poolAxisCounter}`;
     const keyPrefix = axis.source === 'merged' ? 'merged:' : 'pool:';
-    return { key: keyPrefix + label.toLowerCase(), label, colors: axis.colors, source: axis.source };
+    return { key: keyPrefix + label.toLowerCase(), label, colors: axis.colors, source: axis.source, position: position };
   });
+}
+
+/**
+ * Every process's axis order, as one bulk read, for callers that must key
+ * many lots consistently in a single pass (see recalculateWarehousePool's
+ * Pass 1). Reads Process Components, Warehouse Pool and Process Color Links
+ * ONCE for the whole set rather than once per process.
+ *
+ * The order is the recipe's own row order (see computeColorAxesForProcess),
+ * which is also the order the operator sees on the Production checklist —
+ * so a composite color string always lists its axes in the sequence that
+ * process's recipe declares them, and the string an operator is shown while
+ * logging is the string the lot is credited under.
+ *
+ * @returns {Object} { [processIdLower]: { [axisKeyLower]: position } }
+ */
+function getAxisOrderByProcess() {
+  const result = {};
+  try {
+    const allComponents = (getProcessComponentsData('').data || []);
+    const componentsByProcess = new Map();
+    allComponents.forEach(c => {
+      const key = String(c.processId || '').trim();
+      if (!key) return;
+      if (!componentsByProcess.has(key)) componentsByProcess.set(key, []);
+      componentsByProcess.get(key).push(c);
+    });
+
+    const poolRows = typeof getWarehousePoolData === 'function'
+      ? ((getWarehousePoolData() || {}).data || [])
+      : [];
+    const colorLinks = _getAllProcessColorLinks();
+
+    componentsByProcess.forEach((components, pid) => {
+      let axes = [];
+      try {
+        axes = computeColorAxesForProcess(pid, components, poolRows, colorLinks) || [];
+      } catch (e) {
+        axes = [];
+      }
+      if (axes.length === 0) return;
+      const byKey = {};
+      axes.forEach((a, i) => { byKey[String(a.key || '').toLowerCase()] = i; });
+      result[pid.toLowerCase()] = byKey;
+    });
+  } catch (error) {
+    Log.error('[getAxisOrderByProcess] Error:', error.message);
+  }
+  return result;
 }
 
 /**
@@ -2519,9 +2667,17 @@ function _mergeLinkedAxes(axes, colorLinks) {
       .filter(Boolean);
 
     if (mergedColors.length > 0) {
+      // A merged axis inherits the earliest recipe position of the axes it
+      // absorbed, so pairing two axes never moves the pair somewhere else
+      // in the composite color string.
+      const mergedRecipeIndex = componentRefs.reduce((min, r) => {
+        const idx = axes[axisIndexByRef.get(r)].recipeIndex;
+        return (typeof idx === 'number' && idx < min) ? idx : min;
+      }, Number.MAX_SAFE_INTEGER);
       mergedAxes.push({
         colors: mergedColors,
         label: labelParts.length > 0 ? labelParts.join(', ') : undefined,
+        recipeIndex: mergedRecipeIndex,
         source: 'merged'
       });
     }

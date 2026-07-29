@@ -233,11 +233,12 @@ function _getAllProcessRecords() {
 
   ensureProcessOutputItemColumn(sheet);
   ensureProcessPrimaryColorAxisColumn(sheet);
+  ensureProcessDispatchDifferentiatorColumn(sheet);
 
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  const data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
+  const data = sheet.getRange(2, 1, lastRow - 1, PROCESS_COL.DISPATCH_DIFFERENTIATOR).getValues();
   const records = [];
 
   for (let i = 0; i < data.length; i++) {
@@ -252,7 +253,8 @@ function _getAllProcessRecords() {
       lotPrefix: String(row[PROCESS_COL.LOT_PREFIX - 1] || '').trim().toUpperCase(),
       isFinalStage: row[PROCESS_COL.IS_FINAL_STAGE - 1] === true || String(row[PROCESS_COL.IS_FINAL_STAGE - 1]).toUpperCase() === 'TRUE',
       outputItemName: String(row[PROCESS_COL.OUTPUT_ITEM_NAME - 1] || '').trim(),
-      primaryColorAxis: String(row[PROCESS_COL.PRIMARY_COLOR_AXIS - 1] || '').trim()
+      primaryColorAxis: String(row[PROCESS_COL.PRIMARY_COLOR_AXIS - 1] || '').trim(),
+      dispatchDifferentiator: String(row[PROCESS_COL.DISPATCH_DIFFERENTIATOR - 1] || '').trim()
     });
   }
 
