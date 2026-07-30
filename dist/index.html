@@ -25950,6 +25950,7 @@
           if (seq !== undefined && seq !== this._compLoadSeq) return;
           const all = res.success ? (res.data || []) : [];
           const commonOverrideComps = this._getCommonItemsWithColorOverride(all);
+          const sharedItemKeys = this._sharedItemSlotKeys(all);
 
           colors.forEach(color => {
             const colIndex = this.getMatrixColumnIndex(color);
@@ -25970,7 +25971,12 @@
               const colorComps = all
                 .map(c => ({ comp: c, token: this._matchedColorToken(c.colorGroup, color) }))
                 .filter(x => x.token)
-                .map(({ comp, token }) => ({ ...comp, displayName: this._stripColorSubstring(comp.itemName || '', token) }));
+                .map(({ comp, token }) => ({
+                  ...comp,
+                  displayName: sharedItemKeys.has(this._itemSlotKey(comp.itemName, comp.size))
+                    ? (comp.itemName || '').trim()
+                    : this._stripColorSubstring(comp.itemName || '', token)
+                }));
 
               colorComps.forEach(c => {
                 let row = this.findMatrixRowByDisplayName(c.displayName, c.size || '');
@@ -26188,6 +26194,7 @@
         // lot's own saved components, not the current recipe (which may have
         // since changed).
         const commonOverrideComps = this._getCommonItemsWithColorOverride(components || []);
+        const sharedItemKeys = this._sharedItemSlotKeys(components || []);
 
         (components || []).forEach(c => {
           const colorGroup = c.colorGroup || 'COMMON';
@@ -26315,7 +26322,9 @@
           // different literal item per color (e.g. "Frame---Red" /
           // "Frame---Blue") — keep on a merged row, one real item picker
           // per color cell.
-          const displayName = this._stripColorSubstring(c.itemName || '', colorGroup);
+          const displayName = sharedItemKeys.has(this._itemSlotKey(c.itemName, c.size))
+            ? (c.itemName || '').trim()
+            : this._stripColorSubstring(c.itemName || '', colorGroup);
           let row = this.findMatrixRowByDisplayName(displayName, c.size || '');
           if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, sourceType: c.sourceType, narration: c.narration });
           const colIndex = this.getMatrixColumnIndex(colorGroup);
@@ -27431,6 +27440,34 @@
         );
       },
 
+      // Detects components that are genuinely ONE shared physical item
+      // referenced under more than one colorGroup (e.g. a sticker sheet
+      // printed with two colors, consumed by both those colors' recipes) —
+      // as opposed to the "same generic component, different literal item
+      // per color" case _stripColorSubstring/_matchedColorToken exist for
+      // (e.g. "Frame---Red" / "Frame---Blue"). Stripping THIS color's token
+      // out of an already-shared item's name is actively harmful: if the
+      // color word happens to appear inside the item's own name (e.g.
+      // "Backrest Sticker Pink/SeaGreen" under colorGroup "SeaGreen"),
+      // stripping leaves a mangled leftover ("...Pink") that no longer
+      // matches the OTHER colorGroup's row — which, having found nothing of
+      // ITS OWN color to strip, kept the full raw name — producing two rows
+      // for what is really one item. Shared items are instead matched on
+      // their raw, unstripped name, which is already identical across every
+      // colorGroup that references them.
+      _sharedItemSlotKeys(components) {
+        const groupsByKey = new Map();
+        (components || []).forEach(c => {
+          if (!c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup) || c.sourceType === 'POOL') return;
+          const key = this._itemSlotKey(c.itemName, c.size);
+          if (!groupsByKey.has(key)) groupsByKey.set(key, new Set());
+          groupsByKey.get(key).add(String(c.colorGroup).trim().toLowerCase());
+        });
+        const shared = new Set();
+        groupsByKey.forEach((groups, key) => { if (groups.size > 1) shared.add(key); });
+        return shared;
+      },
+
       // Splits a lot's components into the Common table (no color, shown
       // once) and the Per-Color matrix (one row per de-duplicated item, one
       // quantity column per color) — mirroring the Create/Edit Lot form's
@@ -27453,6 +27490,7 @@
         // already covered by their own sibling row — display-only, doesn't
         // touch the lot's actual saved data.
         const commonOverrideComps = this._getCommonItemsWithColorOverride(components || []);
+        const sharedItemKeys = this._sharedItemSlotKeys(components || []);
         const pendingCommonOverrides = [];
 
         (components || []).forEach(comp => {
@@ -27490,7 +27528,9 @@
           }
 
           colors.add(colorKey);
-          const displayName = this._stripColorSubstring(comp.itemName || '', colorKey);
+          const displayName = sharedItemKeys.has(this._itemSlotKey(comp.itemName, comp.size))
+            ? (comp.itemName || '').trim()
+            : this._stripColorSubstring(comp.itemName || '', colorKey);
           const slotKey = [displayName, comp.size || '', narration].join('|').toLowerCase();
           let slot = matrixIndex.get(slotKey);
           if (!slot) {
