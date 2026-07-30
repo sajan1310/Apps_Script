@@ -5112,7 +5112,8 @@
           'Quantities, colours, item identities and status are never changed. Item name is only corrected to fix ' +
           'casing/spelling drift for the same item — never repointed to a different one. Unit is synced to each ' +
           'item\'s current Base Unit; if an item\'s Base Unit was itself changed since a lot used it, that lot\'s ' +
-          'quantity will now read under the new unit.',
+          'quantity will now read under the new unit.\n\n' +
+          'An open Production Sheet is re-rendered with the new values, discarding any edits in it you have not saved.',
           async () => {
             const btn = document.getElementById('btnRefreshProductionFromItems');
             const original = btn?.innerHTML;
@@ -5130,8 +5131,14 @@
               // that cache at render time — a stale one would keep showing
               // the old values even though the sheet is now correct.
               if (res.success) {
+                // Captured BEFORE the reload — currentProductionSheet.idx is
+                // an index into globalProduction, which loadData() replaces
+                // wholesale, so the open sheet is re-found by its stable
+                // rowIdx afterwards instead.
+                const openSheetKey = this._openProductionSheetRowKey();
                 await App.Item.loadData();
                 await this.loadData();
+                this._rerenderOpenProductionSheet(openSheetKey);
               }
             } catch (err) {
               App.Utils.showToast(err.message || 'Failed to refresh production lots from Items Master', true);
@@ -5143,6 +5150,32 @@
             }
           }
         );
+      },
+
+      // The stable rowIdx of the lot whose Production Sheet dialog is
+      // currently open, or null if the dialog is closed. Used to re-render
+      // that sheet after a refresh: currentProductionSheet.idx is a position
+      // in globalProduction, which loadData() replaces wholesale, so the
+      // position can point at a different lot (or nothing) afterwards.
+      _openProductionSheetRowKey() {
+        const modalEl = document.getElementById('productionSheetModal');
+        if (!modalEl || !modalEl.classList.contains('show')) return null;
+        const sheet = App.State.currentProductionSheet;
+        if (!sheet || sheet.idx === undefined || sheet.idx === null) return null;
+        const p = App.State.globalProduction[sheet.idx];
+        return p ? String(p.rowIdx) : null;
+      },
+
+      // Repaints an already-open Production Sheet dialog from the freshly
+      // reloaded lot data, so a "Refresh from Items Master" is reflected in
+      // the sheet the operator is looking at instead of only on the next
+      // reopen. No-op when the dialog is closed (it rebuilds from scratch on
+      // every open anyway) or when the lot is no longer present.
+      _rerenderOpenProductionSheet(rowKey) {
+        if (!rowKey) return;
+        const idx = (App.State.globalProduction || []).findIndex(r => String(r.rowIdx) === String(rowKey));
+        if (idx === -1) return;
+        this._populateProductionSheetData(App.State.globalProduction[idx], idx);
       },
 
       // Trims floating-point noise (e.g. 0.1 * 3 = 0.30000000000000004) for display.
