@@ -574,6 +574,16 @@ function deleteVendorsBulk(vendorNames) {
 
 /**
  * Automatically extracts and updates Vendor and Item Master details from a saved PO or Bill.
+ *
+ * Narration handling: the narration typed on a PO/Bill line is written into
+ * the item's Items Master REMARKS column (overwriting it), so Remarks tracks
+ * the latest purchase-side description. Items Master's own NARRATION is left
+ * alone for items that already exist — that field is the hand-maintained note
+ * Production prints and resolves against, and a vendor's wording overwriting
+ * it would change printed production sheets. A brand-new item auto-created
+ * here still seeds NARRATION from the line, since it would otherwise have
+ * none at all.
+ *
  * @param {string} vendorName - Name of the vendor
  * @param {string} contact - Contact location or number
  * @param {Array<Object>} items - List of items from PO or Bill
@@ -657,6 +667,7 @@ function autoExtractFromPoOrBill(vendorName, contact, items, docInfo) {
 
         const rowSize     = String(row[ITEMS_COL.SIZE - 1]      || '').trim();
         const rowNarration = String(row[ITEMS_COL.NARRATION - 1] || '').trim();
+        const rowRemarks  = String(row[ITEMS_COL.REMARKS - 1]   || '').trim();
         const rowPurchaseUnit = String(row[ITEMS_COL.PURCHASE_UNIT - 1] || '').trim();
 
         const vendorPairs = [];
@@ -672,6 +683,7 @@ function autoExtractFromPoOrBill(vendorName, contact, items, docInfo) {
           itemMemMap[key] = {
             sheetRow: idx + 2,
             currentNarration: rowNarration,
+            currentRemarks: rowRemarks,
             currentPurchaseUnit: rowPurchaseUnit,
             vendorPairs
           };
@@ -680,6 +692,7 @@ function autoExtractFromPoOrBill(vendorName, contact, items, docInfo) {
     }
 
     // Collect pending writes — execute after the loop to avoid interleaving reads/writes
+    const remarksUpdates      = []; // { sheetRow, value }
     const narrationUpdates    = []; // { sheetRow, value }
     const purchaseUnitUpdates = []; // { sheetRow, value }
     const vendorUpdates       = []; // { sheetRow, vendorPairs }
@@ -732,6 +745,12 @@ function autoExtractFromPoOrBill(vendorName, contact, items, docInfo) {
         // a never-before-seen item has no prior Base Unit, so the unit it
         // was first purchased in is used for both, making conversion an
         // identity no-op until the user edits it in Items Master.
+        //
+        // The line's narration seeds NARRATION here (not REMARKS): the
+        // PO/Bill-narration-to-Remarks redirect below is deliberately scoped
+        // to items that already exist in Items Master, and a brand-new item
+        // would otherwise be created with no narration at all for Production
+        // to resolve against.
         newItemRows.push([
           sanitizeString(itemName,     'itemName'),
           sanitizeString(itemSize,     'itemSize'),
@@ -746,20 +765,36 @@ function autoExtractFromPoOrBill(vendorName, contact, items, docInfo) {
         ]);
         newStockItems.push({ name: itemName, size: itemSize });
 
-        // Register in map so duplicate items in the same bill don't append twice
+        // Register in map so duplicate items in the same bill don't append twice.
+        // currentRemarks mirrors the blank Remarks this new row was just
+        // queued with, so a second line for this same item within the SAME
+        // save still routes its narration into Remarks via the existing-item
+        // branch rather than being treated as already in sync.
         itemMemMap[key] = {
           sheetRow: nextNewRow,
           currentNarration: itemNarration,
+          currentRemarks: '',
           currentPurchaseUnit: itemUnit,
           vendorPairs: [{ vendor: vNameClean, rate }]
         };
         nextNewRow++;
       } else {
-        // Existing item — check narration, purchase unit, and vendor rate
+        // Existing item — check remarks, purchase unit, and vendor rate
 
-        if (itemNarration && !mem.currentNarration) {
-          narrationUpdates.push({ sheetRow: mem.sheetRow, value: itemNarration });
-          mem.currentNarration = itemNarration; // update map so second pass doesn't re-queue
+        // The narration typed on a PO/Bill line is redirected into Items
+        // Master's REMARKS (not its Narration), overwriting whatever was
+        // there, so Remarks always reflects the most recent description the
+        // vendor/purchase side actually used for this item. Narration stays
+        // reserved for the note the operator maintains by hand in Items
+        // Master, which is what Production prints and resolves against
+        // (see _getItemNarrationMap / _resolveDisplayNarration) — a purchase
+        // description overwriting that would change printed sheets.
+        //
+        // Only touched for items that already exist here: a line for an
+        // unknown item is handled by the new-item branch above.
+        if (itemNarration && itemNarration !== mem.currentRemarks) {
+          remarksUpdates.push({ sheetRow: mem.sheetRow, value: itemNarration });
+          mem.currentRemarks = itemNarration; // update map so a second line for the same item doesn't re-queue
         }
 
         // Always reflect the unit actually used on this line as the item's
@@ -795,6 +830,12 @@ function autoExtractFromPoOrBill(vendorName, contact, items, docInfo) {
       iSheet.getRange(iLastRow + 1, 1, newItemRows.length, newItemRows[0].length)
         .setValues(newItemRows);
     }
+
+    // Remarks — overwritten with the narration typed on this PO/Bill line
+    remarksUpdates.forEach(({ sheetRow, value }) => {
+      iSheet.getRange(sheetRow, ITEMS_COL.REMARKS)
+        .setValue(sanitizeString(value, 'remarks'));
+    });
 
     // Narration fills (rare — only when a blank narration gets populated)
     narrationUpdates.forEach(({ sheetRow, value }) => {
