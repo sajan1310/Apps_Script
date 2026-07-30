@@ -1615,18 +1615,18 @@ function backfillProductionConsumedItemRefs(oldName, oldSize, newName, newSize) 
  * a different item; a real rename to a different name is already handled by
  * the rename cascade (backfillProductionConsumedItemRefs).
  *
- * unit is synced to the item's current Base Unit whenever a component
- * already carries an EXPLICIT stored unit that no longer matches it. A
- * blank stored unit already means "this item's Base Unit" (see
- * saveProduction) and is left blank — rewriting it to an explicit string
- * would be pure churn, not a fix. For a component with an explicit unit,
- * this assumes its qty was entered in the item's Base Unit at the time — the
- * common case. If an item's Base Unit was itself later changed to a
+ * unit is synced unconditionally to the item's current Base Unit, including
+ * onto components whose stored unit is blank. Blank nominally already means
+ * "this item's Base Unit" (see saveProduction), but leaving it blank keeps
+ * every reader dependent on resolving it live against Items Master — which
+ * is what was silently rendering the wrong unit wherever that lookup missed.
+ * Stamping the real unit in makes the stored snapshot self-describing. This
+ * assumes a component's qty was entered in the item's Base Unit at the time —
+ * the common case. If an item's Base Unit was itself later changed to a
  * genuinely different unit, a lot that deliberately recorded consumption in
- * the OLD Base Unit would have its quantity silently reinterpreted under the
- * new one; this tradeoff (simple, unconditional sync once a unit is stored
- * explicitly, matching narration's own philosophy) was confirmed explicitly
- * with the operator over leaving stale/renamed units unresolved.
+ * the OLD Base Unit would have its quantity reinterpreted under the new one;
+ * this tradeoff (simple, unconditional sync, matching narration's own
+ * philosophy) was confirmed explicitly with the operator.
  *
  * sourceType is deliberately NOT filtered — the lookup is by name+size, and
  * a POOL row whose name happens to be a real Items Master item is the same
@@ -1705,12 +1705,20 @@ function refreshProductionComponentsFromItemsMaster() {
           changed = true;
           counter.n++;
         }
-        // A blank stored unit already MEANS "this item's Base Unit" (see
-        // saveProduction's cleanComponents comment) — leaving it blank is
-        // already in sync, not stale, so only an explicit stored unit that
-        // no longer matches the item's current Base Unit gets rewritten.
-        const storedUnit = String(comp.unit || '').trim();
-        if (master.baseUnit && storedUnit && storedUnit !== master.baseUnit) {
+        // Stamped explicitly even when the stored unit is blank. Blank
+        // nominally already means "this item's Base Unit" (see
+        // saveProduction), but leaving it blank keeps every reader dependent
+        // on resolving it live against Items Master — which is exactly what
+        // was silently showing the wrong unit. Writing the real unit in makes
+        // the stored snapshot self-describing.
+        //
+        // Gated on the component ALREADY having a unit field so this only
+        // ever touches COMPONENTS_CONSUMED (whose schema always carries one,
+        // possibly blank). The CUSTOM_COMPONENTS sheet-customization snapshot
+        // has a deliberately narrower schema (itemName/size/narration/
+        // colorGroup/requiredQty — see serializeProductionSheet) and must not
+        // gain a field here; its unit is resolved at render time instead.
+        if ('unit' in comp && master.baseUnit && String(comp.unit || '').trim() !== master.baseUnit) {
           comp.unit = master.baseUnit;
           changed = true;
           counter.n++;

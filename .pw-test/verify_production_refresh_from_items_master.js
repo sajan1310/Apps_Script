@@ -25,8 +25,11 @@
  *     different item
  *   - an EXPLICIT stored unit that no longer matches the item's current
  *     Base Unit is corrected
- *   - a BLANK stored unit is left blank (it already means "this item's Base
- *     Unit" — rewriting it to an explicit string would be pure churn)
+ *   - a BLANK stored unit is STAMPED with the item's Base Unit, so the
+ *     stored snapshot is self-describing instead of depending on every
+ *     reader resolving it live against Items Master
+ *   - the CUSTOM_COMPONENTS snapshot never GAINS a unit field (its schema
+ *     deliberately has none) — only its narration is repaired
  *   - a component already fully in sync (name/narration/unit) is untouched
  *   - the CUSTOM_COMPONENTS ("sheet customization") snapshot is repaired too
  *   - POOL-sourced rows are resolved by name like any other (metadata, not
@@ -177,10 +180,10 @@ const LOT_A = [
   // POOL-sourced, and its name IS an Items Master row -> resolved like any other
   { itemName: 'Fitted Frame 16 inch', size: '', narration: '', color: '', sourceType: 'POOL', qty: 40, colorGroup: 'Blue', unit: '' },
   // casing/spelling drift on the SAME identity -> corrected to canonical; its
-  // own narration already matches, and unit is blank (must stay blank)
+  // own narration already matches; blank unit gets stamped to 'Pcs'
   { itemName: 'curvy sticker backrest', size: '', narration: 'Sticker note', color: '', sourceType: 'ITEM', qty: 5, colorGroup: 'COMMON', unit: '' },
-  // fully in sync already (name/narration exact, unit blank) -> untouched
-  { itemName: 'Bolt M6', size: '', narration: 'Bolt note', color: '', sourceType: 'ITEM', qty: 12, colorGroup: 'COMMON', unit: '' }
+  // name+narration already exact; only its blank unit gets stamped
+  { itemName: 'Bolt M6', size: '', narration: 'Bolt note', color: '', sourceType: 'ITEM', qty: 12, colorGroup: 'COMMON', unit: 'Pcs' }
 ];
 // Size is part of the key: the '20 inch' row must NOT pick up the sizeless
 // row's narration, and vice versa.
@@ -213,13 +216,14 @@ const res = C.refreshProductionComponentsFromItemsMaster();
 assert(res.success, 'returns success: ' + (res.message || ''));
 console.log('  message: ' + res.message);
 assert(res.data && res.data.lotsScanned === 4, `scanned all 4 lots (got ${res.data && res.data.lotsScanned})`);
-// LOT-A consumed: Carton Box narration(1) + Frame Sticker narration(1) +
-// Adhesive Tape unit(1) + Rework Charge(0, unknown) + Fitted Frame narration(1)
-// + curvy sticker backrest name(1) + Bolt M6(0, already in sync) = 5.
-// LOT-B consumed: both Bearing variants' narration = 2.
-// LOT-C consumed is another copy of LOT_A = 5. LOT-C custom: Carton Box narration = 1.
-assert(res.data && res.data.fieldsUpdated === 13,
-  `refreshed exactly 13 fields: 5 (LOT-A) + 2 (LOT-B) + 5 (LOT-C consumed) + 1 (LOT-C custom) ` +
+// LOT-A consumed: Carton Box narration+unit(2) + Frame Sticker narration+unit(2)
+// + Adhesive Tape unit(1) + Rework Charge(0, unknown) + Fitted Frame
+// narration+unit(2) + curvy sticker backrest name+unit(2) + Bolt M6(0, fully
+// in sync) = 9. LOT-B consumed: each Bearing variant narration+unit = 4.
+// LOT-C consumed is another copy of LOT_A = 9. LOT-C custom: Carton Box
+// narration only (its schema has no unit field to stamp) = 1.
+assert(res.data && res.data.fieldsUpdated === 23,
+  `refreshed exactly 23 fields: 9 (LOT-A) + 4 (LOT-B) + 9 (LOT-C consumed) + 1 (LOT-C custom) ` +
   `(got ${res.data && res.data.fieldsUpdated})`);
 assert(res.data && res.data.lotsUpdated === 3,
   `3 of the 4 lots changed — LOT-D's corrupt JSON is skipped (got ${res.data && res.data.lotsUpdated})`);
@@ -239,19 +243,22 @@ const rework = byName(a, 'Rework Charge');
 assert(rework.narration === 'Ad-hoc labour' && rework.unit === 'Nos' && rework.itemName === 'Rework Charge',
   `unknown item is fully untouched (got narration="${rework.narration}", unit="${rework.unit}", itemName="${rework.itemName}")`);
 
-console.log('\n=== Test 4: explicit stale unit is corrected; blank unit stays blank ===');
+console.log('\n=== Test 4: stale unit corrected, blank unit stamped with the item\'s Base Unit ===');
 assert(adhesive.unit === 'Kg', `Adhesive Tape's explicit stale unit 'Gross' corrected to current Base Unit 'Kg' (got "${adhesive.unit}")`);
-assert(byName(a, 'Carton Box 16 inch').unit === '', 'Carton Box\'s blank unit is left blank, not stamped to "Pcs"');
+assert(byName(a, 'Carton Box 16 inch').unit === 'Pcs',
+  `Carton Box's blank unit stamped with its Base Unit 'Pcs' (got "${byName(a, 'Carton Box 16 inch').unit}")`);
+assert(byName(a, 'Frame Sticker---Blue').unit === 'Set',
+  `Frame Sticker's blank unit stamped with its own Base Unit 'Set', not a blanket 'Pcs' (got "${byName(a, 'Frame Sticker---Blue').unit}")`);
 const bolt = byName(a, 'Bolt M6');
-assert(bolt.unit === '' && bolt.narration === 'Bolt note' && bolt.itemName === 'Bolt M6',
-  `already-in-sync component (blank unit) is completely untouched (got unit="${bolt.unit}", narration="${bolt.narration}", itemName="${bolt.itemName}")`);
+assert(bolt.unit === 'Pcs' && bolt.narration === 'Bolt note' && bolt.itemName === 'Bolt M6',
+  `already-in-sync component is completely untouched (got unit="${bolt.unit}", narration="${bolt.narration}", itemName="${bolt.itemName}")`);
 
 console.log('\n=== Test 5: item name is corrected to current Items Master casing, same identity only ===');
 const sticker = a.find(c => c.itemName.toLowerCase() === 'curvy sticker backrest');
 assert(sticker && sticker.itemName === 'CURVY STICKER Backrest',
   `casing-drifted name corrected to canonical (got "${sticker && sticker.itemName}")`);
-assert(sticker && sticker.narration === 'Sticker note' && sticker.unit === '',
-  'narration/unit for that same component are untouched (already in sync)');
+assert(sticker && sticker.narration === 'Sticker note' && sticker.unit === 'Pcs',
+  `that component's narration stays in sync and its blank unit is stamped (got narration="${sticker && sticker.narration}", unit="${sticker && sticker.unit}")`);
 
 console.log('\n=== Test 6: POOL rows are resolved by name (metadata, not identity) ===');
 assert(byName(a, 'Fitted Frame 16 inch').narration === 'WIP frame from Fitting',
@@ -271,6 +278,8 @@ const cCustom = readCustom(ROW.C);
 assert(cCustom[0].narration === 'Corrugated 5-ply (revised)',
   `customComponents narration refreshed (got "${cCustom[0].narration}")`);
 assert(cCustom[0].requiredQty === 40, `customComponents requiredQty intact (got ${cCustom[0].requiredQty})`);
+assert(!('unit' in cCustom[0]),
+  `customComponents did NOT gain a 'unit' field — its schema has none and its unit is resolved at render time (got keys: ${Object.keys(cCustom[0]).join(',')})`);
 
 console.log('\n=== Test 9: unparseable JSON is skipped, not corrupted ===');
 assert(prod._get(ROW.D, PRODUCTION_COL.COMPONENTS_CONSUMED) === '{not valid json',

@@ -15484,6 +15484,19 @@
           { value: 'noMetadata', label: 'No Metadata' }
         ],
 
+        // Loads Items Master once, for tabs that only READ it rather than
+        // owning it — App.State.globalItems is otherwise populated solely by
+        // this module's own loadData(), i.e. only if the operator happened to
+        // visit the Item Master tab first. Production resolves component
+        // narration and Base Unit live against globalItems
+        // (_resolveDisplayNarration / _resolveDisplayUnit), so without this
+        // every component silently rendered its stored narration and a
+        // blanket 'Pcs' fallback unit. Mirrors App.Process.ensureLoaded.
+        async ensureLoaded() {
+          if (App.State.globalItems && App.State.globalItems.length) return;
+          await this.loadData();
+        },
+
         async loadData() {
           const tbody = document.getElementById('itemTableBody');
           if (tbody)
@@ -22468,9 +22481,15 @@
         if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center p-4">Loading Production Logs...</td></tr>';
 
         try {
-          const [, , response] = await Promise.all([
+          // Items Master is needed for more than the item pickers: component
+          // narration and Base Unit are resolved live against globalItems at
+          // render time (_resolveDisplayNarration / _resolveDisplayUnit), so
+          // without it every component falls back to its stored narration and
+          // a blanket 'Pcs' unit.
+          const [, , , response] = await Promise.all([
             App.Process.ensureLoaded(),
             App.Color.ensureLoaded(),
+            App.Item.ensureLoaded(),
             Api.call('getProductionData')
           ]);
           if (!response.success) {
@@ -27432,9 +27451,16 @@
             try {
               const res = await Api.call('refreshProductionComponentsFromItemsMaster');
               App.Utils.showToast(res.message, !res.success);
-              // Reload even on a no-op result so the grid and any cached lot
-              // objects match the sheet either way.
-              if (res.success) await this.loadData();
+              // Force a FULL Items Master reload (not ensureLoaded, which
+              // no-ops once globalItems is non-empty) before reloading the
+              // lots: the whole point of this action is that Items Master
+              // just changed, and narration/unit are resolved live against
+              // that cache at render time — a stale one would keep showing
+              // the old values even though the sheet is now correct.
+              if (res.success) {
+                await App.Item.loadData();
+                await this.loadData();
+              }
             } catch (err) {
               App.Utils.showToast(err.message || 'Failed to refresh production lots from Items Master', true);
             } finally {
