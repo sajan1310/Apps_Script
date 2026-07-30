@@ -64,13 +64,13 @@
           <tr>
             <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllProduction" class="form-check-input" onclick="App.Production.toggleSelectAll(this)"></th>
             <th style="width: 8%;">Date</th>
-            <th style="width: 12%;">Process / Lot #</th>
-            <th style="width: 14%;">Output Item</th>
-            <th style="width: 12%;">Product Tag</th>
+            <th style="width: 12%;">Process / Lot # <button type="button" class="th-filter-btn" data-filter-key="process" onclick="App.Production.toggleColumnFilter(event, 'process')"><i class="bi bi-funnel"></i></button></th>
+            <th style="width: 14%;">Output Item <button type="button" class="th-filter-btn" data-filter-key="outputItem" onclick="App.Production.toggleColumnFilter(event, 'outputItem')"><i class="bi bi-funnel"></i></button></th>
+            <th style="width: 12%;">Product Tag <button type="button" class="th-filter-btn" data-filter-key="productTag" onclick="App.Production.toggleColumnFilter(event, 'productTag')"><i class="bi bi-funnel"></i></button></th>
             <th style="width: 7%; text-align: center;">Lot Qty</th>
-            <th style="width: 10%;">Assigned By</th>
-            <th style="width: 10%;">Assigned To</th>
-            <th style="width: 8%; text-align: center;">Status</th>
+            <th style="width: 10%;">Assigned By <button type="button" class="th-filter-btn" data-filter-key="assignedBy" onclick="App.Production.toggleColumnFilter(event, 'assignedBy')"><i class="bi bi-funnel"></i></button></th>
+            <th style="width: 10%;">Assigned To <button type="button" class="th-filter-btn" data-filter-key="assignedTo" onclick="App.Production.toggleColumnFilter(event, 'assignedTo')"><i class="bi bi-funnel"></i></button></th>
+            <th style="width: 8%; text-align: center;">Status <button type="button" class="th-filter-btn" data-filter-key="status" onclick="App.Production.toggleColumnFilter(event, 'status')"><i class="bi bi-funnel"></i></button></th>
             <th style="width: 15%; text-align: center;">Actions</th>
           </tr>
         </thead>

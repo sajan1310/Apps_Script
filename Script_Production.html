@@ -8,6 +8,7 @@
     App.State.globalProduction = [];
     App.State.filteredProduction = [];
     App.State.selectedProduction = [];
+    App.State.productionColumnFilters = { process: [], outputItem: [], productTag: [], assignedBy: [], assignedTo: [], status: [] };
 
     App.Production = {
       STATUS_OPTIONS: ['Pending', 'In Progress', 'Completed', 'Cancelled'],
@@ -162,12 +163,11 @@
             return;
           }
           App.State.globalProduction = response.data;
-          App.State.filteredProduction = response.data;
           App.State.productionCurrentPage = 1;
           App.State.productionSortBy = App.State.productionSortBy || 'dateDesc';
           App.State.selectedProduction = [];
-          this.sortFiltered();
-          this.renderTable();
+          this.updateColumnFilterIcons();
+          this.filterData(App.State.productionSearchTerm || '');
           this.renderAllActivity();
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to load production logs', true);
@@ -265,18 +265,193 @@
       },
 
       filterData(searchTerm) {
-        const term = searchTerm.toLowerCase().trim();
-        if (!term) {
-          App.State.filteredProduction = App.State.globalProduction;
-        } else {
-          App.State.filteredProduction = App.State.globalProduction.filter(p => {
+        App.State.productionSearchTerm = searchTerm || '';
+        const term = String(searchTerm || '').toLowerCase().trim();
+        const base = term
+          ? App.State.globalProduction.filter(p => {
             const haystack = [p.date, p.lotNumber, p.outputItemName, p.color, p.productId, p.productName, p.status, p.assignedBy, p.assignedTo, p.remarks].join(' ');
             return App.Utils.matchesKeywords(haystack, term);
-          });
-        }
+          })
+          : App.State.globalProduction;
+        App.State.filteredProduction = this.applyColumnFilters(base);
         this.sortFiltered();
         App.State.productionCurrentPage = 1;
         this.renderTable();
+      },
+
+      // Computes the value list for a column's filter dropdown. Status uses
+      // the fixed STATUS_OPTIONS list (so a status can appear even if no
+      // currently loaded lot has it yet); Process/Output Item/Product
+      // Tag/Assigned By/To are derived from whatever's actually loaded.
+      // Process is looked up through globalProcesses the same way rowHtml
+      // resolves its label, so the filter option and the row's own display
+      // text can never drift apart.
+      getColumnFilterOptions(key) {
+        if (key === 'status') return this.STATUS_OPTIONS.map(s => ({ value: s, label: s }));
+
+        const values = new Set();
+        (App.State.globalProduction || []).forEach(p => {
+          if (key === 'process') {
+            const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+            values.add(process ? process.processName : (p.processId || 'Uncategorized'));
+          } else if (key === 'outputItem') {
+            if (p.outputItemName) values.add(p.outputItemName);
+          } else if (key === 'productTag') {
+            if (p.productId) values.add(p.productId);
+          } else if (key === 'assignedBy') {
+            if (p.assignedBy) values.add(p.assignedBy);
+          } else if (key === 'assignedTo') {
+            if (p.assignedTo) values.add(p.assignedTo);
+          }
+        });
+
+        return [...values]
+          .sort((a, b) => a.localeCompare(b))
+          .map(v => ({ value: v, label: v }));
+      },
+
+      // Updates the funnel icon's active state in each header cell to
+      // reflect whether that column currently has a filter applied. Scoped
+      // to the Production Log sub-tab so it never touches another module's
+      // same-named .th-filter-btn buttons (see Item Master's own version,
+      // which is unscoped since it's the only user of that class today).
+      updateColumnFilterIcons() {
+        document.querySelectorAll('#productionLogSubTab .th-filter-btn').forEach(btn => {
+          const key = btn.dataset.filterKey;
+          const active = (App.State.productionColumnFilters[key] || []).length > 0;
+          btn.classList.toggle('active', active);
+        });
+      },
+
+      // Opens (or closes, if already open for this column) the Excel-style
+      // checklist dropdown anchored under the clicked header's funnel icon.
+      toggleColumnFilter(evt, key) {
+        evt.stopPropagation();
+        let panel = document.getElementById('productionColFilterPanel');
+
+        if (panel && panel.dataset.key === key) {
+          panel.remove();
+          return;
+        }
+        if (panel) panel.remove();
+
+        const btn = evt.currentTarget;
+        panel = document.createElement('div');
+        panel.id = 'productionColFilterPanel';
+        panel.className = 'col-filter-panel';
+        panel.dataset.key = key;
+        panel.innerHTML = `
+          <div class="po-ms-search-wrap">
+            <input type="text" class="form-control form-control-sm" placeholder="Search...">
+          </div>
+          <div class="col-filter-actions">
+            <button type="button" data-action="select-all">Select All</button>
+            <button type="button" data-action="clear">Clear</button>
+          </div>
+          <ul class="po-ms-options"></ul>`;
+        document.body.appendChild(panel);
+
+        const rect = btn.getBoundingClientRect();
+        panel.style.top = `${rect.bottom + window.scrollY + 4}px`;
+        panel.style.left = `${Math.min(rect.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - 250)}px`;
+
+        const searchInput = panel.querySelector('input');
+        const optionsList = panel.querySelector('.po-ms-options');
+
+        const renderOptions = (term) => {
+          const allOptions = this.getColumnFilterOptions(key);
+          const selected = App.State.productionColumnFilters[key] || [];
+          const t = (term || '').toLowerCase().trim();
+          const visible = allOptions.filter(o => !t || o.label.toLowerCase().includes(t));
+
+          optionsList.innerHTML = visible.map(o => {
+            const on = selected.includes(o.value);
+            return `<li class="po-ms-option${on ? ' checked' : ''}" data-value="${escapeHtml(o.value)}">
+              <span class="po-ms-check">${on ? '✓' : ''}</span>
+              <span>${escapeHtml(o.label)}</span>
+            </li>`;
+          }).join('') || '<li class="po-ms-empty">No values found</li>';
+        };
+
+        searchInput.addEventListener('input', () => renderOptions(searchInput.value));
+        searchInput.addEventListener('click', e => e.stopPropagation());
+        panel.addEventListener('click', e => e.stopPropagation());
+
+        panel.querySelector('[data-action="select-all"]').addEventListener('click', () => {
+          const t = searchInput.value;
+          const visibleValues = this.getColumnFilterOptions(key)
+            .filter(o => !t.trim() || o.label.toLowerCase().includes(t.toLowerCase()))
+            .map(o => o.value);
+          App.State.productionColumnFilters[key] = [...new Set([...(App.State.productionColumnFilters[key] || []), ...visibleValues])];
+          this.onColumnFilterChange(key);
+          renderOptions(t);
+        });
+
+        panel.querySelector('[data-action="clear"]').addEventListener('click', () => {
+          App.State.productionColumnFilters[key] = [];
+          this.onColumnFilterChange(key);
+          renderOptions(searchInput.value);
+        });
+
+        optionsList.addEventListener('click', e => {
+          const li = e.target.closest('.po-ms-option');
+          if (!li) return;
+          const val = li.dataset.value;
+          const sel = App.State.productionColumnFilters[key] || (App.State.productionColumnFilters[key] = []);
+          const idx = sel.indexOf(val);
+          if (idx === -1) sel.push(val);
+          else sel.splice(idx, 1);
+          this.onColumnFilterChange(key);
+          renderOptions(searchInput.value);
+        });
+
+        renderOptions('');
+        requestAnimationFrame(() => searchInput.focus());
+
+        if (!document.body.dataset.productionColFilterOutsideClickBound) {
+          document.body.dataset.productionColFilterOutsideClickBound = '1';
+          document.addEventListener('click', e => {
+            const openPanel = document.getElementById('productionColFilterPanel');
+            if (openPanel && !openPanel.contains(e.target) && !e.target.closest('.th-filter-btn')) {
+              openPanel.remove();
+            }
+          });
+        }
+      },
+
+      onColumnFilterChange(key) {
+        this.updateColumnFilterIcons();
+        App.State.productionCurrentPage = 1;
+        this.filterData(App.State.productionSearchTerm || '');
+      },
+
+      clearColumnFilters() {
+        App.State.productionColumnFilters = { process: [], outputItem: [], productTag: [], assignedBy: [], assignedTo: [], status: [] };
+        document.getElementById('productionColFilterPanel')?.remove();
+        this.updateColumnFilterIcons();
+        App.State.productionCurrentPage = 1;
+        this.filterData(App.State.productionSearchTerm || '');
+      },
+
+      // Narrows a base list down to rows matching every active per-column
+      // filter (AND across columns, OR within a column's checked values).
+      applyColumnFilters(items) {
+        const { process, outputItem, productTag, assignedBy, assignedTo, status } = App.State.productionColumnFilters;
+        if (!process.length && !outputItem.length && !productTag.length && !assignedBy.length && !assignedTo.length && !status.length) return items;
+
+        return items.filter(p => {
+          if (process.length) {
+            const proc = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+            const label = proc ? proc.processName : (p.processId || 'Uncategorized');
+            if (!process.includes(label)) return false;
+          }
+          if (outputItem.length && !outputItem.includes(p.outputItemName || '')) return false;
+          if (productTag.length && !productTag.includes(p.productId || '')) return false;
+          if (assignedBy.length && !assignedBy.includes(p.assignedBy || '')) return false;
+          if (assignedTo.length && !assignedTo.includes(p.assignedTo || '')) return false;
+          if (status.length && !status.includes(p.status || '')) return false;
+          return true;
+        });
       },
 
       // Field/direction combos selectable via the "Sort by" dropdown
