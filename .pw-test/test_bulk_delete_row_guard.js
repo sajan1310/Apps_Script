@@ -101,7 +101,13 @@ const sandbox = {
 sandbox.global = sandbox;
 const ctx = vm.createContext(sandbox);
 
-['config.js', 'utils.js', 'module_process.js', 'module_production.js', 'module_dispatch.js', 'module_warehouse.js'].forEach(f => {
+// module_po.js is loaded for _rewriteWithoutMatchingRowsBulk, which lives
+// there but is called by deleteDispatchBulk — Apps Script shares one global
+// scope across files, so that resolves in production; this sandbox has to be
+// told. Without it deleteDispatchBulk threw ReferenceError and every
+// assertion below it failed for a reason that had nothing to do with the guard
+// being tested.
+['config.js', 'utils.js', 'module_po.js', 'module_process.js', 'module_production.js', 'module_dispatch.js', 'module_warehouse.js'].forEach(f => {
   vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f });
 });
 
@@ -181,17 +187,48 @@ const dispRow = (r, dispatchNumber, qty) => {
 dispRow(2, 'DSP-100', 5);
 dispRow(3, 'DSP-200', 8);
 
-console.log('\n=== deleteDispatchBulk: mismatched guard skips that row, matching row still deletes ===');
+// deleteDispatchBulk selects by Dispatch NUMBER, not row index (a bill spans
+// however many line rows it has), so its guard is per-bill item count + total
+// qty — the same pair deleteDispatch checks for a single bill — rather than the
+// productId+qty pair deleteProductionBulk uses for its one-row-per-lot sheet.
+console.log('\n=== deleteDispatchBulk: mismatched guard skips that bill, matching bill still deletes ===');
 {
-  const res = deleteDispatchBulk([2, 3], [
-    { rowIdx: 2, expectedDispatchNumber: 'DSP-100', expectedQty: 999 }, // mismatch -> skip
-    { rowIdx: 3, expectedDispatchNumber: 'DSP-200', expectedQty: 8 }    // matches -> delete
+  const res = deleteDispatchBulk(['DSP-100', 'DSP-200'], [
+    { dispatchNumber: 'DSP-100', expectedItemCount: 1, expectedTotalQty: 999 }, // mismatch -> skip
+    { dispatchNumber: 'DSP-200', expectedItemCount: 1, expectedTotalQty: 8 }    // matches -> delete
   ]);
   assert(res.success, 'call succeeds even with one mismatch: ' + res.message);
   assert(/Deleted 1/.test(res.message), `message reports exactly 1 deleted (got "${res.message}")`);
   assert(/Skipped 1/.test(res.message), `message reports exactly 1 skipped (got "${res.message}")`);
   assert(dispSheet.getLastRow() === 2, `sheet still has the mismatched row (last row now ${dispSheet.getLastRow()})`);
   assert(String(dispSheet._get(2, DISPATCH_COL.DISPATCH_NUMBER)) === 'DSP-100', 'the mismatched row (DSP-100) is still present');
+}
+
+console.log('\n=== deleteDispatchBulk: no guard supplied -> old unconditional behavior ===');
+{
+  const res = deleteDispatchBulk(['DSP-100']);
+  assert(res.success, 'call succeeds with no guard supplied: ' + res.message);
+  assert(/Deleted 1/.test(res.message), `deletes the bill with no guard (got "${res.message}")`);
+  // No header row was seeded on this sheet (unlike prodSheet above), so an
+  // emptied Dispatch sheet reports last row 0, not 1.
+  assert(dispSheet.getLastRow() === 0, `sheet has no data rows left (got ${dispSheet.getLastRow()})`);
+}
+
+console.log('\n=== deleteDispatchBulk: bill numbers match case-insensitively ===');
+{
+  dispRow(2, 'DSP-300', 4);
+  const res = deleteDispatchBulk(['dsp-300']);
+  assert(res.success, 'lowercased bill number still resolves: ' + res.message);
+  assert(/Deleted 1 dispatch bill\(s\) \(1 item/.test(res.message),
+    `reports 1 bill and 1 item actually removed (got "${res.message}")`);
+  assert(dispSheet.getLastRow() === 0, `the bill is gone (got last row ${dispSheet.getLastRow()})`);
+}
+
+console.log('\n=== deleteDispatchBulk: a selection naming bills that no longer exist reports honestly ===');
+{
+  const res = deleteDispatchBulk(['DSP-GONE-1', 'DSP-GONE-2']);
+  assert(!res.success, `reports failure rather than "deleted 2" (got success=${res.success})`);
+  assert(/were found|not found/i.test(res.message), `explains nothing matched (got "${res.message}")`);
 }
 
 // Seed two Warehouse Pool Opening rows.

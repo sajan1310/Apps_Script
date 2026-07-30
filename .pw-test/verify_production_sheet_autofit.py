@@ -240,7 +240,12 @@ def run():
         small_qty_font = page.evaluate("""
             parseFloat(document.querySelector('#print-production-sheet-common-tables td[style*="text-align:right"]').style.fontSize)
         """)
-        check(small_qty_font == 14.5, f"small lot stays at tier-0 emphasis font (14.5px expected, found {small_qty_font}px) -- not shrunk when it doesn't need to be")
+        # 15px, not the original 14.5px: FIT_TIERS now requires whole-number
+        # font sizes, because html2canvas ("Download PDF") derives each text
+        # fragment's position from its own rounded line-box arithmetic and a
+        # fractional line box drifts until two wrapped lines paint at the same
+        # y. This assertion kept the suite red against that deliberate fix.
+        check(small_qty_font == 15, f"small lot stays at tier-0 emphasis font (15px expected, found {small_qty_font}px) -- not shrunk when it doesn't need to be")
 
         # ── Scenario 3: the bulk-print builder (buildProductionSheetPrintPageHtml,
         # used by multi-select "Print" on already-saved lots) got matching
@@ -258,7 +263,19 @@ def run():
             });
         """)
         check('LOT-BULK-0001' in bulk_html, "bulk page includes the lot ID")
-        check('#e8f5e9' in bulk_html, "bulk page uses the tinted header color (visual parity with the live print sheet)")
+        # Asserted against the ONE shared palette (App.Production.PRINT_PALETTE)
+        # rather than a hardcoded literal, so this can never again fail merely
+        # because the agreed tint changed — it fails only on real drift between
+        # the bulk page and the live sheet, which is what it is here to catch.
+        palette = page.evaluate("App.Production.PRINT_PALETTE")
+        check(palette['HEAD_BG'] in bulk_html,
+              f"bulk page uses the shared header tint {palette['HEAD_BG']} (visual parity with the live print sheet)")
+        check(palette['ZEBRA'] in bulk_html,
+              f"bulk page uses the shared zebra band {palette['ZEBRA']} (the old #f6f8f6 was invisible in print)")
+        check('#f6f8f6' not in bulk_html,
+              "bulk page no longer carries the retired, print-invisible zebra colour")
+        check('13.5px' not in bulk_html and '14.5px' not in bulk_html,
+              "bulk page uses whole-number font sizes only (html2canvas line-box drift)")
         check('Wheel Pool' in bulk_html and 'Frame' in bulk_html, "bulk page includes both component rows")
         check(bulk_html.count('<table') == 1, "bulk page still renders exactly one components table (unchanged structure)")
 

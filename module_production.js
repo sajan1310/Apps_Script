@@ -462,6 +462,37 @@ function _poolNeedKey(itemNameLower, colorGroup) {
 
 /**
  * @private
+ * Returns an Array#map callback that overwrites a component's `narration` with
+ * the current Items Master narration for its name+size, leaving it alone when
+ * Items Master doesn't know the item or has nothing set (see
+ * _getItemNarrationMap, which omits blanks for exactly this reason).
+ *
+ * Applied at the two points that WRITE a lot's component JSON — saveProduction
+ * and saveProductionSheet — so the snapshot is always stored fresh rather than
+ * persisting whatever the client happened to have on screen. Without this, a
+ * lot saved from a form still holding an old autofill (or an Edit Lot reopened
+ * long after the item's narration was corrected) would quietly write the stale
+ * text back and undo backfillProductionNarrationFromItems.
+ *
+ * The Items Master read happens once per save, lazily on the first component,
+ * mirroring _buildPoolNeededMap's lazy map loads.
+ */
+function _withMasterNarration() {
+  let map = null;
+  return function(comp) {
+    if (map === null) {
+      map = typeof _getItemNarrationMap === 'function' ? _getItemNarrationMap() : {};
+    }
+    const name = String(comp.itemName || '').trim();
+    if (!name) return comp;
+    const master = map[name.toLowerCase() + '|' + String(comp.size || '').trim().toLowerCase()];
+    if (master) comp.narration = master;
+    return comp;
+  };
+}
+
+/**
+ * @private
  * Builds a _poolNeedKey -> {itemName, colorGroup, isColorScoped, qty} map of
  * a lot's POOL-sourced component needs from a components array (either the
  * client's freshly-submitted list, or a parsed COMPONENTS_CONSUMED snapshot).
@@ -692,10 +723,10 @@ function saveProduction(formData) {
       // rows (e.g. "Mudguard Color: Red") describe the SAME batch from a
       // different angle, not extra units, so summing every row (legacy
       // behavior below) would double-count them. Sum only the rows whose
-      // color belongs to the primary axis instead. Falls back to legacy
-      // (sum everything) if the configured primary axis can't be resolved
-      // — e.g. it was renamed/removed since — so a stale config never
-      // silently zeroes out a lot's quantity.
+      // color belongs to the primary axis instead. A configured primary axis
+      // that can't be resolved — renamed or removed since — resolves to the
+      // process's first axis rather than to no primary at all, so a stale
+      // config degrades to the safe default instead of back to double-counting.
       //
       // The operator can also pick (or change) the Primary Axis directly on
       // the Production Lot form (see Script.html's
@@ -705,17 +736,29 @@ function saveProduction(formData) {
       // process has never been configured (or was just changed) in the
       // Process editor. It's then persisted back onto the process below so
       // future lots default to it too.
+      // Neither picked on this form nor stored on the process (and not a
+      // stale stored label either): the process still falls back to its first
+      // axis in recipe order rather than to legacy "sum every axis" summing,
+      // so a multi-axis lot can't double-count just because nobody has been
+      // into the Process editor yet — see _defaultPrimaryColorAxisLabel
+      // (module_process.js), which resolves the identical default at save and
+      // read time. A process with no axes at all resolves to none of this and
+      // keeps the legacy branch below, unchanged.
       const submittedPrimaryColorAxis = sanitizeString(formData.primaryColorAxis || '', 'primaryColorAxis');
-      const primaryColorAxis = submittedPrimaryColorAxis || String(process.primaryColorAxis || '').trim();
+      const storedPrimaryColorAxis = String(process.primaryColorAxis || '').trim();
+      const requestedPrimaryColorAxis = submittedPrimaryColorAxis || storedPrimaryColorAxis;
+      const axes = computeColorAxesForProcess(processId, _colorComponents, _colorPoolRows, _colorLinks);
+      const primaryAxis = (requestedPrimaryColorAxis
+        ? axes.find(a => a.label.toLowerCase() === requestedPrimaryColorAxis.toLowerCase())
+        : null) || axes[0] || null;
+      const primaryColorAxis = primaryAxis ? primaryAxis.label : '';
       let primaryAxisColorsLower = null;
       let primaryAxisKeyLower = null;
-      if (primaryColorAxis) {
-        const axes = computeColorAxesForProcess(processId, _colorComponents, _colorPoolRows, _colorLinks);
-        const primaryAxis = axes.find(a => a.label.toLowerCase() === primaryColorAxis.toLowerCase());
-        if (primaryAxis) {
-          primaryAxisColorsLower = new Set(primaryAxis.colors.map(c => c.toLowerCase()));
-          primaryAxisKeyLower = primaryAxis.key.toLowerCase();
-        }
+      let realAxisKeysLower = null;
+      if (primaryAxis) {
+        primaryAxisColorsLower = new Set(primaryAxis.colors.map(c => c.toLowerCase()));
+        primaryAxisKeyLower = String(primaryAxis.key || '').toLowerCase();
+        realAxisKeysLower = new Set(axes.map(a => String(a.key || '').toLowerCase()));
       }
 
       // No formal Primary Color Axis resolved (either never configured, or
@@ -753,12 +796,25 @@ function saveProduction(formData) {
       // when present: exact axis identity, immune to name collisions.
       // Falls back to the name-only match for older submitted payloads with
       // no axisKey, or a row from the legacy (non-axis) checklist.
+      // A submitted axisKey is only an AXIS identity when it's actually one of
+      // this process's axis keys. The same field also carries the checklist's
+      // non-axis group ids — a legacy pool-signature group ('g1'), the "Other
+      // Colors" bucket, a custom sub-group (see Script_Production.html's
+      // getCheckedColorQtys, which sends dataset.group verbatim) — and a
+      // single-axis process renders that legacy grouping rather than the
+      // per-axis one. Comparing those straight to the primary axis key made
+      // every row read as "not primary", which zeroed the lot's quantity and
+      // then failed the guard below outright: the whole process could no
+      // longer save a lot at all. Those rows belong to no axis, so they fall
+      // back to the flag the client already computed for them — the same rule
+      // the no-primary-axis branch below applies to every row.
       const isPrimaryAxisRow = c => {
-        const isKnownPrimaryColor = c.axisKey
-          ? c.axisKey.toLowerCase() === primaryAxisKeyLower
-          : primaryAxisColorsLower.has(c.color.toLowerCase());
-        const countsAsCustom = c.isCustom && c.countsTowardTotal !== false;
-        return isKnownPrimaryColor || countsAsCustom;
+        const rowAxisKey = String(c.axisKey || '').toLowerCase();
+        if (rowAxisKey && realAxisKeysLower.has(rowAxisKey)) return rowAxisKey === primaryAxisKeyLower;
+        if (rowAxisKey || c.isCustom) return c.countsTowardTotal !== false;
+        // No group at all (an older payload, or a flat checklist): the
+        // original name match, still the only signal such a row carries.
+        return primaryAxisColorsLower.has(String(c.color || '').toLowerCase());
       };
 
       qty = primaryAxisColorsLower
@@ -778,14 +834,24 @@ function saveProduction(formData) {
         return buildResponse(false, null, `At least one "${primaryColorAxis}" color is required for this lot.`);
       }
 
-      // The operator explicitly picked/changed the Primary Axis on this
-      // lot's form and it resolved to a real axis (primaryAxisColorsLower
-      // is only set once a match was found) — adopt it as the process's own
-      // default going forward, same as configuring it in the Process editor.
-      if (submittedPrimaryColorAxis && primaryAxisColorsLower &&
-          submittedPrimaryColorAxis.toLowerCase() !== String(process.primaryColorAxis || '').trim().toLowerCase() &&
-          typeof _setProcessPrimaryColorAxis === 'function') {
-        _setProcessPrimaryColorAxis(processId, submittedPrimaryColorAxis);
+      // Write the resolved axis back onto the process when it isn't what's
+      // stored, in the two cases where that's this lot's to decide:
+      //   - the operator explicitly picked/changed it on this form and it
+      //     resolved to a real axis — adopt it as the process's default going
+      //     forward, same as configuring it in the Process editor;
+      //   - the process's own cell is still blank — fill it with the default
+      //     that was just used, so the column stops being blank without
+      //     waiting for a Process-editor save (see
+      //     backfillProcessPrimaryColorAxes for the same fill in bulk).
+      // A stored label that no longer resolves is deliberately NOT overwritten
+      // here: this lot falls back to the default for its own quantity, but a
+      // stale client payload shouldn't silently rewrite a configured choice.
+      const submittedResolved = !!submittedPrimaryColorAxis && !!primaryAxis &&
+        submittedPrimaryColorAxis.toLowerCase() === primaryColorAxis.toLowerCase();
+      if (primaryAxis && typeof _setProcessPrimaryColorAxis === 'function' &&
+          primaryColorAxis.toLowerCase() !== storedPrimaryColorAxis.toLowerCase() &&
+          (submittedResolved || !storedPrimaryColorAxis)) {
+        _setProcessPrimaryColorAxis(processId, primaryColorAxis);
       }
     } else {
       // Zero and negative quantities are both allowed — a lot can be logged
@@ -826,7 +892,8 @@ function saveProduction(formData) {
         // and module_stock.js#_getBilledAndConsumedQtyMaps.
         unit: sanitizeString(c.unit || '', 'unit')
       }))
-      .filter(c => c.itemName);
+      .filter(c => c.itemName)
+      .map(_withMasterNarration());
 
     if (colorBreakdown.length > 0) {
       // Drop any leftover row scoped to a color that isn't part of this
@@ -1396,7 +1463,8 @@ function saveProductionSheet(rowIdx, expectedProductId, expectedQty, customCompo
         color: sanitizeString(comp.color || '', 'color'),
         requiredQty: validateNumber(comp.requiredQty, 0, 10000000)
       }))
-      .filter(comp => comp.itemName);
+      .filter(comp => comp.itemName)
+      .map(_withMasterNarration());
 
     const remarks = sanitizeString(sheetRemarks || '', 'sheetRemarks').slice(0, APP_CONFIG.VALIDATION.MAX_REMARKS_LENGTH);
 
@@ -1521,5 +1589,161 @@ function backfillProductionConsumedItemRefs(oldName, oldSize, newName, newSize) 
     if (customChanged) {
       customRange.setValues(customValues);
     }
+  }
+}
+
+/**
+ * Rewrites the `narration` field of every already-saved Production lot's
+ * COMPONENTS_CONSUMED JSON (and the CUSTOM_COMPONENTS "sheet customization"
+ * snapshot) to the current Items Master narration for that item.
+ *
+ * Why this is needed at all: narration is descriptive metadata the operator
+ * maintains in Items Master, but a lot COPIES it into its own JSON snapshot at
+ * log time (see saveProduction's cleanComponents mapper). Every lot logged
+ * before an Items Master narration was written or corrected therefore carries
+ * a blank or stale note forever, and re-typing it row by row across historical
+ * lots is not realistic. The Production Sheet now resolves narration live at
+ * DISPLAY time (Script_Production.html#_resolveDisplayNarration), so the
+ * printed sheet is already correct without this — this pass fixes the stored
+ * data itself, so the Add/Edit Lot form, and anything else reading a lot's
+ * snapshot, agrees with what the sheet prints instead of showing the old text.
+ *
+ * Applies exactly the same rule as the display layer, so the two can never
+ * disagree: a non-blank Items Master narration wins; an item Items Master
+ * doesn't know (a Warehouse Pool WIP item, an ad-hoc row) or one whose own
+ * narration is blank keeps whatever the lot stored, so nothing typed by hand
+ * is ever blanked. sourceType is deliberately NOT filtered — the lookup is by
+ * name+size, and a POOL row whose name happens to be a real Items Master item
+ * is the same physical item, which is how the display layer resolves it too.
+ * (Contrast backfillProductionConsumedItemRefs, which must skip POOL rows
+ * because it rewrites item IDENTITY, not metadata.)
+ *
+ * Idempotent and safe to re-run: a component already carrying the current
+ * narration is left untouched, and a row is only written when something in it
+ * actually changed.
+ *
+ * Acquires its own document lock — this is a top-level entry point (called
+ * from the Production view's "Sync Narration from Items" button, or run from
+ * the Apps Script editor), not a step inside another write.
+ *
+ * @returns {Object} buildResponse with { lotsScanned, lotsUpdated, fieldsUpdated, details }
+ */
+function backfillProductionNarrationFromItems() {
+  const lock = LockService.getDocumentLock();
+  try {
+    lock.waitLock(30000);
+  } catch (e) {
+    return buildResponse(false, null, 'System is busy, please try again in a moment.');
+  }
+
+  try {
+    const sheet = getSheet(APP_CONFIG.SHEETS.PRODUCTION);
+    const startRow = APP_CONFIG.PRODUCTION_SETTINGS.DATA_START_ROW;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < startRow) {
+      return buildResponse(true, { lotsScanned: 0, lotsUpdated: 0, fieldsUpdated: 0, details: [] },
+        'No production lots to update.');
+    }
+    if (sheet.getLastColumn() < PRODUCTION_COL.COMPONENTS_CONSUMED) {
+      return buildResponse(true, { lotsScanned: 0, lotsUpdated: 0, fieldsUpdated: 0, details: [] },
+        'Production sheet has no Components Consumed column yet.');
+    }
+
+    const narrationMap = typeof _getItemNarrationMap === 'function' ? _getItemNarrationMap() : {};
+    if (Object.keys(narrationMap).length === 0) {
+      return buildResponse(true, { lotsScanned: 0, lotsUpdated: 0, fieldsUpdated: 0, details: [] },
+        'No narrations are set in Items Master yet — nothing to sync.');
+    }
+
+    const numRows = lastRow - startRow + 1;
+
+    // Returns the rewritten JSON string, or null when this cell needs no write
+    // (blank, unparseable, or already fully in sync). `counter` collects the
+    // per-field change count so the caller can report what actually moved.
+    const _resync = function(raw, counter) {
+      const trimmed = String(raw || '').trim();
+      if (!trimmed) return null;
+
+      let list;
+      try {
+        list = JSON.parse(trimmed);
+      } catch (e) {
+        return null;
+      }
+      if (!Array.isArray(list) || list.length === 0) return null;
+
+      let changed = false;
+      list.forEach(function(comp) {
+        const name = String(comp.itemName || '').trim();
+        if (!name) return;
+        const size = String(comp.size || '').trim();
+        const master = narrationMap[name.toLowerCase() + '|' + size.toLowerCase()];
+        if (!master) return; // unknown item, or blank in Items Master — keep stored
+        if (String(comp.narration || '').trim() === master) return; // already in sync
+        comp.narration = master;
+        changed = true;
+        counter.n++;
+      });
+
+      return changed ? JSON.stringify(list) : null;
+    };
+
+    const counter = { n: 0 };
+    const details = [];
+    const updatedRows = {};
+
+    // Lot numbers are only read so the summary can name what changed.
+    const lotNumbers = sheet.getRange(startRow, PRODUCTION_COL.LOT_NUMBER, numRows, 1).getValues();
+
+    // Both JSON columns are rewritten in one batched setValues each, matching
+    // backfillProductionConsumedItemRefs — a per-row write across a few
+    // hundred lots is what makes this kind of pass time out.
+    const columns = [PRODUCTION_COL.COMPONENTS_CONSUMED];
+    if (sheet.getLastColumn() >= PRODUCTION_COL.CUSTOM_COMPONENTS) {
+      columns.push(PRODUCTION_COL.CUSTOM_COMPONENTS);
+    }
+
+    columns.forEach(function(col) {
+      const range = sheet.getRange(startRow, col, numRows, 1);
+      const values = range.getValues();
+      let anyChanged = false;
+      for (let i = 0; i < values.length; i++) {
+        const before = counter.n;
+        const rewritten = _resync(values[i][0], counter);
+        if (rewritten !== null) {
+          values[i][0] = rewritten;
+          anyChanged = true;
+          const lot = String(lotNumbers[i][0] || '').trim() || ('row ' + (startRow + i));
+          if (!updatedRows[lot]) {
+            updatedRows[lot] = true;
+            details.push(lot + ': ' + (counter.n - before) + ' narration(s) refreshed');
+          }
+        }
+      }
+      if (anyChanged) range.setValues(values);
+    });
+
+    const lotsUpdated = Object.keys(updatedRows).length;
+    // No cache to invalidate — getProductionData reads the sheet directly on
+    // every call (unlike the list-cached masters), so a flush is all that's
+    // needed for the caller's follow-up reload to see this.
+    if (counter.n > 0) SpreadsheetApp.flush();
+
+    const message = counter.n === 0
+      ? `All ${numRows} production lot(s) already match Items Master — nothing to change.`
+      : `Refreshed ${counter.n} narration(s) across ${lotsUpdated} of ${numRows} production lot(s).`;
+    Logger.log('[backfillProductionNarrationFromItems] ' + message);
+    details.forEach(function(d) { Logger.log('  ' + d); });
+    logAction('UPDATE', 'backfillProductionNarrationFromItems', 'PRODUCTION', message, 'SUCCESS');
+
+    return buildResponse(true, {
+      lotsScanned: numRows, lotsUpdated: lotsUpdated, fieldsUpdated: counter.n, details: details
+    }, message);
+  } catch (error) {
+    Log.error('[backfillProductionNarrationFromItems] Error:', error.message);
+    logAction('ERROR', 'backfillProductionNarrationFromItems', 'PRODUCTION', error.message, 'ERROR');
+    return buildResponse(false, null, 'Failed to sync narration from Items Master: ' + error.message);
+  } finally {
+    lock.releaseLock();
   }
 }

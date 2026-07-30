@@ -153,8 +153,18 @@ def run():
             print(f"    Header order: {entry['headerColors']}")
             for row in entry['rows']:
                 print(f"    Row cells:    {row}")
-                # Header layout is [Item, Size, Source, ...colorHeaders..., "✕"]
-                # Row layout must mirror it exactly: [item-td, size-td, source-td, ...value-tds..., removeBtn-td]
+                # Header layout is [...descriptive columns..., ...colorHeaders..., "✕"]
+                # Row layout must mirror it exactly:
+                #   [...descriptive tds..., ...value-tds..., removeBtn-td]
+                #
+                # The number of leading descriptive columns is DERIVED from the
+                # header row (the first header carrying a data-color starts the
+                # colour block), not hardcoded. It used to be a literal 3, which
+                # silently went stale the moment a Narration column was added to
+                # these tables: the loop then started one column early, read a
+                # descriptive cell as a colour cell and reported a misalignment
+                # that wasn't there — the sort of false failure that trains you
+                # to ignore the suite.
                 n = len(entry['headerColors'])
                 if len(row) != n:
                     print(f"    FAIL: row has {len(row)} cells, header has {n}")
@@ -164,9 +174,14 @@ def run():
                 if row[-1]['kind'] != 'removeBtn':
                     print(f"    FAIL: last cell is not the remove (✕) button (got {row[-1]})")
                     ok = False
+                first_color = next((i for i, h in enumerate(entry['headerColors']) if h), None)
+                if first_color is None:
+                    print("    FAIL: no header carries a data-color, so no colour block to align against")
+                    ok = False
+                    continue
                 # every value cell's own data-color must match its header's data-color
                 mismatch = False
-                for i in range(3, n - 1):
+                for i in range(first_color, n - 1):
                     cell = row[i]
                     header_color = entry['headerColors'][i]
                     if cell['kind'] != 'value':
@@ -178,8 +193,17 @@ def run():
                         print(f"    FAIL: cell at index {i} has data-color '{cell['color']}' but sits under header '{header_color}'")
                         ok = False
                         mismatch = True
+                # Every descriptive cell before the colour block must NOT be a
+                # value input — that's what actually pins the block's start, and
+                # catches a colour column drifting left into the labels.
+                for i in range(0, first_color):
+                    if row[i]['kind'] == 'value':
+                        print(f"    FAIL: cell at index {i} is a value input but sits under a descriptive header")
+                        ok = False
+                        mismatch = True
                 if not mismatch and row[-1]['kind'] == 'removeBtn':
-                    print(f"    PASS: all {n - 4} value cells aligned correctly under their headers, remove button last")
+                    print(f"    PASS: all {n - 1 - first_color} value cells aligned correctly under their headers "
+                          f"({first_color} descriptive columns first), remove button last")
 
         if console_errors:
             print("\n  Console/page errors:")

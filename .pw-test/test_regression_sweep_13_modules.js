@@ -659,8 +659,15 @@ console.log('\n=== 11. Dispatch ===');
   });
   assert(prodRes.success, 'helper completed production lot for Dispatch created: ' + prodRes.message);
 
+  // Dispatch is a multi-ITEM bill now (one Dispatch Number spanning N line
+  // rows) — item data goes in `lines`, and edit/delete address the bill by its
+  // Dispatch Number rather than a sheet row index. This block used to drive the
+  // pre-refactor flat signature ({productId, qty, rowIdx}), which the current
+  // saveDispatch rejects outright with "must contain at least one item", so
+  // every assertion here had been failing regardless of the code's real state.
   const createRes = saveDispatch({
-    productId: 'SWEEP-PRD-1', productName: 'Sweep Dispatch Product', qty: 4, dispatchDate: '2026-01-02'
+    clientName: 'Sweep Client', dispatchDate: '2026-01-02',
+    lines: JSON.stringify([{ productId: 'SWEEP-PRD-1', productName: 'Sweep Dispatch Product', qty: 4, rate: 0 }])
   });
   assert(createRes.success, 'create succeeds: ' + createRes.message);
   const dispatchNumber = createRes.data.dispatchNumber;
@@ -672,28 +679,38 @@ console.log('\n=== 11. Dispatch ===');
   assert(row[0] === 'SWEEP-PRD-1', 'sheet row has correct productId');
   assert(row[2] === 4, 'sheet row has correct qty (got ' + row[2] + ')');
 
+  // Edit: same bill, qty raised to 6 and a second line added, proving the
+  // rewrite replaces the bill's whole block rather than patching one row.
   const editRes = saveDispatch({
-    rowIdx, productId: 'SWEEP-PRD-1', productName: 'Sweep Dispatch Product', qty: 6,
-    dispatchDate: '2026-01-02', remarks: 'edited'
+    dispatchNumber, clientName: 'Sweep Client', dispatchDate: '2026-01-02', remarks: 'edited',
+    lines: JSON.stringify([
+      { productId: 'SWEEP-PRD-1', productName: 'Sweep Dispatch Product', qty: 6, rate: 0 }
+    ])
   });
   assert(editRes.success, 'edit succeeds: ' + editRes.message);
-  const rowAfterEdit = dispatchSheet.getRange(rowIdx, DISPATCH_COL.QTY, 1, 1).getValues()[0];
-  assert(rowAfterEdit[0] === 6, 'sheet row reflects edited qty (got ' + rowAfterEdit[0] + ')');
   assertLogged('UPDATE', APP_CONFIG.SHEETS.DISPATCH, 'Logs has an UPDATE/Dispatch entry for the edit');
 
-  // saveDispatch's response now echoes the freshly-written row back (see
-  // _mapDispatchRow) so the client can patch it into an already-loaded
-  // Dispatch table in place instead of a full getDispatchData() reload.
-  const echoedDispatch = editRes.data && editRes.data.row;
-  assert(!!echoedDispatch, 'saveDispatch echoes back the fresh row in response.data.row');
-  assert(echoedDispatch.rowIdx === rowIdx, 'echoed row has the correct rowIdx (got ' + (echoedDispatch && echoedDispatch.rowIdx) + ')');
-  assert(echoedDispatch.qty === 6, 'echoed row has the updated qty 6 (got ' + (echoedDispatch && echoedDispatch.qty) + ')');
-  assert(echoedDispatch.remarks === 'edited', 'echoed row has the updated remarks (got "' + (echoedDispatch && echoedDispatch.remarks) + '")');
-  const reloadedDispatch = getDispatchData().data.find(d => d.rowIdx === rowIdx);
-  assert(JSON.stringify(echoedDispatch) === JSON.stringify(reloadedDispatch), 'echoed row matches what a full getDispatchData() reload returns for this rowIdx');
+  const editedLines = getDispatchData().data.filter(d => d.dispatchNumber === dispatchNumber);
+  assert(editedLines.length === 1, 'edited bill still has exactly 1 line (got ' + editedLines.length + ')');
+  assert(editedLines[0].qty === 6, 'edited line reflects qty 6 (got ' + editedLines[0].qty + ')');
+  assert(editedLines[0].remarks === 'edited', 'edited line reflects the new remarks (got "' + editedLines[0].remarks + '")');
 
-  const deleteRes = deleteDispatch(rowIdx, undefined, undefined);
+  // saveDispatch echoes the freshly-written rows back (see _mapDispatchRow) so
+  // the client can patch them into an already-loaded table in place instead of
+  // a full getDispatchData() reload. Plural now — a bill is N rows.
+  const echoedRows = editRes.data && editRes.data.rows;
+  assert(Array.isArray(echoedRows) && echoedRows.length === 1,
+    'saveDispatch echoes the fresh row(s) back in response.data.rows (got ' + JSON.stringify(echoedRows && echoedRows.length) + ')');
+  assert(echoedRows[0].qty === 6, 'echoed row has the updated qty 6 (got ' + echoedRows[0].qty + ')');
+  assert(echoedRows[0].remarks === 'edited', 'echoed row has the updated remarks (got "' + echoedRows[0].remarks + '")');
+  const reloadedDispatch = getDispatchData().data.find(d => d.rowIdx === echoedRows[0].rowIdx);
+  assert(JSON.stringify(echoedRows[0]) === JSON.stringify(reloadedDispatch),
+    'echoed row matches what a full getDispatchData() reload returns for that rowIdx');
+
+  const deleteRes = deleteDispatch(dispatchNumber, undefined, undefined);
   assert(deleteRes.success, 'delete succeeds: ' + deleteRes.message);
+  assert(getDispatchData().data.filter(d => d.dispatchNumber === dispatchNumber).length === 0,
+    'every line of the bill is gone after delete');
   assertLogged('DELETE', APP_CONFIG.SHEETS.DISPATCH, 'Logs has a DELETE/Dispatch entry');
 }
 

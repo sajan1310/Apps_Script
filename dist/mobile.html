@@ -1633,6 +1633,15 @@
     <div id="print-production-sheet-matrix-tables"></div>
   </div>
 
+  <!-- Sub-Group Components — groups that travel with the lot's colors but are
+       NOT colors (packing/variant buckets like 'KIT BAG 20"'). Kept in their
+       own table so they can never widen the color matrix above; see
+       App.Production._isColorGroupName for how the split is decided. -->
+  <div id="print-prod-subgroup-section" style="display:none;margin-top:4px;">
+    <div style="font-size:10.5px;font-weight:800;color:#198754;text-transform:uppercase;letter-spacing:0.7px;margin-bottom:4px;">Sub-Group Components</div>
+    <div id="print-production-sheet-subgroup-tables"></div>
+  </div>
+
   <!-- Remarks -->
   <div id="print-prod-remarks-section" style="display:none;margin-top:10px;padding-top:8px;border-top:1px solid #ccc;">
     <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>

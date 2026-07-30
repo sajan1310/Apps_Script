@@ -120,14 +120,39 @@ def run():
         po_after_first = page.evaluate("document.querySelector('#billItemsBody tr[data-row-uid]').dataset.po")
         check(po_after_first == "PO-100", f"first auto-match applies PO-100 (got {po_after_first!r})")
 
+        # open_bill_form() fills name/qty/price, and each of those arms the
+        # 400ms debounce. Those pending timers have to be drained BEFORE the
+        # count below means anything: on a loaded machine one could still land
+        # inside this step's own wait window, making the total 3 and failing a
+        # `== 2` assertion that had nothing to do with re-matching. (Observed
+        # intermittently, roughly 1 run in 9.) Wait for the count to go stable,
+        # then assert on the DELTA — the same shape Test 3 below already uses.
+        page.wait_for_function(
+            """
+            () => {
+                const n = window.__suggestCallCount;
+                const stable = window.__amPrev === n ? (window.__amStable || 0) + 1 : 0;
+                window.__amPrev = n;
+                window.__amStable = stable;
+                return stable >= 3;
+            }
+            """,
+            timeout=10000,
+        )
+        calls_before_edit = page.evaluate("window.__suggestCallCount")
+
         # Edit qty again -- under the OLD code this row (dataset.po no longer
         # 'DIRECT') would never re-arm the debounce timer at all.
-        page.evaluate(f"window.__matchResponses[1] = {json.dumps(suggest_response(uid, 'PO-200', 7))}")
+        # The response is keyed off the live call count, not a hardcoded index,
+        # so it still lines up whatever the settled baseline turned out to be.
+        page.evaluate(f"window.__matchResponses[window.__suggestCallCount] = {json.dumps(suggest_response(uid, 'PO-200', 7))}")
         page.fill("#billItemsBody .b-item-qty", "7")
         page.wait_for_timeout(500)  # 400ms debounce + 50ms mock latency
 
         calls_after_edit = page.evaluate("window.__suggestCallCount")
-        check(calls_after_edit == 2, f"editing qty on an already-matched row re-triggers runAutoMatch (got {calls_after_edit} total call(s))")
+        check(calls_after_edit == calls_before_edit + 1,
+              f"editing qty on an already-matched row re-triggers runAutoMatch exactly once "
+              f"(before={calls_before_edit}, after={calls_after_edit})")
         po_after_second = page.evaluate("document.querySelector('#billItemsBody tr[data-row-uid]').dataset.po")
         check(po_after_second == "PO-200", f"the refreshed suggestion (PO-200) was applied, not stuck on the stale PO-100 (got {po_after_second!r})")
 

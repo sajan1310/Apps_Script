@@ -8,6 +8,19 @@
       // cleanup may not have fired yet) from also rendering during
       // the next print job.
       App.Print = {
+        // ── Canonical A4 page geometry ───────────────────────────────
+        // Single source of truth for every export path. The margin must stay
+        // in step with the @page rule in Styles.html and Mobile_Styles.html so
+        // window.print() and the downloaded PDF line up. PAGE_WIDTH_PX is the
+        // width the element is laid out at before html2canvas captures it, and
+        // is what any fit/measure loop must measure against — previously
+        // downloadElementAsPDF hard-coded 749 while the Production Sheet fit
+        // engine computed 748, so the sheet was measured at a width it was
+        // never actually captured at.
+        PAGE_MARGIN_MM: 6,
+        get PAGE_WIDTH_PX() { return Math.floor((210 - 2 * this.PAGE_MARGIN_MM) * 96 / 25.4); },
+        get PAGE_HEIGHT_PX() { return Math.floor((297 - 2 * this.PAGE_MARGIN_MM) * 96 / 25.4); },
+
         CONTAINER_IDS: [
           'print-po-container',
           'print-item-ledger-container',
@@ -139,9 +152,16 @@
         // place. Returns true/false instead of throwing — callers decide
         // their own success messaging, but a failure is always toasted here
         // since the cause (library/network) is the same for every caller.
+        // `captureWidthPx` is OURS, not html2pdf's — it is pulled out of the
+        // overrides below rather than forwarded, so a landscape caller can lay
+        // the element out at the rotated page width instead of the portrait
+        // default. Everything else in pdfOverrides goes straight to html2pdf.
         async downloadElementAsPDF(elementId, filename, pdfOverrides = {}) {
           const element = document.getElementById(elementId);
           if (!element) return false;
+
+          const { captureWidthPx, ...html2pdfOverrides } = pdfOverrides;
+          const captureWidth = captureWidthPx || this.PAGE_WIDTH_PX;
 
           if (!(await this.ensureHtml2Pdf())) return false;
 
@@ -168,7 +188,7 @@
           document.body.style.overflow = 'visible';
           document.documentElement.style.overflow = 'visible';
           element.style.display = 'block';
-          element.style.width = '749px';
+          element.style.width = captureWidth + 'px';
           element.style.maxWidth = 'none';
 
           await new Promise(r => requestAnimationFrame(r));
@@ -176,7 +196,7 @@
           try {
             await window.html2pdf()
               .set(Object.assign({
-                margin: [6, 6, 6, 6],
+                margin: [this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM],
                 filename,
                 image: { type: 'jpeg', quality: 0.98 },
                 html2canvas: {
@@ -189,8 +209,17 @@
                   backgroundColor: '#ffffff'
                 },
                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                pagebreak: { mode: ['css', 'legacy'] }
-              }, pdfOverrides))
+                // avoid:['tr'] matters on any multi-page export. html2pdf works
+                // by guillotining one tall canvas at exact page-height
+                // multiples, so without this a row unlucky enough to straddle
+                // the cut is sliced through the middle — half its text at the
+                // bottom of one page, half at the top of the next. Naming 'tr'
+                // makes html2pdf push the whole row to the next page instead.
+                // The CSS page-break-inside:avoid rules in Styles.html cannot
+                // do this job: they live in @media print, which html2canvas
+                // (a screen-media renderer) never applies.
+                pagebreak: { mode: ['css', 'legacy'], avoid: ['tr'] }
+              }, html2pdfOverrides))
               .from(element)
               .save();
             return true;

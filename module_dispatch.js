@@ -292,6 +292,18 @@ function _computeReadyToDispatchMap() {
     const baseName = isTagged ? (productNameById[baseKey] || r.productTag) : r.outputItemName;
     if (!map[key]) {
       map[key] = {
+        // The map key itself, carried onto the record so a client has
+        // something unique per row to address. productId below is NOT unique
+        // once a differentiator splits one output into several rows — every
+        // variant reports the same bare Product Tag / Output Item Name,
+        // because that is all a Dispatch row can store (DISPATCH_COL has no
+        // differentiator column, and the pool debit in
+        // recalculateWarehousePool Pass 3 is deliberately color-blind).
+        key: key,
+        // The bare key this row's availability actually pools with — every
+        // variant of one output draws from the same buckets. See
+        // _readyAvailableQtyFor.
+        baseKey: baseKey,
         productId: isTagged ? r.productTag : r.outputItemName,
         productName: diffValue ? (baseName + ' / ' + diffValue) : baseName,
         differentiator: diffValue,
@@ -323,6 +335,44 @@ function _computeReadyToDispatchMap() {
 }
 
 /**
+ * Currently-available Ready to Dispatch qty for one `productId` as the client
+ * echoes it back — i.e. the bare Product Tag or Output Item Name.
+ *
+ * _computeReadyToDispatchMap keys an untagged output under '__output__<name>'
+ * (so it can't collide with a differently-named Product Tag) and, when the
+ * producing final-stage process names a Dispatch Differentiator, splits it
+ * further into '<baseKey>||<value>' — one bucket per axis value. A productId
+ * carries neither the prefix nor the value, so a lookup of just those two
+ * literal spellings finds nothing for any differentiated product and reads its
+ * availability as 0: with a differentiator configured, saveDispatch rejected
+ * every dispatch of that product outright.
+ *
+ * Availability is therefore summed across the bare key AND every variant of
+ * it. That is not a loosening of the guard — it's what the ledger actually
+ * models: a Dispatch row records only the productId, and
+ * recalculateWarehousePool Pass 3 drains whichever color buckets have stock
+ * ("Dispatch carries no color of its own"), so per-variant consumption isn't
+ * representable in the current schema. The differentiator splits the Ready to
+ * Dispatch *list* for the operator's benefit; the quantity guard pools per
+ * product, exactly as it did before that column existed.
+ * @private
+ */
+function _readyAvailableQtyFor(readyMap, productId) {
+  const key = String(productId || '').trim().toLowerCase();
+  if (!key) return 0;
+  const wanted = { [key]: true, ['__output__' + key]: true };
+  let total = 0;
+  Object.keys(readyMap).forEach(k => {
+    // '<baseKey>||<differentiatorValue>' — pool every variant onto its base.
+    const base = k.indexOf('||') >= 0 ? k.slice(0, k.indexOf('||')) : k;
+    if (!wanted[base]) return;
+    const entry = readyMap[k];
+    total += (entry.producedQty - entry.dispatchedQty);
+  });
+  return total;
+}
+
+/**
  * Retrieves the "Ready to Dispatch" view: one row per Product ID with a
  * fully-packed, Product-tagged Warehouse Pool credit, with produced/
  * dispatched/ready quantities. The row itself stays one-per-product (a
@@ -337,6 +387,11 @@ function getReadyToDispatchData() {
   try {
     const map = _computeReadyToDispatchMap();
     const records = Object.values(map).map(r => ({
+      // Unique per row even when a Dispatch Differentiator splits one output
+      // into several — productId does NOT distinguish those (see
+      // _computeReadyToDispatchMap), so anything addressing a single row must
+      // key on this, not on productId.
+      key: r.key,
       productId: r.productId,
       productName: r.productName,
       // Blank unless the producing final-stage process names a Dispatch
@@ -613,18 +668,17 @@ function saveDispatch(formData) {
     // Validate against currently available Ready to Dispatch quantity,
     // reserved cumulatively across this bill's own lines (two lines of the
     // same product in one bill both draw from the same pool).
-    // _computeReadyToDispatchMap() keys untagged final-stage rows under a
-    // '__output__' prefixed key (see there) to keep them from colliding with
-    // a differently-named Product Tag, but the productId the client echoes
-    // back is always the unprefixed display value for both cases — so an
-    // untagged product's lookup must fall back to the prefixed key.
+    // The productId the client echoes back is always the bare display value,
+    // while _computeReadyToDispatchMap()'s keys carry an '__output__' prefix
+    // for untagged rows and a '||<value>' suffix for each Dispatch
+    // Differentiator variant — see _readyAvailableQtyFor, which pools all of
+    // them back onto the product the ledger actually records.
     const readyMap = _computeReadyToDispatchMap();
     const reservedByProduct = {};
     for (let i = 0; i < cleanLines.length; i++) {
       const line = cleanLines[i];
       const key = line.productId.toLowerCase();
-      const entry = readyMap[key] || readyMap['__output__' + key];
-      const currentReadyQty = entry ? (entry.producedQty - entry.dispatchedQty) : 0;
+      const currentReadyQty = _readyAvailableQtyFor(readyMap, line.productId);
       const availableQty = currentReadyQty + (originalQtyByProduct[key] || 0);
       const reservedSoFar = reservedByProduct[key] || 0;
 
@@ -807,9 +861,20 @@ function deleteDispatch(dispatchNumber, expectedItemCount, expectedTotalQty) {
 /**
  * Deletes multiple dispatch bills (every line item of each) in a single
  * batch.
+ *
+ * `expectedBills` is the same staleness guard deleteDispatch() applies to a
+ * single bill, per bill: a bill whose item count / total qty no longer matches
+ * what the client last saw is SKIPPED rather than deleted, and the rest of the
+ * batch still goes through (mirroring deleteProductionBulk). Bulk delete was
+ * the one path with no guard at all, so a bill edited in another tab between
+ * load and delete was removed with its newer lines and no warning. Omitting the
+ * argument keeps the old unconditional behavior, so existing callers that don't
+ * supply it are unaffected.
+ *
  * @param {Array<string>} dispatchNumbers
+ * @param {Array<{dispatchNumber: string, expectedItemCount: number, expectedTotalQty: number}>} [expectedBills]
  */
-function deleteDispatchBulk(dispatchNumbers) {
+function deleteDispatchBulk(dispatchNumbers, expectedBills) {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(DISPATCH_LOCK_TIMEOUT_MS)) {
     return buildResponse(false, null, 'System is busy. Please try again.');
@@ -824,7 +889,58 @@ function deleteDispatchBulk(dispatchNumbers) {
       return buildResponse(true, null, 'No dispatch bills selected.');
     }
 
-    const targetSet = new Set(requested);
+    // Bill numbers are matched case-insensitively, same as deleteDispatch and
+    // saveDispatch's own edit lookup — _rewriteWithoutMatchingRowsBulk does an
+    // exact-string Set match, so the canonical spelling actually stored on the
+    // sheet is what has to go into the target set, not whatever casing the
+    // client echoed back.
+    const lastRow = sheet.getLastRow();
+    const rows = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, DISPATCH_COL.QTY).getValues() : [];
+
+    const statsByBill = {}; // storedNumberLower -> { stored, itemCount, totalQty }
+    rows.forEach(row => {
+      const stored = String(row[DISPATCH_COL.DISPATCH_NUMBER - 1] || '').trim();
+      if (!stored) return;
+      const k = stored.toLowerCase();
+      if (!statsByBill[k]) statsByBill[k] = { stored: stored, itemCount: 0, totalQty: 0 };
+      statsByBill[k].itemCount++;
+      statsByBill[k].totalQty += Number(row[DISPATCH_COL.QTY - 1]) || 0;
+    });
+
+    const expectedByBill = {};
+    (expectedBills || []).forEach(e => {
+      if (e && e.dispatchNumber !== undefined) {
+        expectedByBill[String(e.dispatchNumber || '').trim().toLowerCase()] = e;
+      }
+    });
+
+    const targetSet = new Set();
+    let billsMatched = 0;
+    let skippedMismatch = 0;
+    let skippedMissing = 0;
+
+    requested.forEach(num => {
+      const stats = statsByBill[num.toLowerCase()];
+      if (!stats) { skippedMissing++; return; }
+
+      const expected = expectedByBill[num.toLowerCase()];
+      if (expected && expected.expectedItemCount !== undefined && expected.expectedTotalQty !== undefined) {
+        if (stats.itemCount !== Number(expected.expectedItemCount) ||
+            Math.abs(stats.totalQty - Number(expected.expectedTotalQty)) > 0.0001) {
+          skippedMismatch++;
+          return;
+        }
+      }
+      targetSet.add(stats.stored);
+      billsMatched++;
+    });
+
+    if (billsMatched === 0) {
+      return buildResponse(false, null, skippedMismatch > 0
+        ? 'Data mismatch: the selected bill(s) have been modified since they were loaded. Please refresh.'
+        : 'None of the selected dispatch bill(s) were found. Please refresh.');
+    }
+
     const { rowsDeleted } = _rewriteWithoutMatchingRowsBulk(sheet, 2, DISPATCH_COL.DISPATCH_NUMBER, targetSet);
 
     if (typeof recalculateWarehousePool === 'function') {
@@ -833,7 +949,12 @@ function deleteDispatchBulk(dispatchNumbers) {
 
     SpreadsheetApp.flush();
 
-    const msg = `Deleted ${requested.length} dispatch bill(s) (${rowsDeleted} item(s) removed).`;
+    // Counts what was actually removed. This used to report
+    // `requested.length` bills regardless of outcome, so a stale selection
+    // naming bills that no longer existed still reported them all deleted.
+    let msg = `Deleted ${billsMatched} dispatch bill(s) (${rowsDeleted} item(s) removed).`;
+    if (skippedMismatch > 0) msg += ` Skipped ${skippedMismatch} that were modified since loading — please refresh and retry those.`;
+    if (skippedMissing > 0) msg += ` ${skippedMissing} were already gone.`;
     logAction('BULK_DELETE', APP_CONFIG.SHEETS.DISPATCH, 'multiple', msg, 'SUCCESS');
 
     return buildResponse(true, null, msg);

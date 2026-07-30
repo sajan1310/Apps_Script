@@ -133,7 +133,12 @@ def run():
             (async () => {
                 document.getElementById('productionColorMatrixBody').innerHTML = '';
                 document.querySelectorAll('#productionColorMatrixHeaderRow th[data-color]').forEach(th => th.remove());
-                const colors = ['Blue', 'Green'];
+                // populateComponentsConsumedDirect takes a colorBreakdown —
+                // {color, qty} objects, not bare color-name strings. This used to
+                // pass ['Blue','Green'], so every entry.color was undefined and
+                // the call threw before asserting anything.
+                const breakdown = [{ color: 'Blue', qty: 6 }, { color: 'Green', qty: 8 }];
+                const colors = breakdown.map(b => b.color);
                 colors.forEach(c => App.Production.addMatrixColorColumn(c));
                 const legacyComponents = [
                     { itemName: 'Brush', size: '', sourceType: 'ITEM', qty: 14, colorGroup: 'COMMON' },
@@ -141,7 +146,7 @@ def run():
                     { itemName: 'CRYSTA STICKER Chain Cover Green', size: 'General', sourceType: 'ITEM', qty: 8, colorGroup: 'Green' }
                 ];
                 document.getElementById('productionComponentsBody').innerHTML = '';
-                await App.Production.populateComponentsConsumedDirect(legacyComponents, colors);
+                await App.Production.populateComponentsConsumedDirect(legacyComponents, breakdown);
                 const commonRows = Array.from(document.querySelectorAll('#productionComponentsBody tr .prod-comp-item-select')).map(sel => {
                     const opt = sel.options[sel.selectedIndex];
                     return opt ? (opt.dataset.name || opt.textContent) : null;
@@ -172,6 +177,50 @@ def run():
         sheet_slot = next((s for s in sheet_result["matrixSlots"] if s["itemName"] == "CRYSTA STICKER Chain Cover"), None)
         check(sheet_slot is not None and sheet_slot["colors"] == {"Green": 8, "Blue": 14},
               f"Sheet: one slot with Green=8 (saved) and Blue=14 (fallback split) (got {sheet_slot})")
+
+        # ─────────────────────────────────────────────────────────────
+        # A colorBreakdown entry with no color name must not take down the whole
+        # Edit-Lot reopen. populateComponentsConsumedDirect used to do
+        # `entry.color.toLowerCase()`, which threw on exactly this shape; the
+        # caller that builds breakdownColors already guards with filter(Boolean),
+        # so blank colors are a known possibility on this data.
+        print("\n[Scenario 4] A breakdown entry with a missing color must not crash the reopen...")
+        malformed = page.evaluate("""
+            (async () => {
+                document.getElementById('productionColorMatrixBody').innerHTML = '';
+                document.querySelectorAll('#productionColorMatrixHeaderRow th[data-color]').forEach(th => th.remove());
+                document.getElementById('productionComponentsBody').innerHTML = '';
+                const breakdown = [
+                    { color: 'Blue', qty: 6 },
+                    { color: '', qty: 3 },          // blank name
+                    { qty: 4 },                     // missing key entirely
+                    { color: null, qty: 2 },        // explicit null
+                    { color: 'Green', qty: 8 }
+                ];
+                const components = [
+                    { itemName: 'Brush', size: '', sourceType: 'ITEM', qty: 14, colorGroup: 'COMMON' },
+                    { itemName: 'CRYSTA STICKER Chain Cover Green', size: 'General', sourceType: 'ITEM', qty: 8, colorGroup: 'Green' }
+                ];
+                try {
+                    await App.Production.populateComponentsConsumedDirect(components, breakdown);
+                } catch (err) {
+                    return { threw: String(err && err.message || err) };
+                }
+                return {
+                    threw: null,
+                    // Only the two real colors may become matrix columns -- a blank
+                    // must never render as an 'undefined' column header.
+                    columns: Array.from(
+                        document.querySelectorAll('#productionColorMatrixHeaderRow th[data-color]')
+                    ).map(th => th.dataset.color)
+                };
+            })()
+        """)
+        check(malformed["threw"] is None,
+              f"Reopen survives a malformed breakdown entry (threw: {malformed['threw']})")
+        if malformed["threw"] is None:
+            check(malformed["columns"] == ["Blue", "Green"],
+                  f"Only the named colors become matrix columns, no blank/undefined column (got {malformed['columns']})")
 
         print("\n" + ("ALL TESTS PASSED" if not failures else f"{len(failures)} TEST(S) FAILED"))
         browser.close()

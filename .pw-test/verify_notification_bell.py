@@ -33,8 +33,34 @@ def main():
         has_notify = page.evaluate("typeof App.Notify !== 'undefined'")
         check(has_notify, "App.Notify is defined on window.App")
 
-        # Clear any startup notifications for a clean baseline test
+        # Clear any startup notifications for a clean baseline test.
+        #
+        # App.Init awaits Notify.checkSmartAlerts() + checkBackendAlerts() on
+        # boot, and on file:// the mock-data harness at the top of
+        # Script_Core.html is active, so those really do produce alerts (low
+        # stock, overdue POs). They resolve asynchronously: clearing the moment
+        # #notif-bell-btn appears sometimes ran BEFORE that pass finished, and
+        # its 2 alerts then landed on top of the 2 this test adds itself — every
+        # count/message assertion below saw 4 and failed. Intermittent, and
+        # nothing to do with the bell.
+        #
+        # So: wait for the startup pass to go quiet (item count stable across
+        # consecutive polls) and only then clear.
+        page.wait_for_function(
+            """
+            () => {
+                const n = (window.App?.Notify?.items || []).length;
+                const stable = window.__notifPrev === n ? (window.__notifStable || 0) + 1 : 0;
+                window.__notifPrev = n;
+                window.__notifStable = stable;
+                return stable >= 3;
+            }
+            """,
+            timeout=10000,
+        )
         page.evaluate("App.Notify.clear()")
+        baseline = page.evaluate("(App.Notify.items || []).length")
+        check(baseline == 0, f"baseline is genuinely empty before the test adds its own (got {baseline})")
 
         # 2. Check initial state (badge hidden, empty notification list)
         badge_visible = page.evaluate("document.getElementById('notif-badge').style.display !== 'none'")

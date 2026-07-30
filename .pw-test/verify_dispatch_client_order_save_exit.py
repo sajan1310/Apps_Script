@@ -36,7 +36,10 @@ def setup(page):
     page.wait_for_timeout(1000)
     page.evaluate(f"""
         App.State.globalDispatch = [{json.dumps(MOCK_DISPATCH)}];
-        App.State.filteredDispatch = App.State.globalDispatch;
+        // Dispatch is a multi-ITEM bill now: the ledger and the edit modal both
+        // work off the grouped globalDispatchBills, keyed by Dispatch Number.
+        App.Dispatch.buildDispatchBills();
+        App.State.filteredDispatchBills = App.State.globalDispatchBills;
         App.State.globalClients = [{json.dumps(MOCK_CLIENT)}];
         App.State.filteredClients = App.State.globalClients;
         App.State.globalOrders = [{json.dumps(MOCK_ORDER)}];
@@ -83,7 +86,10 @@ def run():
             page.wait_for_timeout(400)
 
         print("=== DISPATCH ===")
-        page.evaluate("App.Dispatch.openEditDispatchModal(0)")
+        # openEditDispatchModal takes a Dispatch NUMBER now, not a flat-array
+        # index — passing 0 matched no bill, so the modal never opened and this
+        # whole scenario died on the visibility timeout.
+        page.evaluate("App.Dispatch.openEditDispatchModal('DSP-1')")
         page.locator("#dispatchModal").wait_for(state="visible", timeout=TIMEOUT)
         page.wait_for_timeout(300)
         results.append(check_modal(page, "dispatchCancelBtn", "dispatchExitBtn", "dispatchSubmitBtn"))

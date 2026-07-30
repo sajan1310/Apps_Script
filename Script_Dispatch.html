@@ -116,7 +116,7 @@
           const breakdown = r.colorBreakdown || [];
           const hasColorInfo = breakdown.length > 1 || (breakdown.length === 1 && breakdown[0].color);
           const colorsCell = hasColorInfo
-            ? `<button type="button" class="btn btn-sm btn-outline-dark" onclick="App.Dispatch.openColorBreakdown('${escapeHtml(r.productId)}')">
+            ? `<button type="button" class="btn btn-sm btn-outline-dark" onclick="App.Dispatch.openColorBreakdown('${escapeHtml(r.key || r.productId)}')">
                  <i class="bi bi-palette me-1"></i>${breakdown.length}
                </button>`
             : '<span class="text-muted">&#8211;</span>';
@@ -140,8 +140,14 @@
       // see getReadyToDispatchData's colorBreakdown. Reads straight from
       // the already-loaded globalReadyToDispatch (no extra API round trip)
       // since the breakdown is already included in that same response.
-      openColorBreakdown(productId) {
-        const record = (App.State.globalReadyToDispatch || []).find(r => r.productId === productId);
+      // Addressed by the record's `key`, not its productId: a Dispatch
+      // Differentiator splits one output into several rows that all report the
+      // SAME productId, so matching on that opened the first variant's
+      // breakdown no matter which row's button was clicked. Falls back to
+      // productId for an older payload with no key.
+      openColorBreakdown(rowKey) {
+        const list = App.State.globalReadyToDispatch || [];
+        const record = list.find(r => (r.key || r.productId) === rowKey);
         if (!record) return;
 
         const titleEl = document.getElementById('dispatchColorBreakdownTitle');
@@ -601,11 +607,26 @@
         const selected = App.State.selectedDispatch.slice();
         if (!selected.length) return;
 
+        // Same staleness guard the single-bill delete already sends (see
+        // delete() below), per selected bill — a bill edited in another tab
+        // between load and delete is skipped instead of being deleted along
+        // with its newer lines.
+        const bills = App.State.globalDispatchBills || [];
+        const expectedBills = selected.map(num => {
+          const bill = bills.find(b => b.dispatchNumber === num);
+          if (!bill) return null;
+          return {
+            dispatchNumber: num,
+            expectedItemCount: bill.items.length,
+            expectedTotalQty: bill.totalQty
+          };
+        }).filter(Boolean);
+
         App.Utils.confirmAction(
           `Are you sure you want to permanently delete ${selected.length} selected dispatch bill(s)? This will increase the Ready to Dispatch quantity for the affected products.`,
           async () => {
             try {
-              const res = await Api.call('deleteDispatchBulk', selected);
+              const res = await Api.call('deleteDispatchBulk', selected, expectedBills);
               App.Utils.showToast(res.message, !res.success);
               if (res.success) {
                 App.State.selectedDispatch = [];
@@ -677,6 +698,38 @@
       },
 
       // ── Modal: Item lines ───────────────────────────────────────
+      // Ready to Dispatch collapsed to one entry per dispatchable productId.
+      //
+      // A Dispatch Differentiator splits the Ready list into one row per axis
+      // value, but every one of those rows reports the same productId — that
+      // is all a Dispatch row stores, and the Warehouse Pool debit is
+      // color-blind by design (see _readyAvailableQtyFor, module_dispatch.js,
+      // which pools the variants back together for the server-side guard).
+      // Left ungrouped, the item-line <select> got several <option>s sharing
+      // one value (so a variant couldn't be picked) each showing only its own
+      // slice of the availability the server would actually allow.
+      //
+      // -> [{ productId, productName, readyQty, variants: [labels] }]
+      readyToDispatchByProduct() {
+        const byId = new Map();
+        (App.State.globalReadyToDispatch || []).forEach(r => {
+          const pid = r.productId || '';
+          if (!pid) return;
+          // productName embeds the differentiator as "<base> / <value>";
+          // strip it back off so grouped entries read as the product itself.
+          const suffix = r.differentiator ? ` / ${r.differentiator}` : '';
+          const baseName = suffix && r.productName.endsWith(suffix)
+            ? r.productName.slice(0, -suffix.length)
+            : r.productName;
+
+          if (!byId.has(pid)) byId.set(pid, { productId: pid, productName: baseName, readyQty: 0, variants: [] });
+          const entry = byId.get(pid);
+          entry.readyQty += (Number(r.readyQty) || 0);
+          if (r.differentiator) entry.variants.push(r.differentiator);
+        });
+        return Array.from(byId.values());
+      },
+
       populateDispatchLineProductSelect(selectEl, currentProductId) {
         if (!selectEl) return;
 
@@ -684,8 +737,10 @@
           window.jQuery(selectEl).select2('destroy');
 
         let html = '<option value="">Choose a Product...</option>';
-        (App.State.globalReadyToDispatch || []).forEach(r => {
-          html += `<option value="${escapeHtml(r.productId)}" data-product-name="${escapeHtml(r.productName)}">${escapeHtml(r.productName)} (${escapeHtml(r.productId)}) — Ready: ${App.Production.formatQty(r.readyQty)}</option>`;
+        this.readyToDispatchByProduct().forEach(r => {
+          const variantNote = r.variants.length ? ` [${r.variants.join(', ')}]` : '';
+          const label = `${r.productName}${variantNote} (${r.productId}) — Ready: ${App.Production.formatQty(r.readyQty)}`;
+          html += `<option value="${escapeHtml(r.productId)}" data-product-name="${escapeHtml(r.productName)}">${escapeHtml(label)}</option>`;
         });
 
         selectEl.innerHTML = html;
@@ -835,7 +890,10 @@
           const pid = select.value;
           if (!pid) { help.innerText = ''; return; }
 
-          const entry = (App.State.globalReadyToDispatch || []).find(r => r.productId === pid);
+          // Grouped across Dispatch Differentiator variants so the hint
+          // matches the availability saveDispatch actually enforces — a bare
+          // find() on productId only ever saw the first variant's slice.
+          const entry = this.readyToDispatchByProduct().find(r => r.productId === pid);
           const ready = (entry ? entry.readyQty : 0) + (App.State.dispatchEditOriginalQtyByProduct[pid] || 0);
           const usedElsewhere = (usedByProduct[pid] || 0) - toNumber(tr.querySelector('.dispatch-line-qty')?.value);
           const remaining = ready - usedElsewhere;

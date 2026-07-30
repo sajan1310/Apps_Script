@@ -256,6 +256,125 @@ function _setProcessPrimaryColorAxis(processId, primaryColorAxis) {
 }
 
 /**
+ * @private The Primary Color Axis a process uses when its own cell is still
+ * blank: the FIRST axis in that process's canonical recipe order (see
+ * computeColorAxesForProcess). Every process that has at least one detectable
+ * Color Axis gets one.
+ *
+ * A blank cell used to mean "legacy: sum every checked color across every
+ * axis", which double-counts a multi-axis lot's non-primary rows (the exact
+ * bug the Color Axes feature exists to fix) unless the operator noticed the
+ * warning on the Production form and picked a group by hand. Defaulting
+ * instead of leaving it blank makes the safe behavior the automatic one; the
+ * operator can still override it, per lot on the Production form or
+ * permanently in the Process editor.
+ *
+ * Recipe order is the same order the operator sees the axis groups in on the
+ * checklist (see renderGroupedColorChecklist), so the default is always the
+ * topmost group rather than an arbitrary one.
+ *
+ * A process with NO axes at all — no colorAxis-tagged recipe rows and no
+ * multi-color POOL input — has nothing for "primary" to mean, so this returns
+ * '' and that process keeps its unchanged single-list behavior.
+ *
+ * @param {string} processId  '' is valid (a not-yet-assigned new process):
+ *   pool axes derive from `components` + pool rows, and processId only scopes
+ *   Color Link merging, which a brand-new process has none of yet.
+ * @param {Array} [components] Defaults to this process's saved recipe rows.
+ * @param {Array} [poolRows] Defaults to a fresh Warehouse Pool read.
+ * @param {Array} [colorLinks] Defaults to every saved Process Color Link.
+ * @returns {string} Axis label, or '' when the process has no axes.
+ */
+function _defaultPrimaryColorAxisLabel(processId, components, poolRows, colorLinks) {
+  try {
+    const comps = components || ((getProcessComponentsData(processId) || {}).data || []);
+    if (!comps || comps.length === 0) return '';
+    const pool = poolRows || (typeof getWarehousePoolData === 'function'
+      ? ((getWarehousePoolData() || {}).data || [])
+      : []);
+    const links = colorLinks || _getAllProcessColorLinks();
+    const axes = computeColorAxesForProcess(processId || '', comps, pool, links) || [];
+    return axes.length > 0 ? String(axes[0].label || '').trim() : '';
+  } catch (error) {
+    Log.error('[_defaultPrimaryColorAxisLabel] Error:', error.message);
+    return '';
+  }
+}
+
+/**
+ * Fills the Primary Color Axis cell of every process that still has a blank
+ * one but does have at least one detectable Color Axis (see
+ * _defaultPrimaryColorAxisLabel). saveProcess and saveProduction already
+ * resolve the same default on the fly, so this changes no behavior — it just
+ * writes the resolved value into the sheet in one pass, so the column reads
+ * as filled-in for processes nobody has re-saved or logged a lot against yet.
+ *
+ * Safe to re-run: a process that already has a value is never touched, and one
+ * with no axes is skipped rather than blanked.
+ *
+ * Run from the Apps Script editor (function dropdown -> Run), then check the
+ * Execution log for the summary.
+ *
+ * @returns {Object} buildResponse with { filled, skipped, details }
+ */
+function backfillProcessPrimaryColorAxes() {
+  try {
+    const sheet = getSheet(APP_CONFIG.SHEETS.PROCESS_MASTER);
+    ensureProcessPrimaryColorAxisColumn(sheet);
+    ensureProcessDispatchDifferentiatorColumn(sheet);
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return buildResponse(true, { filled: 0, skipped: 0, details: [] }, 'No processes to backfill.');
+
+    // Read the shared inputs ONCE for the whole sheet rather than letting each
+    // process's _defaultPrimaryColorAxisLabel call re-read the Warehouse Pool
+    // and the Color Links (same reasoning as getAxisOrderByProcess).
+    const poolRows = typeof getWarehousePoolData === 'function'
+      ? ((getWarehousePoolData() || {}).data || [])
+      : [];
+    const colorLinks = _getAllProcessColorLinks();
+    const componentsByProcess = new Map();
+    ((getProcessComponentsData('') || {}).data || []).forEach(c => {
+      const key = String(c.processId || '').trim().toLowerCase();
+      if (!key) return;
+      if (!componentsByProcess.has(key)) componentsByProcess.set(key, []);
+      componentsByProcess.get(key).push(c);
+    });
+
+    const rows = sheet.getRange(2, 1, lastRow - 1, PROCESS_COL.PRIMARY_COLOR_AXIS).getValues();
+    const details = [];
+    let filled = 0;
+    let skipped = 0;
+
+    rows.forEach((row, i) => {
+      const processId = String(row[PROCESS_COL.PROCESS_ID - 1] || '').trim();
+      if (!processId) return;
+      if (String(row[PROCESS_COL.PRIMARY_COLOR_AXIS - 1] || '').trim()) { skipped++; return; }
+
+      const label = _defaultPrimaryColorAxisLabel(
+        processId, componentsByProcess.get(processId.toLowerCase()) || [], poolRows, colorLinks);
+      if (!label) { skipped++; return; }
+
+      sheet.getRange(i + 2, PROCESS_COL.PRIMARY_COLOR_AXIS).setValue(label);
+      filled++;
+      details.push(`${processId} (${String(row[PROCESS_COL.PROCESS_NAME - 1] || '').trim()}) -> "${label}"`);
+    });
+
+    if (filled > 0) {
+      SpreadsheetApp.flush();
+      invalidateListCache(MASTER_DATA_CACHE_KEYS.PROCESS_ALL, MASTER_DATA_CACHE_KEYS.PROCESS_ACTIVE);
+    }
+    const message = `Primary Color Axis backfill: ${filled} filled, ${skipped} left as-is (already set, or no color axes).`;
+    Logger.log('[backfillProcessPrimaryColorAxes] ' + message);
+    details.forEach(d => Logger.log('  ' + d));
+    return buildResponse(true, { filled, skipped, details }, message);
+  } catch (error) {
+    Log.error('[backfillProcessPrimaryColorAxes] Error:', error.message);
+    return buildResponse(false, null, 'Failed to backfill Primary Color Axis: ' + error.message);
+  }
+}
+
+/**
  * Auto-generates the next sequential Process ID.
  * Format: PRC-1001, PRC-1002, ...
  */
@@ -368,12 +487,19 @@ function saveProcess(formData) {
 
     // Primary Color Axis: when this process has 2+ independent color axes
     // (see computeColorGroupsForProcess), the operator picks which one's
-    // checked "Colors to Produce" rows determine a lot's total quantity —
-    // blank keeps the process on the legacy single-list/cross-product path.
+    // checked "Colors to Produce" rows determine a lot's total quantity.
     // Only a light shape check here (mirrors the low-friction validation
     // already used for colorLinks below) — a stale/mismatched label just
     // falls back to legacy behavior client-side rather than blocking save.
-    const primaryColorAxis = sanitizeString(formData.primaryColorAxis || '', 'primaryColorAxis');
+    //
+    // Left blank on the form, this resolves to the process's first axis in
+    // recipe order rather than staying empty: every process that HAS a color
+    // axis gets a primary one (see _defaultPrimaryColorAxisLabel for why an
+    // empty cell is the unsafe default). Resolved from THIS save's own
+    // components/colorLinks, not the saved ones, so a recipe edit that adds
+    // the process's first axis gets a primary in the same save. A process
+    // with no axes at all still stores '' and is untouched by any of this.
+    let primaryColorAxis = sanitizeString(formData.primaryColorAxis || '', 'primaryColorAxis');
     // Only meaningful on a final-stage process (see PROCESS_COL.DISPATCH_DIFFERENTIATOR);
     // stored regardless so toggling Is Final Stage off and back on keeps the choice.
     const dispatchDifferentiator = sanitizeString(formData.dispatchDifferentiator || '', 'dispatchDifferentiator');
@@ -385,6 +511,16 @@ function saveProcess(formData) {
     }
 
     const isEdit = !!formData.processId;
+
+    // colorLinks here is THIS save's own set (not the saved one) so a link
+    // added in the same save is already reflected in how axes merge — links
+    // only affect axis merging/labels, and the first-in-recipe-order pick
+    // itself is stable either way.
+    if (!primaryColorAxis) {
+      primaryColorAxis = _defaultPrimaryColorAxisLabel(
+        isEdit ? String(formData.processId).trim() : '', components, null, colorLinks);
+    }
+
     const lastRow = sheet.getLastRow();
 
     // Duplicate Lot Prefix / Output Item Name checks (excluding the row being edited).
@@ -445,7 +581,7 @@ function saveProcess(formData) {
       const oldIsFinalStageCell = oldRow[PROCESS_COL.IS_FINAL_STAGE - 1];
       const oldIsFinalStage = oldIsFinalStageCell === true || String(oldIsFinalStageCell).toUpperCase() === 'TRUE';
 
-      sheet.getRange(targetRow, 1, 1, 10).setValues([[
+      sheet.getRange(targetRow, 1, 1, PROCESS_COL.DISPATCH_DIFFERENTIATOR).setValues([[
         processId, processName, sequence, lotPrefix, isFinalStage, active, remarks, outputItemName, processType, primaryColorAxis, dispatchDifferentiator
       ]]);
 
@@ -537,6 +673,15 @@ function saveProcess(formData) {
  *    recalculateWarehousePool() — without this they'd stay credited to the
  *    old name forever, stranding that stock from every bucket the new name
  *    actually resolves to
+ *  - Dispatch sheet: an UNTAGGED final-stage lot is dispatched under its
+ *    Output Item Name, which is what saveDispatch writes into
+ *    DISPATCH_COL.PRODUCT_ID (see _computeReadyToDispatchMap:
+ *    `productId: isTagged ? r.productTag : r.outputItemName`) and what
+ *    recalculateWarehousePool's Pass 3 matches back against
+ *    `bucket.outputItemName` to debit the pool. Left un-renamed, Pass 3 finds
+ *    no bucket for the old name, the entire dispatch debit silently vanishes,
+ *    and every already-shipped unit reappears as Ready to Dispatch — i.e. a
+ *    rename made the business look like it still had goods it had shipped.
  * Matching is case-insensitive/trimmed; values are rewritten to the new
  * name exactly as entered.
  */
@@ -642,6 +787,69 @@ function _renamePoolOutputItemNameEverywhere(oldName, newName) {
         }
       });
       if (changed) range.setValues(values);
+    }
+  }
+
+  let dispatchSheet;
+  try {
+    dispatchSheet = getSheet(APP_CONFIG.SHEETS.DISPATCH);
+  } catch (e) {
+    dispatchSheet = null;
+  }
+
+  if (dispatchSheet) {
+    const lastRow = dispatchSheet.getLastRow();
+    if (lastRow >= 2) {
+      // A Dispatch row's Product_ID is EITHER a BOM Product ID (a tagged
+      // final-stage lot) or an Output Item Name (an untagged one) — the column
+      // doesn't record which. Only the latter is ours to rename, so a name
+      // that is also a real BOM Product ID is left alone rather than risk
+      // rewriting a genuine product reference that merely shares the string.
+      let isAlsoBomProductId = false;
+      try {
+        const bomSheet = getSheet(APP_CONFIG.SHEETS.BOM);
+        const bomLastRow = bomSheet.getLastRow();
+        if (bomLastRow >= 2) {
+          isAlsoBomProductId = bomSheet.getRange(2, BOM_COL.PRODUCT_ID, bomLastRow - 1, 1)
+            .getValues()
+            .some(r => String(r[0] || '').trim().toLowerCase() === oldLower);
+        }
+      } catch (e) { /* no Products sheet yet — nothing it could collide with */ }
+
+      if (!isAlsoBomProductId) {
+        const range = dispatchSheet.getRange(2, DISPATCH_COL.PRODUCT_ID, lastRow - 1, 1);
+        const values = range.getValues();
+        let changed = false;
+        values.forEach(row => {
+          if (String(row[0] || '').trim().toLowerCase() === oldLower) {
+            row[0] = newTrimmed;
+            changed = true;
+          }
+        });
+        if (changed) {
+          range.setValues(values);
+          // Product Name is a de-normalized display copy of the same value for
+          // an untagged output (see _computeReadyToDispatchMap's baseName), so
+          // it goes stale in the same way; only rewritten where it still holds
+          // the old name exactly, never where the operator typed something
+          // else or a differentiator label is embedded in it.
+          const nameRange = dispatchSheet.getRange(2, DISPATCH_COL.PRODUCT_NAME, lastRow - 1, 1);
+          const names = nameRange.getValues();
+          let namesChanged = false;
+          names.forEach(row => {
+            const cur = String(row[0] || '').trim();
+            if (cur.toLowerCase() === oldLower) {
+              row[0] = newTrimmed;
+              namesChanged = true;
+            } else if (cur.toLowerCase().indexOf(oldLower + ' / ') === 0) {
+              // "<Output Item Name> / <differentiator value>"
+              row[0] = newTrimmed + cur.slice(oldLower.length);
+              namesChanged = true;
+            }
+          });
+          if (namesChanged) nameRange.setValues(names);
+        }
+      }
     }
   }
 }
@@ -2156,14 +2364,34 @@ function getProcessColorAxes(processId) {
       : [];
     const colorLinks = _getAllProcessColorLinks();
     const process = _getProcessRecordById(processId);
-    const primaryColorAxis = String((process && process.primaryColorAxis) || '').trim();
+    const savedPrimaryColorAxis = String((process && process.primaryColorAxis) || '').trim();
 
     const axes = computeColorAxesForProcess(processId, components, poolRows, colorLinks);
-    const primaryAxisKey = primaryColorAxis
-      ? (axes.find(a => a.label.toLowerCase() === primaryColorAxis.toLowerCase()) || {}).key || ''
-      : '';
+    const savedAxis = savedPrimaryColorAxis
+      ? axes.find(a => a.label.toLowerCase() === savedPrimaryColorAxis.toLowerCase())
+      : null;
 
-    return buildResponse(true, { axes, primaryColorAxis, primaryAxisKey });
+    // Every process with an axis reports a primary one, even before anything
+    // has been written to its Primary Color Axis cell — the first axis in
+    // recipe order stands in (see _defaultPrimaryColorAxisLabel), so the
+    // Process editor's picker and the Production checklist both open already
+    // pointing at it instead of at "none". A saved label that no longer
+    // resolves (its axis was renamed or removed) falls back to the same
+    // default rather than to no primary at all.
+    const primaryAxis = savedAxis || axes[0] || null;
+    const primaryColorAxis = primaryAxis ? primaryAxis.label : '';
+    const primaryAxisKey = primaryAxis ? primaryAxis.key : '';
+
+    return buildResponse(true, {
+      axes,
+      primaryColorAxis,
+      primaryAxisKey,
+      savedPrimaryColorAxis,
+      // True when the primary above is the fallback rather than this
+      // process's own saved choice — the Process editor uses it to know it's
+      // showing a default the operator has never explicitly confirmed.
+      primaryIsDefault: !savedAxis && !!primaryAxis
+    });
   } catch (error) {
     Log.error('[getProcessColorAxes] Error:', error.message);
     return buildResponse(false, null, 'Failed to load process color axes: ' + error.message);

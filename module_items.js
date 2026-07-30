@@ -476,6 +476,43 @@ function _getItemUnitInfoMap() {
 }
 
 /**
+ * Builds a "name|size" -> narration lookup map from a single batch read of
+ * Items Master. Items Master is the source of truth for narration, so any
+ * consumer that keeps its own snapshot of it (Production's
+ * COMPONENTS_CONSUMED / CUSTOM_COMPONENTS JSON) resolves through this rather
+ * than trusting a value copied in at save time — see
+ * backfillProductionNarrationFromItems and saveProduction.
+ *
+ * Only non-blank narrations are included. A blank one carries no information
+ * and must never overwrite a note somebody typed by hand into a consumer, so
+ * omitting it here lets every caller treat "absent from the map" as
+ * "keep what you have" without a second check.
+ *
+ * @returns {Object} { [nameLower|sizeLower]: narration }
+ */
+function _getItemNarrationMap() {
+  const map = {};
+  try {
+    const sheet = getSheet(APP_CONFIG.SHEETS.ITEMS);
+    const lastRow = sheet ? sheet.getLastRow() : 0;
+    if (!sheet || lastRow < 2) return map;
+
+    const data = sheet.getRange(2, ITEMS_COL.ITEM_NAME, lastRow - 1, ITEMS_COL.NARRATION).getValues();
+    data.forEach(row => {
+      const name = String(row[ITEMS_COL.ITEM_NAME - 1] || '').trim();
+      if (!name) return;
+      const narration = String(row[ITEMS_COL.NARRATION - 1] || '').trim();
+      if (!narration) return;
+      const size = String(row[ITEMS_COL.SIZE - 1] || '').trim();
+      map[name.toLowerCase() + '|' + size.toLowerCase()] = narration;
+    });
+  } catch (e) {
+    // Items sheet not found/accessible — callers keep their stored narration.
+  }
+  return map;
+}
+
+/**
  * Looks up unit info for a single (name, size) pair from a map built by
  * _getItemUnitInfoMap(). Falls back to {baseUnit: 'Pcs', purchaseUnit: 'Pcs',
  * weightPerBaseUnit: 0} for items not found (new/unregistered items).

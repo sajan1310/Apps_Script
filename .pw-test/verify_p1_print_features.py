@@ -79,7 +79,14 @@ def run():
         """)
 
         print("[P1.1] App.Dispatch.print / populateDispatchPrintData")
-        page.evaluate("App.Dispatch.populateDispatchPrintData(0)")
+        # populateDispatchPrintData now takes a Dispatch NUMBER and reads the
+        # grouped globalDispatchBills (a bill is N line rows), not a flat-array
+        # INDEX. Called with 0 against an unbuilt bills array it found no bill,
+        # returned null early and left every print field blank — so all six
+        # checks below failed for that reason rather than anything about the
+        # challan layout they exist to verify.
+        page.evaluate("App.Dispatch.buildDispatchBills()")
+        page.evaluate("App.Dispatch.populateDispatchPrintData('DSP-1001')")
         check(page.evaluate("document.getElementById('print-dispatch-number').innerText") == 'DSP-1001', "challan number populated")
         check(page.evaluate("document.getElementById('print-dispatch-client').innerText") == 'Acme Cycles', "consignee name populated")
         check(page.evaluate("document.getElementById('print-dispatch-client-gstin').innerText") == '27ABCDE1234F1Z5', "consignee GSTIN looked up from Client Master")

@@ -292,8 +292,14 @@ console.log('\n=== Test 6: operator picks Primary Axis on the Production form it
   const umaId = res.data && res.data.processId;
   assert(!!umaId, 'Unconfigured Multi-Axis Process created (got "' + umaId + '")');
 
+  // Never configured by hand, but no longer blank: saveProcess resolves the
+  // process's FIRST axis in recipe order (Rim Color — its recipe rows come
+  // before the Mudguard ones) and stores that, so a multi-axis process can't
+  // sit on the legacy sum-every-axis path and double-count. See
+  // _defaultPrimaryColorAxisLabel in module_process.js.
   const beforeRow = (getProcessData(false).data || []).find(p => p.processId === umaId);
-  assert(beforeRow && beforeRow.primaryColorAxis === '', 'process has no primaryColorAxis yet (got "' + (beforeRow && beforeRow.primaryColorAxis) + '")');
+  assert(beforeRow && beforeRow.primaryColorAxis === 'Rim Color',
+    'unconfigured process defaults to its first recipe axis (got "' + (beforeRow && beforeRow.primaryColorAxis) + '")');
 
   const lot1 = saveProduction({
     processId: umaId,

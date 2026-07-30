@@ -1495,13 +1495,21 @@
         const wrapper = document.getElementById('processPrimaryColorAxisWrapper');
         if (picker) {
           const current = picker.value;
-          picker.innerHTML = '<option value="">— None (legacy: sum every checked color) —</option>'
+          // "Auto", not "None": leaving this unset no longer means "legacy,
+          // sum every checked color" — the server resolves it to this
+          // process's first axis in recipe order and stores that (see
+          // _defaultPrimaryColorAxisLabel, module_process.js). The option
+          // stays so the operator can hand the choice back to that default
+          // instead of being stuck with a stale explicit pick.
+          picker.innerHTML = '<option value="">— Auto (first color axis in recipe order) —</option>'
             + labels.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
           picker.value = labels.includes(current) ? current : '';
         }
-        // Only meaningful once there's something to pick between — a single
-        // (or zero) axis process has nothing for "primary" to disambiguate.
-        if (wrapper) wrapper.style.display = labels.length >= 2 ? '' : 'none';
+        // Shown as soon as there's a single axis: every process with an axis
+        // has a primary one now, so a 1-axis process's picker still tells the
+        // operator WHICH axis that is (and this list also grows as they type
+        // a second Group, so hiding it below 2 just made it appear mid-typing).
+        if (wrapper) wrapper.style.display = labels.length >= 1 ? '' : 'none';
 
         this.refreshDispatchDifferentiatorOptions(labels);
       },
@@ -1538,6 +1546,13 @@
       // a saved recipe to derive it from).
       async loadPoolColorAxisLabels(processId, presetPrimary) {
         this._poolAxisLabels = [];
+        // The axis this process actually behaves as primary — its own saved
+        // one, or the first-in-recipe-order default when that cell is still
+        // blank (see getProcessColorAxes / _defaultPrimaryColorAxisLabel).
+        // Preselecting it here is what makes the picker show every process's
+        // real primary axis rather than an empty box on the ones nobody has
+        // configured yet.
+        let resolvedPrimary = '';
         if (processId) {
           try {
             const res = await Api.call('getProcessColorAxes', processId);
@@ -1548,6 +1563,7 @@
               // exclude by name ('tag') rather than allowlist by name, so a
               // future axis source doesn't silently need this touched again.
               this._poolAxisLabels = res.data.axes.filter(a => a.source !== 'tag').map(a => a.label);
+              resolvedPrimary = res.data.primaryColorAxis || '';
             }
           } catch (err) {
             // Non-fatal — the picker just falls back to whatever's typed on-form.
@@ -1555,7 +1571,8 @@
         }
         this.refreshColorAxisOptions();
         const picker = document.getElementById('processPrimaryColorAxis');
-        if (picker && presetPrimary) picker.value = presetPrimary;
+        const primaryToShow = presetPrimary || resolvedPrimary;
+        if (picker && primaryToShow) picker.value = primaryToShow;
         const diffPicker = document.getElementById('processDispatchDifferentiator');
         if (diffPicker && this._presetDispatchDifferentiator) {
           diffPicker.value = this._presetDispatchDifferentiator;

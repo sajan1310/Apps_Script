@@ -211,7 +211,15 @@ MODULES = [
               {rowIdx:201, dispatchNumber:'SWP-DSP-1', dispatchDate:'01/01/2026', orderNumber:'', clientName:'Client A', productId:'P', productName:'Prod', qty:1, transport:'', remarks:'', invoiceNumber:'', grNumber:'', logisticsContractor:'', logisticsRate:0, logisticsCost:0},
               {rowIdx:202, dispatchNumber:'SWP-DSP-2', dispatchDate:'02/01/2026', orderNumber:'', clientName:'Client B', productId:'P', productName:'Prod', qty:1, transport:'', remarks:'', invoiceNumber:'', grNumber:'', logisticsContractor:'', logisticsRate:0, logisticsCost:0}
             ];
-            App.State.filteredDispatch = App.State.globalDispatch;
+            // Dispatch is a multi-ITEM bill now: the ledger table renders from
+            // filteredDispatchBills (globalDispatch grouped by Dispatch Number
+            // via buildDispatchBills), not from the flat array. Seeding only
+            // the old App.State.filteredDispatch left the table empty, so this
+            // scenario reported "0 checkboxes" rather than anything about the
+            // confirmation it exists to check.
+            App.Dispatch.buildDispatchBills();
+            App.State.filteredDispatchBills = App.State.globalDispatchBills;
+            App.State.selectedDispatch = [];
             App.Dispatch.renderDispatchTable();
         """,
         "checkbox": ".dispatch-select-chk", "button": "#btnBulkDeleteDispatch",
