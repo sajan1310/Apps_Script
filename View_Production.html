@@ -44,12 +44,13 @@
           <i class="bi bi-palette"></i> Colorwise Summary
         </button>
         <!-- One-off/repeatable repair: rewrites each already-logged lot's stored
-             component narration to the CURRENT Items Master value. New and
-             re-saved lots already write it fresh (module_production.js#
-             _withMasterNarration), so this is for lots logged before a
-             narration was set or corrected. -->
-        <button class="btn btn-outline-secondary fw-bold shadow-sm" id="btnSyncProductionNarration" type="button" onclick="App.Production.syncNarrationFromItems()" style="white-space: nowrap;" title="Updates the narration stored on every already-logged production lot to match Items Master. Only narration is touched — quantities, colours, items and status are never changed, and a lot keeps its own note where Items Master has none.">
-          <i class="bi bi-arrow-repeat"></i> Sync Narration from Items
+             component narration, unit, and item name (casing only) to the
+             CURRENT Items Master values. New and re-saved lots already write
+             narration fresh (module_production.js# _withMasterNarration), so
+             this is for lots logged before a value was set/corrected, or
+             before an item's Base Unit or casing changed. -->
+        <button class="btn btn-outline-secondary fw-bold shadow-sm" id="btnRefreshProductionFromItems" type="button" onclick="App.Production.refreshFromItemsMaster()" style="white-space: nowrap;" title="Refreshes narration, unit, and item name (casing only) stored on every already-logged production lot to match Items Master. Quantities, colours, item identities and status are never changed.">
+          <i class="bi bi-arrow-repeat"></i> Refresh from Items Master
         </button>
         <button class="btn btn-dark fw-bold shadow-sm" type="button" onclick="App.Issue.openIssueModal()" style="white-space: nowrap;">
           <i class="bi bi-box-arrow-up"></i> Issue Stock

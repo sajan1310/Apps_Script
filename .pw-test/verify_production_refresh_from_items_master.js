@@ -1,36 +1,49 @@
 /**
- * Verifies backfillProductionNarrationFromItems (module_production.js): the
- * repair pass that rewrites the narration STORED on every already-logged
- * Production lot to the current Items Master value.
+ * Verifies refreshProductionComponentsFromItemsMaster (module_production.js):
+ * the repair pass that rewrites narration, unit, and item name (casing only)
+ * STORED on every already-logged Production lot to match Items Master's
+ * current values. Supersedes the old, narration-only
+ * backfillProductionNarrationFromItems (see verify_production_narration_backfill.js,
+ * now retired — its narration coverage is folded in here).
  *
- * Narration is item metadata the operator maintains in Items Master, but each
- * lot copies it into its own COMPONENTS_CONSUMED / CUSTOM_COMPONENTS JSON at
- * log time. Every lot logged before a narration was set or corrected therefore
- * carried a blank/stale note forever. The Production Sheet now resolves it live
- * at display time; this pass fixes the stored snapshot so the Add/Edit Lot form
- * (and anything else reading a lot's own JSON) agrees with what the sheet
- * prints.
+ * narration/unit/name are all item metadata the operator maintains in Items
+ * Master, but each lot copies them into its own COMPONENTS_CONSUMED /
+ * CUSTOM_COMPONENTS JSON at log time. Every lot logged before a value was
+ * set/corrected, or before an item was renamed/re-cased or its Base Unit
+ * changed, therefore carries stale data forever unless refreshed.
  *
  * Covered:
  *   - a stale narration is replaced by the current Items Master one
  *   - a BLANK stored narration is filled in
- *   - an item Items Master doesn't know keeps its stored note (not blanked)
+ *   - an item Items Master doesn't know keeps its stored note/unit/name
+ *     entirely (not touched at all)
  *   - an item whose Items Master narration is blank keeps its stored note
+ *     (even while its unit DOES get corrected — narration and unit are
+ *     independent per-field decisions, not all-or-nothing per component)
+ *   - itemName is corrected to Items Master's current casing/spelling for
+ *     the SAME identity (matched case-insensitively) — never repoints to a
+ *     different item
+ *   - an EXPLICIT stored unit that no longer matches the item's current
+ *     Base Unit is corrected
+ *   - a BLANK stored unit is left blank (it already means "this item's Base
+ *     Unit" — rewriting it to an explicit string would be pure churn)
+ *   - a component already fully in sync (name/narration/unit) is untouched
  *   - the CUSTOM_COMPONENTS ("sheet customization") snapshot is repaired too
  *   - POOL-sourced rows are resolved by name like any other (metadata, not
  *     identity — contrast backfillProductionConsumedItemRefs)
- *   - NOTHING but narration changes: qty/color/colorGroup/sourceType/unit and
- *     every other Production column round-trip untouched
+ *   - NOTHING but name/narration/unit changes: qty/color/colorGroup/
+ *     sourceType/requiredQty and every other Production column round-trip
+ *     untouched
  *   - idempotent: an immediate re-run reports zero changes
  *   - unparseable JSON is skipped, not corrupted
  *   - saveProduction writes narration fresh from Items Master, so a lot saved
- *     with a stale client value can't undo the backfill
+ *     with a stale client value can't undo the refresh
  *
  * Uses the STRICT FakeRange from verify_process_save_row_width.js (setValues
  * enforces the range's declared shape exactly as Apps Script does), so a
  * mismatched write width fails here instead of in production.
  *
- * Run: node .pw-test/verify_production_narration_backfill.js
+ * Run: node .pw-test/verify_production_refresh_from_items_master.js
  */
 const fs = require('fs');
 const path = require('path');
@@ -91,8 +104,8 @@ class FakeSpreadsheet {
 const ss = new FakeSpreadsheet();
 const sandbox = {
   SpreadsheetApp: { getActiveSpreadsheet: () => ss, flush: () => {} },
-  // waitLock, not just tryLock — backfillProductionNarrationFromItems is a
-  // top-level entry point and takes the lock itself.
+  // waitLock, not just tryLock — refreshProductionComponentsFromItemsMaster
+  // is a top-level entry point and takes the lock itself.
   LockService: { getDocumentLock: () => ({ tryLock: () => true, waitLock: () => true, releaseLock: () => {} }) },
   CacheService: { getScriptCache: () => ({ get: () => null, put: () => {}, remove: () => {} }) },
   console, Logger: { log: () => {} },
@@ -114,8 +127,6 @@ let failures = 0;
 function assert(cond, msg) { if (!cond) { failures++; console.error('  FAIL:', msg); } else { console.log('  PASS:', msg); } }
 
 // ── Seed Items Master ────────────────────────────────────────────────────
-// "Adhesive Tape" deliberately has a BLANK narration; "Rework Charge" is
-// deliberately absent altogether.
 const items = ss.addSheet(APP_CONFIG.SHEETS.ITEMS);
 items.appendRow(['Item Name', 'Size', 'Remarks', 'Narration', 'Specification', 'Base Unit', 'Purchase Unit', 'Weight/Base Unit', 'Vendors']);
 [
@@ -124,7 +135,9 @@ items.appendRow(['Item Name', 'Size', 'Remarks', 'Narration', 'Specification', '
   ['Frame Sticker---Blue', '', '', 'Sticker kit A', '', 'Set', 'Set', 0, ''],
   ['Bearing 6203', '20 inch', '', 'Sealed, size-specific note', '', 'Pcs', 'Pcs', 0, ''],
   ['Bearing 6203', '', '', 'Generic, no size', '', 'Pcs', 'Pcs', 0, ''],
-  ['Fitted Frame 16 inch', '', '', 'WIP frame from Fitting', '', 'Pcs', 'Pcs', 0, '']
+  ['Fitted Frame 16 inch', '', '', 'WIP frame from Fitting', '', 'Pcs', 'Pcs', 0, ''],
+  ['CURVY STICKER Backrest', '', '', 'Sticker note', '', 'Pcs', 'Pcs', 0, ''],
+  ['Bolt M6', '', '', 'Bolt note', '', 'Pcs', 'Pcs', 0, '']
 ].forEach(r => items.appendRow(r));
 
 // ── Seed Production ──────────────────────────────────────────────────────
@@ -152,16 +165,22 @@ function lotRow(opts) {
 }
 
 const LOT_A = [
-  // stale -> must be replaced
+  // stale narration -> must be replaced; name+unit already in sync
   { itemName: 'Carton Box 16 inch', size: '', narration: 'OLD 3-ply note', color: '', sourceType: 'ITEM', qty: 40, colorGroup: 'COMMON', unit: '' },
-  // blank -> must be filled
+  // blank narration -> must be filled; name+unit already in sync
   { itemName: 'Frame Sticker---Blue', size: '', narration: '', color: '', sourceType: 'ITEM', qty: 20, colorGroup: 'Blue', unit: '' },
-  // Items Master narration is blank -> keep the hand-typed note
+  // Items Master narration is blank -> keep hand-typed note; EXPLICIT stale
+  // unit ('Gross', item renamed/reconfigured to base unit 'Kg') -> corrected
   { itemName: 'Adhesive Tape', size: '', narration: 'Hand-typed tape note', color: '', sourceType: 'ITEM', qty: 2, colorGroup: 'COMMON', unit: 'Gross' },
-  // not in Items Master at all -> keep the stored note
-  { itemName: 'Rework Charge', size: '', narration: 'Ad-hoc labour', color: '', sourceType: 'ITEM', qty: 1, colorGroup: 'COMMON', unit: '' },
+  // not in Items Master at all -> keep everything stored, untouched
+  { itemName: 'Rework Charge', size: '', narration: 'Ad-hoc labour', color: '', sourceType: 'ITEM', qty: 1, colorGroup: 'COMMON', unit: 'Nos' },
   // POOL-sourced, and its name IS an Items Master row -> resolved like any other
-  { itemName: 'Fitted Frame 16 inch', size: '', narration: '', color: '', sourceType: 'POOL', qty: 40, colorGroup: 'Blue', unit: '' }
+  { itemName: 'Fitted Frame 16 inch', size: '', narration: '', color: '', sourceType: 'POOL', qty: 40, colorGroup: 'Blue', unit: '' },
+  // casing/spelling drift on the SAME identity -> corrected to canonical; its
+  // own narration already matches, and unit is blank (must stay blank)
+  { itemName: 'curvy sticker backrest', size: '', narration: 'Sticker note', color: '', sourceType: 'ITEM', qty: 5, colorGroup: 'COMMON', unit: '' },
+  // fully in sync already (name/narration exact, unit blank) -> untouched
+  { itemName: 'Bolt M6', size: '', narration: 'Bolt note', color: '', sourceType: 'ITEM', qty: 12, colorGroup: 'COMMON', unit: '' }
 ];
 // Size is part of the key: the '20 inch' row must NOT pick up the sizeless
 // row's narration, and vice versa.
@@ -186,19 +205,21 @@ const readConsumed = row => JSON.parse(prod._get(row, PRODUCTION_COL.COMPONENTS_
 const readCustom = row => JSON.parse(prod._get(row, PRODUCTION_COL.CUSTOM_COMPONENTS));
 const byName = (list, name, size) => list.find(c => c.itemName === name && (size === undefined || c.size === size));
 
-// Snapshot every non-narration field so we can prove nothing else moved.
+// Snapshot every field so we can prove nothing outside name/narration/unit moved.
 const beforeFull = JSON.parse(JSON.stringify(prod.rows));
 
-console.log('=== Test 1: the backfill runs and reports what it changed ===');
-const res = C.backfillProductionNarrationFromItems();
+console.log('=== Test 1: the refresh runs and reports what it changed ===');
+const res = C.refreshProductionComponentsFromItemsMaster();
 assert(res.success, 'returns success: ' + (res.message || ''));
 console.log('  message: ' + res.message);
 assert(res.data && res.data.lotsScanned === 4, `scanned all 4 lots (got ${res.data && res.data.lotsScanned})`);
-// LOT-A consumed: Carton Box (stale) + Frame Sticker (blank) + Fitted Frame
-// (blank) = 3. LOT-B consumed: both Bearing variants = 2. LOT-C consumed is
-// another copy of the same list as LOT-A = 3. LOT-C custom: Carton Box = 1.
-assert(res.data && res.data.fieldsUpdated === 9,
-  `refreshed exactly 9 narrations: 3 (LOT-A) + 2 (LOT-B) + 3 (LOT-C consumed) + 1 (LOT-C custom) ` +
+// LOT-A consumed: Carton Box narration(1) + Frame Sticker narration(1) +
+// Adhesive Tape unit(1) + Rework Charge(0, unknown) + Fitted Frame narration(1)
+// + curvy sticker backrest name(1) + Bolt M6(0, already in sync) = 5.
+// LOT-B consumed: both Bearing variants' narration = 2.
+// LOT-C consumed is another copy of LOT_A = 5. LOT-C custom: Carton Box narration = 1.
+assert(res.data && res.data.fieldsUpdated === 13,
+  `refreshed exactly 13 fields: 5 (LOT-A) + 2 (LOT-B) + 5 (LOT-C consumed) + 1 (LOT-C custom) ` +
   `(got ${res.data && res.data.fieldsUpdated})`);
 assert(res.data && res.data.lotsUpdated === 3,
   `3 of the 4 lots changed — LOT-D's corrupt JSON is skipped (got ${res.data && res.data.lotsUpdated})`);
@@ -210,44 +231,58 @@ assert(byName(a, 'Carton Box 16 inch').narration === 'Corrugated 5-ply (revised)
 assert(byName(a, 'Frame Sticker---Blue').narration === 'Sticker kit A',
   `blank note filled in (got "${byName(a, 'Frame Sticker---Blue').narration}")`);
 
-console.log('\n=== Test 3: nothing is blanked where Items Master has nothing to say ===');
-assert(byName(a, 'Adhesive Tape').narration === 'Hand-typed tape note',
-  `blank-in-Items-Master keeps its stored note (got "${byName(a, 'Adhesive Tape').narration}")`);
-assert(byName(a, 'Rework Charge').narration === 'Ad-hoc labour',
-  `unknown item keeps its stored note (got "${byName(a, 'Rework Charge').narration}")`);
+console.log('\n=== Test 3: nothing is blanked/touched where Items Master has nothing to say ===');
+const adhesive = byName(a, 'Adhesive Tape');
+assert(adhesive.narration === 'Hand-typed tape note',
+  `blank-in-Items-Master keeps its stored note (got "${adhesive.narration}")`);
+const rework = byName(a, 'Rework Charge');
+assert(rework.narration === 'Ad-hoc labour' && rework.unit === 'Nos' && rework.itemName === 'Rework Charge',
+  `unknown item is fully untouched (got narration="${rework.narration}", unit="${rework.unit}", itemName="${rework.itemName}")`);
 
-console.log('\n=== Test 4: POOL rows are resolved by name (metadata, not identity) ===');
+console.log('\n=== Test 4: explicit stale unit is corrected; blank unit stays blank ===');
+assert(adhesive.unit === 'Kg', `Adhesive Tape's explicit stale unit 'Gross' corrected to current Base Unit 'Kg' (got "${adhesive.unit}")`);
+assert(byName(a, 'Carton Box 16 inch').unit === '', 'Carton Box\'s blank unit is left blank, not stamped to "Pcs"');
+const bolt = byName(a, 'Bolt M6');
+assert(bolt.unit === '' && bolt.narration === 'Bolt note' && bolt.itemName === 'Bolt M6',
+  `already-in-sync component (blank unit) is completely untouched (got unit="${bolt.unit}", narration="${bolt.narration}", itemName="${bolt.itemName}")`);
+
+console.log('\n=== Test 5: item name is corrected to current Items Master casing, same identity only ===');
+const sticker = a.find(c => c.itemName.toLowerCase() === 'curvy sticker backrest');
+assert(sticker && sticker.itemName === 'CURVY STICKER Backrest',
+  `casing-drifted name corrected to canonical (got "${sticker && sticker.itemName}")`);
+assert(sticker && sticker.narration === 'Sticker note' && sticker.unit === '',
+  'narration/unit for that same component are untouched (already in sync)');
+
+console.log('\n=== Test 6: POOL rows are resolved by name (metadata, not identity) ===');
 assert(byName(a, 'Fitted Frame 16 inch').narration === 'WIP frame from Fitting',
   `POOL row picked up its Items Master narration (got "${byName(a, 'Fitted Frame 16 inch').narration}")`);
 assert(byName(a, 'Fitted Frame 16 inch').sourceType === 'POOL',
   'POOL row keeps sourceType POOL (identity untouched)');
 
-console.log('\n=== Test 5: size is part of the lookup key ===');
+console.log('\n=== Test 7: size is part of the lookup key ===');
 const b = readConsumed(ROW.B);
 assert(byName(b, 'Bearing 6203', '20 inch').narration === 'Sealed, size-specific note',
   `'20 inch' variant got its own narration (got "${byName(b, 'Bearing 6203', '20 inch').narration}")`);
 assert(byName(b, 'Bearing 6203', '').narration === 'Generic, no size',
   `sizeless variant got its own narration (got "${byName(b, 'Bearing 6203', '').narration}")`);
 
-console.log('\n=== Test 6: the CUSTOM_COMPONENTS sheet snapshot is repaired too ===');
+console.log('\n=== Test 8: the CUSTOM_COMPONENTS sheet snapshot is repaired too ===');
 const cCustom = readCustom(ROW.C);
 assert(cCustom[0].narration === 'Corrugated 5-ply (revised)',
   `customComponents narration refreshed (got "${cCustom[0].narration}")`);
 assert(cCustom[0].requiredQty === 40, `customComponents requiredQty intact (got ${cCustom[0].requiredQty})`);
 
-console.log('\n=== Test 7: unparseable JSON is skipped, not corrupted ===');
+console.log('\n=== Test 9: unparseable JSON is skipped, not corrupted ===');
 assert(prod._get(ROW.D, PRODUCTION_COL.COMPONENTS_CONSUMED) === '{not valid json',
   'corrupt cell left byte-for-byte unchanged');
 
-console.log('\n=== Test 8: ONLY narration changed — every other field round-trips ===');
+console.log('\n=== Test 10: ONLY itemName/narration/unit changed — every other field round-trips ===');
 const afterFull = JSON.parse(JSON.stringify(prod.rows));
 let strayDiffs = [];
 afterFull.forEach((row, ri) => {
   (row || []).forEach((val, ci) => {
     const before = (beforeFull[ri] || [])[ci];
     if (before === val) return;
-    // The two JSON columns are expected to change; assert the diff is
-    // confined to narration by comparing them field by field.
     const col = ci + 1;
     if (col === PRODUCTION_COL.COMPONENTS_CONSUMED || col === PRODUCTION_COL.CUSTOM_COMPONENTS) {
       let pb, pa;
@@ -256,7 +291,7 @@ afterFull.forEach((row, ri) => {
       pb.forEach((cb, i) => {
         const ca = pa[i];
         Object.keys(cb).forEach(k => {
-          if (k === 'narration') return;
+          if (k === 'narration' || k === 'unit' || k === 'itemName') return;
           if (JSON.stringify(cb[k]) !== JSON.stringify(ca[k])) {
             strayDiffs.push(`row ${ri + 1} col ${col} comp ${i} field "${k}": ${JSON.stringify(cb[k])} -> ${JSON.stringify(ca[k])}`);
           }
@@ -270,11 +305,11 @@ afterFull.forEach((row, ri) => {
     strayDiffs.push(`row ${ri + 1} col ${col}: ${JSON.stringify(before)} -> ${JSON.stringify(val)}`);
   });
 });
-assert(strayDiffs.length === 0, 'no field other than narration changed anywhere' +
+assert(strayDiffs.length === 0, 'no field other than itemName/narration/unit changed anywhere' +
   (strayDiffs.length ? ' -- stray diffs: ' + strayDiffs.join('; ') : ''));
 
-console.log('\n=== Test 9: idempotent — an immediate re-run changes nothing ===');
-const again = C.backfillProductionNarrationFromItems();
+console.log('\n=== Test 11: idempotent — an immediate re-run changes nothing ===');
+const again = C.refreshProductionComponentsFromItemsMaster();
 assert(again.success, 're-run succeeds');
 assert(again.data && again.data.fieldsUpdated === 0,
   `re-run reports 0 changes (got ${again.data && again.data.fieldsUpdated})`);
@@ -282,11 +317,11 @@ assert(again.data && again.data.lotsUpdated === 0,
   `re-run reports 0 lots touched (got ${again.data && again.data.lotsUpdated})`);
 assert(/already match/i.test(again.message || ''), `no-op message says so: "${again.message}"`);
 
-console.log('\n=== Test 10: a re-run after an Items Master edit picks the new value up ===');
+console.log('\n=== Test 12: a re-run after an Items Master edit picks the new value up ===');
 // Row 2 of the Items sheet is 'Carton Box 16 inch' (row 1 is the header).
 items._set(2, ITEMS_COL.NARRATION, 'Corrugated 7-ply (2nd revision)');
 // Carton Box is stored 3 times: LOT-A consumed, LOT-C consumed, LOT-C custom.
-const third = C.backfillProductionNarrationFromItems();
+const third = C.refreshProductionComponentsFromItemsMaster();
 assert(third.success && third.data.fieldsUpdated === 3,
   `re-run refreshed all 3 stored copies of the edited item (got ${third.data && third.data.fieldsUpdated})`);
 assert(byName(readConsumed(ROW.A), 'Carton Box 16 inch').narration === 'Corrugated 7-ply (2nd revision)',
@@ -294,9 +329,9 @@ assert(byName(readConsumed(ROW.A), 'Carton Box 16 inch').narration === 'Corrugat
 assert(readCustom(ROW.C)[0].narration === 'Corrugated 7-ply (2nd revision)',
   'LOT-C custom picked up the 2nd revision');
 
-console.log('\n=== Test 11: saveProductionSheet writes narration fresh, not the client value ===');
+console.log('\n=== Test 13: saveProductionSheet writes narration fresh, not the client value ===');
 // A stale client payload must not be able to re-persist the old note and undo
-// the backfill (module_production.js#_withMasterNarration).
+// the refresh (module_production.js#_withMasterNarration).
 const saveRes = C.saveProductionSheet(ROW.C, '', 40, JSON.stringify([
   { itemName: 'Carton Box 16 inch', size: '', narration: 'STALE FROM CLIENT', colorGroup: 'COMMON', requiredQty: 40 },
   { itemName: 'Rework Charge', size: '', narration: 'client-only note', colorGroup: 'COMMON', requiredQty: 1 }

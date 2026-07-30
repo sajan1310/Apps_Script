@@ -5086,40 +5086,42 @@
         );
       },
 
-      // Rewrites the narration STORED on every already-logged lot to the
-      // current Items Master value (module_production.js#
-      // backfillProductionNarrationFromItems).
+      // Rewrites the narration/unit/item-name STORED on every already-logged
+      // lot to the current Items Master values (module_production.js#
+      // refreshProductionComponentsFromItemsMaster).
       //
       // The Production Sheet itself already resolves narration live at render
       // time (_resolveDisplayNarration), so this isn't needed to make the
       // printed sheet correct — it repairs the stored snapshot, so the Add/Edit
       // Lot form and anything else reading a lot's own componentsConsumed shows
-      // the same text the sheet prints instead of the note that was current
-      // when the lot was logged. Lots saved from now on write it fresh anyway
+      // the same text the sheet prints instead of what was current when the
+      // lot was logged. Lots saved from now on write narration fresh anyway
       // (_withMasterNarration), so in normal use this is a one-off catch-up.
       //
       // Confirmed first because it writes across every historical lot at once,
       // and re-runnable: a lot already in sync is left untouched.
-      syncNarrationFromItems() {
+      refreshFromItemsMaster() {
         App.Utils.confirmAction(
-          'Update the narration stored on every already-logged production lot to match Items Master?\n\n' +
-          'Only narration is touched — quantities, colours, items and status are never changed, and a lot keeps ' +
-          'its own note for any item Items Master has no narration for.',
+          'Refresh every already-logged production lot\'s stored narration, unit, and item name to match Items Master?\n\n' +
+          'Quantities, colours, item identities and status are never changed. Item name is only corrected to fix ' +
+          'casing/spelling drift for the same item — never repointed to a different one. Unit is synced to each ' +
+          'item\'s current Base Unit; if an item\'s Base Unit was itself changed since a lot used it, that lot\'s ' +
+          'quantity will now read under the new unit.',
           async () => {
-            const btn = document.getElementById('btnSyncProductionNarration');
+            const btn = document.getElementById('btnRefreshProductionFromItems');
             const original = btn?.innerHTML;
             if (btn) {
               btn.disabled = true;
-              btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Syncing...';
+              btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Refreshing...';
             }
             try {
-              const res = await Api.call('backfillProductionNarrationFromItems');
+              const res = await Api.call('refreshProductionComponentsFromItemsMaster');
               App.Utils.showToast(res.message, !res.success);
               // Reload even on a no-op result so the grid and any cached lot
               // objects match the sheet either way.
               if (res.success) await this.loadData();
             } catch (err) {
-              App.Utils.showToast(err.message || 'Failed to sync narration from Items Master', true);
+              App.Utils.showToast(err.message || 'Failed to refresh production lots from Items Master', true);
             } finally {
               if (btn) {
                 btn.disabled = false;

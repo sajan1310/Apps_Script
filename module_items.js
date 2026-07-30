@@ -513,6 +513,38 @@ function _getItemNarrationMap() {
 }
 
 /**
+ * Builds a "name|size" -> {canonicalName, narration, baseUnit} lookup from a
+ * single batch read of Items Master, combining the 3 fields
+ * refreshProductionComponentsFromItemsMaster() resyncs onto every already-
+ * logged lot's stored components. canonicalName and baseUnit are always
+ * included (a blank Base Unit still defaults to 'Pcs', same as
+ * _getItemUnitInfoMap); narration is blank when Items Master has none, same
+ * non-blank-wins semantics as _getItemNarrationMap.
+ * @returns {Object} { [nameLower|sizeLower]: {canonicalName, narration, baseUnit} }
+ */
+function _getItemMasterRefreshMap() {
+  const map = {};
+  try {
+    const sheet = getSheet(APP_CONFIG.SHEETS.ITEMS);
+    const lastRow = sheet ? sheet.getLastRow() : 0;
+    if (!sheet || lastRow < 2) return map;
+
+    const data = sheet.getRange(2, ITEMS_COL.ITEM_NAME, lastRow - 1, ITEMS_COL.BASE_UNIT - ITEMS_COL.ITEM_NAME + 1).getValues();
+    data.forEach(row => {
+      const name = String(row[ITEMS_COL.ITEM_NAME - 1] || '').trim();
+      if (!name) return;
+      const size = String(row[ITEMS_COL.SIZE - 1] || '').trim();
+      const narration = String(row[ITEMS_COL.NARRATION - 1] || '').trim();
+      const baseUnit = String(row[ITEMS_COL.BASE_UNIT - 1] || '').trim() || 'Pcs';
+      map[name.toLowerCase() + '|' + size.toLowerCase()] = { canonicalName: name, narration, baseUnit };
+    });
+  } catch (e) {
+    // Items sheet not found/accessible — caller keeps whatever's stored.
+  }
+  return map;
+}
+
+/**
  * Looks up unit info for a single (name, size) pair from a map built by
  * _getItemUnitInfoMap(). Falls back to {baseUnit: 'Pcs', purchaseUnit: 'Pcs',
  * weightPerBaseUnit: 0} for items not found (new/unregistered items).

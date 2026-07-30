@@ -472,7 +472,7 @@ function _poolNeedKey(itemNameLower, colorGroup) {
  * persisting whatever the client happened to have on screen. Without this, a
  * lot saved from a form still holding an old autofill (or an Edit Lot reopened
  * long after the item's narration was corrected) would quietly write the stale
- * text back and undo backfillProductionNarrationFromItems.
+ * text back and undo refreshProductionComponentsFromItemsMaster.
  *
  * The Items Master read happens once per save, lazily on the first component,
  * mirroring _buildPoolNeededMap's lazy map loads.
@@ -1593,42 +1593,57 @@ function backfillProductionConsumedItemRefs(oldName, oldSize, newName, newSize) 
 }
 
 /**
- * Rewrites the `narration` field of every already-saved Production lot's
- * COMPONENTS_CONSUMED JSON (and the CUSTOM_COMPONENTS "sheet customization"
- * snapshot) to the current Items Master narration for that item.
+ * Rewrites narration, unit, and item name (casing/whitespace only) on every
+ * already-saved Production lot's COMPONENTS_CONSUMED JSON (and the
+ * CUSTOM_COMPONENTS "sheet customization" snapshot) to match Items Master's
+ * current values for that item, matched by (name, size) case-insensitively.
  *
- * Why this is needed at all: narration is descriptive metadata the operator
- * maintains in Items Master, but a lot COPIES it into its own JSON snapshot at
- * log time (see saveProduction's cleanComponents mapper). Every lot logged
- * before an Items Master narration was written or corrected therefore carries
- * a blank or stale note forever, and re-typing it row by row across historical
- * lots is not realistic. The Production Sheet now resolves narration live at
+ * Why this is needed at all: narration/unit/name are all metadata the
+ * operator maintains in Items Master, but a lot COPIES them into its own JSON
+ * snapshot at log time (see saveProduction's cleanComponents mapper). Every
+ * lot logged before an Items Master value was written/corrected, or before an
+ * item was renamed/re-cased, therefore carries stale data forever unless
+ * explicitly refreshed — re-typing it row by row across historical lots is
+ * not realistic. The Production Sheet already resolves narration live at
  * DISPLAY time (Script_Production.html#_resolveDisplayNarration), so the
- * printed sheet is already correct without this — this pass fixes the stored
- * data itself, so the Add/Edit Lot form, and anything else reading a lot's
- * snapshot, agrees with what the sheet prints instead of showing the old text.
+ * printed sheet looks correct without this; this pass fixes the STORED data
+ * itself, so the Add/Edit Lot form and anything else reading a lot's raw
+ * snapshot agrees with what the sheet prints instead of showing old text.
  *
- * Applies exactly the same rule as the display layer, so the two can never
- * disagree: a non-blank Items Master narration wins; an item Items Master
- * doesn't know (a Warehouse Pool WIP item, an ad-hoc row) or one whose own
- * narration is blank keeps whatever the lot stored, so nothing typed by hand
- * is ever blanked. sourceType is deliberately NOT filtered — the lookup is by
- * name+size, and a POOL row whose name happens to be a real Items Master item
- * is the same physical item, which is how the display layer resolves it too.
- * (Contrast backfillProductionConsumedItemRefs, which must skip POOL rows
- * because it rewrites item IDENTITY, not metadata.)
+ * itemName is only ever corrected to the SAME identity's current casing/
+ * spelling (matched case-insensitively) — this never repoints a component to
+ * a different item; a real rename to a different name is already handled by
+ * the rename cascade (backfillProductionConsumedItemRefs).
  *
- * Idempotent and safe to re-run: a component already carrying the current
- * narration is left untouched, and a row is only written when something in it
- * actually changed.
+ * unit is synced to the item's current Base Unit whenever a component
+ * already carries an EXPLICIT stored unit that no longer matches it. A
+ * blank stored unit already means "this item's Base Unit" (see
+ * saveProduction) and is left blank — rewriting it to an explicit string
+ * would be pure churn, not a fix. For a component with an explicit unit,
+ * this assumes its qty was entered in the item's Base Unit at the time — the
+ * common case. If an item's Base Unit was itself later changed to a
+ * genuinely different unit, a lot that deliberately recorded consumption in
+ * the OLD Base Unit would have its quantity silently reinterpreted under the
+ * new one; this tradeoff (simple, unconditional sync once a unit is stored
+ * explicitly, matching narration's own philosophy) was confirmed explicitly
+ * with the operator over leaving stale/renamed units unresolved.
+ *
+ * sourceType is deliberately NOT filtered — the lookup is by name+size, and
+ * a POOL row whose name happens to be a real Items Master item is the same
+ * physical item, which is how the display layer resolves it too. (Contrast
+ * backfillProductionConsumedItemRefs, which must skip POOL rows because it
+ * rewrites item IDENTITY, not metadata.)
+ *
+ * Idempotent and safe to re-run: a component already fully in sync is left
+ * untouched, and a row is only written when something in it actually changed.
  *
  * Acquires its own document lock — this is a top-level entry point (called
- * from the Production view's "Sync Narration from Items" button, or run from
+ * from the Production view's "Refresh from Items Master" button, or run from
  * the Apps Script editor), not a step inside another write.
  *
  * @returns {Object} buildResponse with { lotsScanned, lotsUpdated, fieldsUpdated, details }
  */
-function backfillProductionNarrationFromItems() {
+function refreshProductionComponentsFromItemsMaster() {
   const lock = LockService.getDocumentLock();
   try {
     lock.waitLock(30000);
@@ -1649,17 +1664,17 @@ function backfillProductionNarrationFromItems() {
         'Production sheet has no Components Consumed column yet.');
     }
 
-    const narrationMap = typeof _getItemNarrationMap === 'function' ? _getItemNarrationMap() : {};
-    if (Object.keys(narrationMap).length === 0) {
+    const masterMap = typeof _getItemMasterRefreshMap === 'function' ? _getItemMasterRefreshMap() : {};
+    if (Object.keys(masterMap).length === 0) {
       return buildResponse(true, { lotsScanned: 0, lotsUpdated: 0, fieldsUpdated: 0, details: [] },
-        'No narrations are set in Items Master yet — nothing to sync.');
+        'Items Master is empty — nothing to sync.');
     }
 
     const numRows = lastRow - startRow + 1;
 
     // Returns the rewritten JSON string, or null when this cell needs no write
     // (blank, unparseable, or already fully in sync). `counter` collects the
-    // per-field change count so the caller can report what actually moved.
+    // total field-change count so the caller can report what actually moved.
     const _resync = function(raw, counter) {
       const trimmed = String(raw || '').trim();
       if (!trimmed) return null;
@@ -1677,12 +1692,29 @@ function backfillProductionNarrationFromItems() {
         const name = String(comp.itemName || '').trim();
         if (!name) return;
         const size = String(comp.size || '').trim();
-        const master = narrationMap[name.toLowerCase() + '|' + size.toLowerCase()];
-        if (!master) return; // unknown item, or blank in Items Master — keep stored
-        if (String(comp.narration || '').trim() === master) return; // already in sync
-        comp.narration = master;
-        changed = true;
-        counter.n++;
+        const master = masterMap[name.toLowerCase() + '|' + size.toLowerCase()];
+        if (!master) return; // unknown item — keep stored as-is
+
+        if (master.canonicalName && comp.itemName !== master.canonicalName) {
+          comp.itemName = master.canonicalName;
+          changed = true;
+          counter.n++;
+        }
+        if (master.narration && String(comp.narration || '').trim() !== master.narration) {
+          comp.narration = master.narration;
+          changed = true;
+          counter.n++;
+        }
+        // A blank stored unit already MEANS "this item's Base Unit" (see
+        // saveProduction's cleanComponents comment) — leaving it blank is
+        // already in sync, not stale, so only an explicit stored unit that
+        // no longer matches the item's current Base Unit gets rewritten.
+        const storedUnit = String(comp.unit || '').trim();
+        if (master.baseUnit && storedUnit && storedUnit !== master.baseUnit) {
+          comp.unit = master.baseUnit;
+          changed = true;
+          counter.n++;
+        }
       });
 
       return changed ? JSON.stringify(list) : null;
@@ -1716,7 +1748,7 @@ function backfillProductionNarrationFromItems() {
           const lot = String(lotNumbers[i][0] || '').trim() || ('row ' + (startRow + i));
           if (!updatedRows[lot]) {
             updatedRows[lot] = true;
-            details.push(lot + ': ' + (counter.n - before) + ' narration(s) refreshed');
+            details.push(lot + ': ' + (counter.n - before) + ' field(s) refreshed');
           }
         }
       }
@@ -1731,18 +1763,18 @@ function backfillProductionNarrationFromItems() {
 
     const message = counter.n === 0
       ? `All ${numRows} production lot(s) already match Items Master — nothing to change.`
-      : `Refreshed ${counter.n} narration(s) across ${lotsUpdated} of ${numRows} production lot(s).`;
-    Logger.log('[backfillProductionNarrationFromItems] ' + message);
+      : `Refreshed ${counter.n} field(s) (narration/unit/name) across ${lotsUpdated} of ${numRows} production lot(s).`;
+    Logger.log('[refreshProductionComponentsFromItemsMaster] ' + message);
     details.forEach(function(d) { Logger.log('  ' + d); });
-    logAction('UPDATE', 'backfillProductionNarrationFromItems', 'PRODUCTION', message, 'SUCCESS');
+    logAction('UPDATE', 'refreshProductionComponentsFromItemsMaster', 'PRODUCTION', message, 'SUCCESS');
 
     return buildResponse(true, {
       lotsScanned: numRows, lotsUpdated: lotsUpdated, fieldsUpdated: counter.n, details: details
     }, message);
   } catch (error) {
-    Log.error('[backfillProductionNarrationFromItems] Error:', error.message);
-    logAction('ERROR', 'backfillProductionNarrationFromItems', 'PRODUCTION', error.message, 'ERROR');
-    return buildResponse(false, null, 'Failed to sync narration from Items Master: ' + error.message);
+    Log.error('[refreshProductionComponentsFromItemsMaster] Error:', error.message);
+    logAction('ERROR', 'refreshProductionComponentsFromItemsMaster', 'PRODUCTION', error.message, 'ERROR');
+    return buildResponse(false, null, 'Failed to refresh production lots from Items Master: ' + error.message);
   } finally {
     lock.releaseLock();
   }
