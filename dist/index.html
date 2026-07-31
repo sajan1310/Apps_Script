@@ -28714,7 +28714,17 @@
           }
           if (subGroupDest) {
             const hideSize = tier.hideSize && matrixSizeDroppable;
-            subGroupDest.innerHTML = subGroupGroups.map(g => buildMatrixTable(g.data, tier, hideSize, g.columns)).join('');
+            const tables = subGroupGroups.map(g => buildMatrixTable(g.data, tier, hideSize, g.columns));
+            // Sub-group cluster tables are usually narrow (packing/variant
+            // buckets, often just 1-2 columns) -- stacking them full-width
+            // one after another leaves most of each row empty and burns
+            // extra printed pages for no reason. Same minmax(0,1fr) grid
+            // Common Components uses above packs two per row instead; CSS
+            // grid auto-placement wraps any further tables onto more rows
+            // with no extra layout logic needed.
+            subGroupDest.innerHTML = tables.length > 1
+              ? `<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;">${tables.join('')}</div>`
+              : tables.join('');
           }
         };
 
