@@ -8335,7 +8335,7 @@
     <div style="font-size:10px;color:#555;margin-top:2px;letter-spacing:0.3px;">
       6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
     </div>
-    <div style="font-size:11px;color:#198754;font-weight:700;margin-top:3px;letter-spacing:1px;text-transform:uppercase;">
+    <div id="print-prod-title" style="font-size:11px;color:#198754;font-weight:700;margin-top:3px;letter-spacing:1px;text-transform:uppercase;">
       Production Material Requirement Sheet
     </div>
   </div>
@@ -23291,7 +23291,7 @@
           6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
         </div>
         <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
-          Production Material Requirement Sheet
+          ${escapeHtml(this._requirementSheetTitle(p.processId))}
         </div>
       </div>
       <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
@@ -24136,6 +24136,19 @@
           matchedAny = true;
         }
         return matchedAny;
+      },
+
+      // The printed sheet's title: "<Process Type> Requirement Sheet" (e.g.
+      // "Packing Requirement Sheet"), falling back to the original generic
+      // "Production Material Requirement Sheet" when the lot's process has
+      // no Process Type set, or the process itself can no longer be found
+      // (deleted/renamed since the lot was logged). Shared by the rich
+      // single-lot template (_buildProductionSheetForExport) and the bulk
+      // print builder (buildProductionSheetPrintPageHtml) so both agree.
+      _requirementSheetTitle(processId) {
+        const process = (App.State.globalProcesses || []).find(pr => pr.processId === processId);
+        const type = String(process?.processType || '').trim();
+        return type ? `${type} Requirement Sheet` : 'Production Material Requirement Sheet';
       },
 
       // Every currently checked primary-axis row whose color name
@@ -27694,6 +27707,7 @@
         // Size/Model dropdowns are (see handleSizeChange/handleModelChange).
         const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
         const processName = process ? process.processName : (p.processId || 'Process');
+        const requirementSheetTitle = this._requirementSheetTitle(p.processId);
         const size = App.Utils.getSizeFromOutputItemName(p.outputItemName);
         const model = App.Utils.getModelFromOutputItemName(p.outputItemName);
 
@@ -27708,7 +27722,7 @@
         // are packing/variant sub-groups. See _isColorGroupName.
         App.State.currentProductionSheet = {
           idx, lotQty: p.qty, defaultComponents, colors,
-          lotColor: p.color || '', date: p.date, size, model, processName
+          lotColor: p.color || '', date: p.date, size, model, processName, requirementSheetTitle
         };
         this._refreshSheetGroupSplit(App.State.currentProductionSheet);
         this.renderProductionSheetPrintOptions();
@@ -28418,6 +28432,7 @@
           if (el) el.innerText = text;
         };
 
+        setText('print-prod-title', App.State.currentProductionSheet?.requirementSheetTitle || 'Production Material Requirement Sheet');
         setText('print-prod-date', document.getElementById('prodSheetDate')?.innerText || '');
         setText('print-prod-id', document.getElementById('prodSheetProductId')?.innerText || '');
         setText('print-prod-name', document.getElementById('prodSheetProductName')?.innerText || '');
