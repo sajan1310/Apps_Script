@@ -48,10 +48,10 @@
             <th style="width: 16%;">Process Name</th>
             <th style="width: 7%; text-align: center;">Sequence</th>
             <th style="width: 8%; text-align: center;">Lot Prefix</th>
-            <th style="width: 10%;">Process Type</th>
-            <th style="width: 13%;">Output Item Name</th>
-            <th style="width: 9%; text-align: center;">Final Stage</th>
-            <th style="width: 8%; text-align: center;">Active</th>
+            <th style="width: 10%;">Process Type <button type="button" class="th-filter-btn" data-filter-key="processType" onclick="App.Process.toggleColumnFilter(event, 'processType')"><i class="bi bi-funnel"></i></button></th>
+            <th style="width: 13%;">Output Item Name <button type="button" class="th-filter-btn" data-filter-key="outputItem" onclick="App.Process.toggleColumnFilter(event, 'outputItem')"><i class="bi bi-funnel"></i></button></th>
+            <th style="width: 9%; text-align: center;">Final Stage <button type="button" class="th-filter-btn" data-filter-key="finalStage" onclick="App.Process.toggleColumnFilter(event, 'finalStage')"><i class="bi bi-funnel"></i></button></th>
+            <th style="width: 8%; text-align: center;">Active <button type="button" class="th-filter-btn" data-filter-key="active" onclick="App.Process.toggleColumnFilter(event, 'active')"><i class="bi bi-funnel"></i></button></th>
             <th style="width: 20%; text-align: center;">Actions</th>
           </tr>
         </thead>
