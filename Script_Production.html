@@ -6027,23 +6027,21 @@
         const colors = (sheet.colorGroups || allGroups.filter(c => this._isColorGroupName(c))).filter(kept);
         const subGroups = (sheet.subGroups || allGroups.filter(c => !this._isColorGroupName(c))).filter(kept);
 
-        // The Per-Color matrix is split into connected clusters of columns —
-        // two colors land in the same printed table only if some row uses
-        // BOTH of them together, directly or transitively through a
-        // bridging row (e.g. one item legitimately offered in every color in
-        // the lot ties otherwise-unrelated subsets into one family, and stays
-        // on one table). Columns that are always used together as one family
-        // stay consolidated (the common case, and the one
-        // verify_production_sheet_autofit.py guards: a real 6-colour/11-row
-        // worst case that must NOT fragment into one table per row
-        // signature, or it spills across pages). But two colour groups that
-        // NEVER co-occur on any row — e.g. a Painted Mudguard's own plain
-        // Blue/Pink/Purple/Red axis next to the Frame's compound
-        // Blue-White/Black-style axis, which share zero columns — get their
-        // own table instead of doubling every row's column count with
-        // dashes. Sub-Group Components (packing/variant buckets, never more
-        // than a handful of columns) intentionally stays ONE flat table
-        // regardless of this — see verify_production_sheet_subgroup_split.py.
+        // The Per-Color matrix stays ONE consolidated table, every real
+        // color as a column — see verify_production_sheet_autofit.py, which
+        // guards a real 6-colour/11-row worst case that must NOT fragment
+        // into one table per row signature/axis, or it spills across pages.
+        const matrixData = matrixRows.map(toMatrixRow(colors)).filter(hasAnyQty);
+
+        // Sub-Group Components (packing/variant buckets), by contrast,
+        // splits into one table per connected cluster of columns — two
+        // sub-group columns land in the same printed table only if some row
+        // uses BOTH of them together, directly or transitively through a
+        // bridging row. A "KIT BAG 24\"" bucket that never shares a
+        // component row with a "SMALL KIT 24\"" bucket gets its own table
+        // instead of doubling every row's column count with dashes (and,
+        // for a long component list, needlessly spilling onto extra printed
+        // pages). See verify_production_sheet_subgroup_split.py.
         const clusterMatrixTables = (columns, rows) => {
           if (columns.length === 0 || rows.length === 0) return [];
           const parent = new Map(columns.map(c => [c, c]));
@@ -6071,14 +6069,13 @@
             .map(g => ({ columns: g.columns, data: g.rows.map(toMatrixRow(g.columns)) }));
         };
 
-        const matrixGroups = clusterMatrixTables(colors, matrixRows);
-        const subGroupData = matrixRows.map(toMatrixRow(subGroups)).filter(hasAnyQty);
+        const subGroupGroups = clusterMatrixTables(subGroups, matrixRows);
 
-        // Each section appears only if it has both columns AND rows carrying a
-        // quantity in them, so a lot with no sub-groups looks exactly as it
-        // always did, and a kit-bag-only lot shows no empty color matrix.
-        if (matrixSection) matrixSection.style.display = matrixGroups.length > 0 ? '' : 'none';
-        if (subGroupSection) subGroupSection.style.display = (subGroups.length > 0 && subGroupData.length > 0) ? '' : 'none';
+        // Each section appears only if it has both columns AND rows carrying
+        // a quantity in them, so a lot with no sub-groups looks exactly as
+        // it always did, and a kit-bag-only lot shows no empty color matrix.
+        if (matrixSection) matrixSection.style.display = (colors.length > 0 && matrixData.length > 0) ? '' : 'none';
+        if (subGroupSection) subGroupSection.style.display = subGroupGroups.length > 0 ? '' : 'none';
 
         // Density tiers the fit loop steps through, tightest last: shrink
         // padding, then font (Item Name + Qty held a step larger and bold —
@@ -6286,11 +6283,11 @@
           }
           if (matrixDest) {
             const hideSize = tier.hideSize && matrixSizeDroppable;
-            matrixDest.innerHTML = matrixGroups.map(g => buildMatrixTable(g.data, tier, hideSize, g.columns)).join('');
+            matrixDest.innerHTML = buildMatrixTable(matrixData, tier, hideSize, colors);
           }
           if (subGroupDest) {
             const hideSize = tier.hideSize && matrixSizeDroppable;
-            subGroupDest.innerHTML = buildMatrixTable(subGroupData, tier, hideSize, subGroups);
+            subGroupDest.innerHTML = subGroupGroups.map(g => buildMatrixTable(g.data, tier, hideSize, g.columns)).join('');
           }
         };
 

@@ -24,6 +24,11 @@ Asserted here:
      serializeProductionSheet reads state.colors, so dropping sub-groups from
      it would silently drop their quantities on save.
   5. The derived split is refreshed when a column is added, not left stale.
+  6. (2026-07-31) Sub-Group Components itself now splits into one table per
+     connected cluster of columns, same as the colour matrix (see
+     bug_print_matrix_disjoint_color_axes in project memory): 'KIT BAG 20"'
+     and 'SMALL KIT 20"' never co-occur on the same component row here, so
+     they land in two separate tables instead of one shared 2-column table.
 
 Run: python .pw-test/verify_production_sheet_subgroup_split.py
 """
@@ -163,12 +168,14 @@ def run():
             el.style.visibility='hidden'; el.style.display='block';
             el.style.width = App.Print.PAGE_WIDTH_PX + 'px';
             const mt = el.querySelector('#print-production-sheet-matrix-tables table');
-            const st = el.querySelector('#print-production-sheet-subgroup-tables table');
+            const subTables = [...el.querySelectorAll('#print-production-sheet-subgroup-tables table')];
             const heads = t => t ? [...t.querySelectorAll('thead th')].map(th => th.textContent.trim()) : null;
             const r = {
-              matrixHeaders: heads(mt), subHeaders: heads(st),
+              matrixHeaders: heads(mt),
+              subTableCount: subTables.length,
+              subHeadersPerTable: subTables.map(heads),
               matrixRowCount: mt ? mt.querySelectorAll('tbody tr').length : 0,
-              subRowCount: st ? st.querySelectorAll('tbody tr').length : 0,
+              subRowCount: subTables.reduce((n, t) => n + t.querySelectorAll('tbody tr').length, 0),
               subSectionShown: getComputedStyle(document.getElementById('print-prod-subgroup-section')).display !== 'none',
               overflowPx: Math.round(el.scrollWidth - el.clientWidth),
             };
@@ -190,11 +197,34 @@ def run():
         if not any(b in (geo["matrixHeaders"] or []) for b in ['KIT BAG 20"', 'SMALL KIT 20"']):
             print("  PASS: no packing bucket appears as a colour column")
 
-        if sorted(h for h in (geo["subHeaders"] or []) if 'KIT' in h) != sorted(['KIT BAG 20"', 'SMALL KIT 20"']):
-            print(f"  FAIL: sub-group table headers wrong: {geo['subHeaders']}")
+        # 'KIT BAG 20"' and 'SMALL KIT 20"' never share a component row in
+        # this lot (RIM TAPE/FREE WHEEL carry SMALL KIT, HANDLE GRIP BIG
+        # carries KIT BAG), so they must land in two separate tables rather
+        # than one shared 2-column table.
+        all_sub_headers = [h for headers in geo["subHeadersPerTable"] for h in headers]
+        if sorted(h for h in all_sub_headers if 'KIT' in h) != sorted(['KIT BAG 20"', 'SMALL KIT 20"']):
+            print(f"  FAIL: sub-group table headers wrong across {geo['subTableCount']} table(s): {geo['subHeadersPerTable']}")
             ok = False
         else:
-            print("  PASS: both packing buckets are columns of the sub-group table")
+            print(f"  PASS: both packing buckets are present across the sub-group tables ({geo['subHeadersPerTable']})")
+
+        if geo["subTableCount"] != 2:
+            print(f"  FAIL: expected 2 separate sub-group tables (disjoint buckets), found {geo['subTableCount']}")
+            ok = False
+        else:
+            print("  PASS: disjoint packing buckets split into 2 separate sub-group tables")
+
+        if any(('KIT BAG 20"' in headers) and ('SMALL KIT 20"' in headers) for headers in geo["subHeadersPerTable"]):
+            print("  FAIL: KIT BAG and SMALL KIT ended up sharing one table despite never co-occurring on a row")
+            ok = False
+        else:
+            print("  PASS: no single sub-group table mixes both disjoint buckets")
+
+        if geo["subRowCount"] != 3:
+            print(f"  FAIL: sub-group tables carry {geo['subRowCount']} rows total, expected 3 (RIM TAPE, FREE WHEEL, HANDLE GRIP BIG)")
+            ok = False
+        else:
+            print("  PASS: all 3 sub-group rows are present across the split tables")
 
         # The colour matrix must not be padded with all-dash rows: only the
         # Painted Frame carries colour quantities here.
