@@ -26642,7 +26642,22 @@
             return;
           }
 
-          if (App.Utils.isCommonColorGroup(colorGroup) || !colors.some(c => App.Utils.sameColor(c, colorGroup))) {
+          // Which of this lot's own (possibly composite) breakdown colors
+          // this component's colorGroup belongs to — same token-vs-composite
+          // matching populateColorMatrixForColors already uses (see
+          // _matchedColorToken): a lot's checked color is often a COMPOSITE
+          // of the axes it combines ("Blue-White / BCP"), while a saved
+          // component is tagged with just ONE axis's own color
+          // ("Blue-White"). Matching the whole composite string verbatim (the
+          // previous behavior here) never hit for a composite-color lot, so
+          // every one of its per-color components silently fell through to
+          // the addComponentRow branch below instead — reopening such a lot
+          // for Edit made the Per-Color Components table look like it never
+          // loaded at all, even though the same lot's fresh-create path
+          // (populateColorMatrixForColors) rendered it correctly.
+          const matchedColors = colors.filter(col => this._matchedColorToken(colorGroup, col));
+
+          if (App.Utils.isCommonColorGroup(colorGroup) || matchedColors.length === 0) {
             // A saved row whose colorGroup is a real single pool color (not
             // 'COMMON', and not one of this lot's own output colors) is the
             // single-pool-color case — re-lock it the same way addComponentRow
@@ -26664,15 +26679,21 @@
           // Explicitly color-tagged, not pool-color-aware: a genuinely
           // different literal item per color (e.g. "Frame---Red" /
           // "Frame---Blue") — keep on a merged row, one real item picker
-          // per color cell.
+          // per color cell. Both tokens of a composite legitimately apply at
+          // once (mirrors populateColorMatrixForColors and saveProduction's
+          // own server-side rule), so this fills EVERY composite color it
+          // matches, not just the first.
           const displayName = sharedItemKeys.has(this._itemSlotKey(c.itemName, c.size))
             ? (c.itemName || '').trim()
             : this._stripColorSubstring(c.itemName || '', colorGroup);
           let row = this.findMatrixRowByDisplayName(displayName, c.size || '');
           if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, sourceType: c.sourceType, narration: c.narration });
-          const colIndex = this.getMatrixColumnIndex(colorGroup);
-          const cell = row.children[colIndex];
-          this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty, derivedQtyPerUnit);
+          matchedColors.forEach(col => {
+            const colIndex = this.getMatrixColumnIndex(col);
+            if (colIndex === -1) return;
+            const cell = row.children[colIndex];
+            this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty, derivedQtyPerUnit);
+          });
         });
 
         // Seed a table for EVERY pool-color-aware recipe item (see
