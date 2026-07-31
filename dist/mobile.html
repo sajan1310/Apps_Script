@@ -1563,38 +1563,41 @@
             font-family:'Segoe UI',Arial,sans-serif;
             font-size:12px;
             line-height:1.5;
-            padding:14px 20px 12px 20px;
+            padding:8px 20px 10px 20px;
             margin:0;
             box-sizing:border-box;
             width:100%;
-            border-top:5px solid #198754;
+            border-top:4px solid #198754;
             border-bottom:3px solid #198754;
             -webkit-print-color-adjust:exact;
             print-color-adjust:exact;">
 
-  <!-- Header -->
-  <div style="text-align:center;padding:4px 0 8px 0;">
-    <div class="print-brand-text" style="font-size:32px;font-weight:800;color:#198754;
+  <!-- Header — trimmed to reduce empty space above Common Components; this
+       block runs once per sheet, so shaving a few px here (unlike the
+       FIT_TIERS-compressed tables below) directly cuts every export's page
+       count, not just borderline-overflow ones. -->
+  <div style="text-align:center;padding:0 0 4px 0;">
+    <div class="print-brand-text" style="font-size:26px;font-weight:800;color:#198754;
                 letter-spacing:2px;text-transform:uppercase;
                 font-family:'Segoe UI',Arial,sans-serif;
                 -webkit-print-color-adjust:exact;print-color-adjust:exact;">
       Maharaja Bikes
     </div>
-    <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
+    <div style="font-size:10px;color:#555;margin-top:2px;letter-spacing:0.3px;">
       6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
     </div>
-    <div style="font-size:11px;color:#198754;font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
+    <div style="font-size:11px;color:#198754;font-weight:700;margin-top:3px;letter-spacing:1px;text-transform:uppercase;">
       Production Material Requirement Sheet
     </div>
   </div>
-  <div style="height:2px;background:#198754;margin:0 0 12px 0;
+  <div style="height:2px;background:#198754;margin:0 0 8px 0;
               -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
 
   <!-- Lot Info — fixed grid (not space-between flex) so field count/wrapping
        stays predictable whether or not Color is shown; Lot Qty is the number
        the whole sheet hangs on, so it gets a boxed, larger treatment. -->
-  <div style="display:grid;grid-template-columns:auto auto 1fr auto;gap:10px 22px;align-items:end;
-              margin-bottom:6px;padding-bottom:9px;border-bottom:1px solid #ccc;">
+  <div style="display:grid;grid-template-columns:auto auto 1fr auto;gap:8px 20px;align-items:end;
+              margin-bottom:4px;padding-bottom:6px;border-bottom:1px solid #ccc;">
     <div>
       <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
       <div id="print-prod-date" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
@@ -1607,14 +1610,14 @@
       <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Output Item</span>
       <div id="print-prod-name" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
     </div>
-    <div style="background:#e8f5e9;border:1px solid #198754;border-radius:7px;padding:3px 14px 4px;text-align:center;
+    <div style="background:#e8f5e9;border:1px solid #198754;border-radius:7px;padding:2px 14px 3px;text-align:center;
                 -webkit-print-color-adjust:exact;print-color-adjust:exact;">
       <span style="font-size:9px;color:#146c43;text-transform:uppercase;letter-spacing:0.5px;">Lot Qty</span>
       <div id="print-prod-qty" style="font-size:19px;font-weight:800;color:#146c43;line-height:1.05;
                   -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
     </div>
   </div>
-  <div id="print-prod-color-wrapper" style="display:none;padding:6px 0 9px;margin-bottom:10px;border-bottom:1px solid #ccc;">
+  <div id="print-prod-color-wrapper" style="display:none;padding:4px 0 6px;margin-bottom:6px;border-bottom:1px solid #ccc;">
     <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Color(s)</span>
     <div id="print-prod-color" style="font-size:12px;font-weight:700;color:#198754;margin-top:1px;"></div>
   </div>
