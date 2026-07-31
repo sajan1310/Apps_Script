@@ -8318,7 +8318,6 @@
             box-sizing:border-box;
             width:100%;
             border-top:4px solid #198754;
-            border-bottom:3px solid #198754;
             -webkit-print-color-adjust:exact;
             print-color-adjust:exact;">
 
@@ -8403,6 +8402,24 @@
     <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
     <div id="print-prod-remarks-text" style="font-size:12px;color:#1a1a1a;margin-top:2px;white-space:pre-wrap;"></div>
   </div>
+
+  <!-- Closing accent — a real block (not the container's own border-bottom)
+       so the "Download PDF" path (App.Print.downloadElementAsPDF,
+       Script_Print.html) can protect it the same way it already protects
+       table rows: html2pdf slices one tall captured canvas at fixed page-
+       height intervals, and a plain border-bottom on the container has no
+       size of its own to defend, so it could land squeezed right against
+       the last table row with almost no visible gap whenever that row
+       happened to fall near a slice boundary. This div's own height +
+       margin gives it real weight to protect via .print-sheet-closing-
+       accent in that call's pagebreak.avoid list — it either renders with
+       its intended clearance, or (rarely) the whole block moves to a fresh
+       page, but it can never be sliced flush against the row above it.
+       Native window.print() was never affected (real CSS fragmentation
+       already keeps border-bottom on the box's last page fragment), so
+       this only changes anything for the PDF path. -->
+  <div class="print-sheet-closing-accent" style="height:8px;background:#198754;margin-top:8px;
+              -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
 
 </div>
 
@@ -12850,7 +12867,14 @@
                 // The CSS page-break-inside:avoid rules in Styles.html cannot
                 // do this job: they live in @media print, which html2canvas
                 // (a screen-media renderer) never applies.
-                pagebreak: { mode: ['css', 'legacy'], avoid: ['tr'] }
+                // .print-sheet-closing-accent (Production Sheet's own closing
+                // bar, View_Print.html) gets the same protection — without it
+                // a container's plain border-bottom has no size of its own to
+                // defend against the guillotine, so it could land squeezed
+                // flush against whatever row happened to fall near a slice
+                // boundary. Harmless for every other container: the selector
+                // simply matches nothing there.
+                pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.print-sheet-closing-accent'] }
               }, html2pdfOverrides))
               .from(element)
               .save();
