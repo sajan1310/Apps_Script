@@ -2648,7 +2648,9 @@
             this.addComponentRow({
               itemName: c.itemName,
               size: c.size,
-              narration: c.narration,
+              // Live from Items Master, not the recipe row's own possibly
+              // stale stored value — see _resolveDisplayNarration.
+              narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration),
               sourceType: c.sourceType,
               color: singleColor,
               colorScope: singleColor || undefined,
@@ -3181,7 +3183,9 @@
           components.forEach(c => this.addComponentRow({
             itemName: c.itemName,
             size: c.size,
-            narration: c.narration,
+            // Live from Items Master, not the recipe row's own possibly
+            // stale stored value — see _resolveDisplayNarration.
+            narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration),
             sourceType: c.sourceType,
             qty: lotQty > 0 ? lotQty * c.qtyPerUnit : c.qtyPerUnit,
             qtyPerUnit: c.qtyPerUnit,
@@ -3860,7 +3864,11 @@
 
               colorComps.forEach(c => {
                 let row = this.findMatrixRowByDisplayName(c.displayName, c.size || '');
-                if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, sourceType: c.sourceType, narration: c.narration });
+                // Live from Items Master, looked up against the LITERAL
+                // item name/size (c.itemName), not the color-stripped
+                // c.displayName used as the row's own key — see
+                // _resolveDisplayNarration.
+                if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, sourceType: c.sourceType, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration) });
                 const cell = row.children[colIndex];
                 const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
                 this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
@@ -3876,7 +3884,8 @@
               commonOverrideComps.forEach(c => {
                 if (overriddenKeys.has(this._itemSlotKey(c.itemName, c.size))) return;
                 let row = this.findMatrixRowByDisplayName(c.itemName, c.size || '');
-                if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType, narration: c.narration });
+                // Live from Items Master — see _resolveDisplayNarration.
+                if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration) });
                 const cell = row.children[colIndex];
                 const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
                 this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
