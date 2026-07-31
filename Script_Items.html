@@ -1140,16 +1140,18 @@
               <table style="width:100%;border-collapse:collapse;font-size:11px;">
                 <thead>
                   <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:9%;">Date</th>
-                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:11%;">Type</th>
+                    <!-- These 10 must add up to 100% (was 104%) — mirrored in
+                         View_Print.html#print-item-history-body's table. -->
+                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:8%;">Date</th>
+                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Type</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Ref #</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:left;width:16%;">Vendor / Source</th>
-                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:9%;">Size</th>
+                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:8%;">Size</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:left;width:13%;">Narration</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Order Qty</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Incoming Qty</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Outgoing Qty</th>
-                    <th style="padding:6px;border:1px solid #bbb;text-align:right;width:9%;">Price</th>
+                    <th style="padding:6px;border:1px solid #bbb;text-align:right;width:8%;">Price</th>
                   </tr>
                 </thead>
                 <tbody>${histRows}</tbody>

@@ -2345,8 +2345,63 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
+     PRINT / PDF TEMPLATE ISOLATION — deliberately OUTSIDE @media print
+
+     Every print template (View_Print.html and the buildXPrintPageHtml
+     builders) is written to be self-contained: it carries its own
+     typography inline and expects nothing from the app's screen styling.
+     That contract was silently broken by the app's own base `th` rule
+     (~line 1682), which is a bare element selector and therefore applies
+     inside the print containers too — where no inline style overrides it,
+     because the templates set header typography on the <tr>, not on each
+     <th>. Two of its properties actively break output:
+
+       white-space: nowrap  A print <th> could not wrap, so its min-content
+                            width became the whole header phrase ("Incoming
+                            Qty" = 107px against a declared 9% = 63px). These
+                            tables are table-layout:auto, where a declared %
+                            is only a hint and no column may go below its
+                            min-content, so the table grew past width:100%:
+                            the Item Ledger history table measured 842px and
+                            the Vendor Ledger's 764px against a 708px content
+                            box. Both window.print() and html2canvas capture
+                            the container's own box and simply CUT there, so
+                            the right-hand columns (Price / Total Value) were
+                            missing from the output entirely.
+       color                Overrode the white the templates set on the header
+                            <tr>, printing every header in the app's muted
+                            grey — including grey on the Low Stock sheet's
+                            near-black header band.
+
+     This block must stay out of @media print: html2canvas is a screen-media
+     renderer and never applies @media print rules, so a fix living in there
+     would repair window.print() and leave every PDF still clipped.
+
+     table-layout:fixed would also cap the width, and is deliberately NOT
+     used — see TABLE_STYLE in Script_Production.html: html2canvas
+     mis-measures fixed-layout columns and paints each header on a single
+     unwrapped line, clipping it mid-word. Auto layout plus a wrappable
+     header is what both renderers agree on.
+     ═════════════════════════════════════════════════════════════════════ */
+
+  #print-po-container th,
+  #print-item-ledger-container th,
+  #print-vendor-ledger-container th,
+  #print-client-ledger-container th,
+  #print-contractor-ledger-container th,
+  #print-production-sheet-container th,
+  #print-low-stock-container th,
+  #print-bill-container th,
+  #print-bom-container th,
+  #print-dispatch-container th,
+  #print-bulk-container th {
+    white-space: normal;
+    color: inherit;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
      @media print — VISIBILITY SWITCHES ONLY
-     
+
      Principles:
      ──────────────────────────────────────────────────────────────────────
      - Show/hide elements for print output
@@ -2394,13 +2449,27 @@
       visibility: hidden !important;
     }
 
+    /* Every list below must name all 11 containers in App.Print.CONTAINER_IDS
+       (Script_Print.html). They had drifted to the original 6: the Bill, BOM,
+       Dispatch, Client Ledger and bulk containers were reaching print with no
+       rules of their own at all, relying entirely on the
+       [style*="display: none"] switch above to hide them and on their own
+       inline styles for everything else — which is why their rows had no
+       page-break protection (see the tr rule below) and could be sliced in
+       half by a page boundary. */
+
     /* Hide all print containers by default during printing */
     #print-po-container,
     #print-item-ledger-container,
     #print-vendor-ledger-container,
+    #print-client-ledger-container,
     #print-contractor-ledger-container,
     #print-production-sheet-container,
-    #print-low-stock-container {
+    #print-low-stock-container,
+    #print-bill-container,
+    #print-bom-container,
+    #print-dispatch-container,
+    #print-bulk-container {
       display: none !important;
     }
 
@@ -2408,9 +2477,14 @@
     #print-po-container.active-print,
     #print-item-ledger-container.active-print,
     #print-vendor-ledger-container.active-print,
+    #print-client-ledger-container.active-print,
     #print-contractor-ledger-container.active-print,
     #print-production-sheet-container.active-print,
-    #print-low-stock-container.active-print {
+    #print-low-stock-container.active-print,
+    #print-bill-container.active-print,
+    #print-bom-container.active-print,
+    #print-dispatch-container.active-print,
+    #print-bulk-container.active-print {
       display: block !important;
       visibility: visible !important;
       width: 100% !important;
@@ -2422,9 +2496,14 @@
     #print-po-container *,
     #print-item-ledger-container *,
     #print-vendor-ledger-container *,
+    #print-client-ledger-container *,
     #print-contractor-ledger-container *,
     #print-production-sheet-container *,
-    #print-low-stock-container * {
+    #print-low-stock-container *,
+    #print-bill-container *,
+    #print-bom-container *,
+    #print-dispatch-container *,
+    #print-bulk-container * {
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
@@ -2447,27 +2526,42 @@
     #print-po-container thead,
     #print-item-ledger-container thead,
     #print-vendor-ledger-container thead,
+    #print-client-ledger-container thead,
     #print-contractor-ledger-container thead,
     #print-production-sheet-container thead,
-    #print-low-stock-container thead {
+    #print-low-stock-container thead,
+    #print-bill-container thead,
+    #print-bom-container thead,
+    #print-dispatch-container thead,
+    #print-bulk-container thead {
       display: table-header-group;
     }
 
     #print-po-container tfoot,
     #print-item-ledger-container tfoot,
     #print-vendor-ledger-container tfoot,
+    #print-client-ledger-container tfoot,
     #print-contractor-ledger-container tfoot,
     #print-production-sheet-container tfoot,
-    #print-low-stock-container tfoot {
+    #print-low-stock-container tfoot,
+    #print-bill-container tfoot,
+    #print-bom-container tfoot,
+    #print-dispatch-container tfoot,
+    #print-bulk-container tfoot {
       display: table-footer-group;
     }
 
     #print-po-container tr,
     #print-item-ledger-container tr,
     #print-vendor-ledger-container tr,
+    #print-client-ledger-container tr,
     #print-contractor-ledger-container tr,
     #print-production-sheet-container tr,
-    #print-low-stock-container tr {
+    #print-low-stock-container tr,
+    #print-bill-container tr,
+    #print-bom-container tr,
+    #print-dispatch-container tr,
+    #print-bulk-container tr {
       page-break-inside: avoid;
       break-inside: avoid;
     }
@@ -7948,16 +8042,19 @@
       <thead>
         <tr style="background-color:#17a2b8;color:#fff;font-weight:700;
                    -webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:9%;">Date</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:11%;">Type</th>
+          <!-- These 10 must add up to 100%. They summed to 104%, which the
+               renderer silently rescales, so no column got the share it
+               declared. Mirrored in Script_Items.html#buildItemLedgerPrintPageHtml. -->
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:8%;">Date</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Type</th>
           <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Ref #</th>
           <th style="padding:6px;border:1px solid #bbb;text-align:left;width:16%;">Vendor / Source</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:9%;">Size</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:8%;">Size</th>
           <th style="padding:6px;border:1px solid #bbb;text-align:left;width:13%;">Narration</th>
           <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Order Qty</th>
           <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Incoming Qty</th>
           <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Outgoing Qty</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:right;width:9%;">Price</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:right;width:8%;">Price</th>
         </tr>
       </thead>
       <tbody id="print-item-history-body"></tbody>
@@ -16611,16 +16708,18 @@
               <table style="width:100%;border-collapse:collapse;font-size:11px;">
                 <thead>
                   <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:9%;">Date</th>
-                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:11%;">Type</th>
+                    <!-- These 10 must add up to 100% (was 104%) — mirrored in
+                         View_Print.html#print-item-history-body's table. -->
+                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:8%;">Date</th>
+                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Type</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Ref #</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:left;width:16%;">Vendor / Source</th>
-                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:9%;">Size</th>
+                    <th style="padding:6px;border:1px solid #bbb;text-align:left;width:8%;">Size</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:left;width:13%;">Narration</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Order Qty</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Incoming Qty</th>
                     <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Outgoing Qty</th>
-                    <th style="padding:6px;border:1px solid #bbb;text-align:right;width:9%;">Price</th>
+                    <th style="padding:6px;border:1px solid #bbb;text-align:right;width:8%;">Price</th>
                   </tr>
                 </thead>
                 <tbody>${histRows}</tbody>
@@ -26610,7 +26709,19 @@
           // lot already has a saved value for it — so reopening an existing
           // lot doesn't hide one of its own already-recorded columns just
           // because something upstream changed since it was saved.
-          const checkedLower = this._checkedColorTokensLower(axisKey);
+          //
+          // Must use the exact-wins-then-tokens rule (_checkedPoolGroupColors),
+          // NOT raw token matching: once this pool item's own colors are
+          // composites ("Blue-White / Black"), splitting each checked color
+          // into tokens lights up a column for every SEGMENT too
+          // ("Blue-White", "Black"), none of which was ever checked. Those
+          // columns can never hold a value (_poolGroupCellValue's exact
+          // branch wins for the composite), so reopening a 6-composite lot
+          // rendered 13 columns, 7 permanently blank — and the first
+          // checkbox toggle then dropped them again, since
+          // syncPoolColorGroupColumns already used the exact-wins rule.
+          const checkedLower = new Set(
+            this._checkedPoolGroupColors(groupColors, axisKey).map(c => c.toLowerCase()));
           const savedLower = new Set();
           groupEntries.forEach(e => Object.keys(e.colorsQty || {}).forEach(c => savedLower.add(c)));
           const visibleColors = groupColors.filter(c => checkedLower.has(c.toLowerCase()) || savedLower.has(c.toLowerCase()));
@@ -28290,26 +28401,10 @@
         if (colorWrapper) colorWrapper.style.display = lotColor ? '' : 'none';
         setText('print-prod-color', lotColor);
 
-        const sheet = App.State.currentProductionSheet || {};
-        const allGroups = sheet.colors || [];
-
-        // Real colors stay clubbed together in one matrix — including ones that
-        // only segment-match each other ("Blue", "Blue-White", "Blue-White/Black"
-        // are all the same family and belong side by side). Everything that is
-        // not a color at all is pulled out into its own table below, so a
-        // packing bucket can never widen (or get clipped out of) the color
-        // matrix. See _isColorGroupName.
-        //
-        // Prefer the split _populateProductionSheetData already stored so the
-        // dialog and the export can never disagree; re-derive only if this was
-        // reached without it (older state, or a caller that built the sheet by
-        // hand).
         // Anything unticked in the Print options panel is dropped from the
         // printed sheet only — the lot's own data is untouched.
         const { excluded } = this._printOptions();
         const kept = g => !excluded.some(e => App.Utils.sameColor(e, g));
-        const colors = (sheet.colorGroups || allGroups.filter(c => this._isColorGroupName(c))).filter(kept);
-        const subGroups = (sheet.subGroups || allGroups.filter(c => !this._isColorGroupName(c))).filter(kept);
 
         const get = (row, sel) => escapeHtml(row.querySelector(sel)?.value.trim() || '');
         const getRaw = (row, sel) => row.querySelector(sel)?.value.trim() || '';
@@ -28337,10 +28432,6 @@
           unit: this._sheetRowUnitFromDom(row)
         }));
 
-        // One row per item, one column per group — replaces the old
-        // per-color-signature grouping (which spawned a separate mini-table,
-        // each repeating its own header, whenever items used different
-        // subsets of colors). Unused columns just render a dash.
         const qtyFor = (row, group) => {
           const input = $$('.prod-sheet-color-qty', row).find(el => App.Utils.sameColor(el.dataset.color, group));
           return input?.value || '';
@@ -28357,13 +28448,63 @@
         // every kit-bag-only item as a full row of dashes (and vice versa),
         // which is what made the sheet run to a second, mostly-empty page.
         const hasAnyQty = r => r.colorQty.some(q => String(q).trim() !== '');
-        const matrixData = matrixRows.map(toMatrixRow(colors)).filter(hasAnyQty);
+
+        const sheet = App.State.currentProductionSheet || {};
+        const allGroups = sheet.colors || [];
+        const colors = (sheet.colorGroups || allGroups.filter(c => this._isColorGroupName(c))).filter(kept);
+        const subGroups = (sheet.subGroups || allGroups.filter(c => !this._isColorGroupName(c))).filter(kept);
+
+        // The Per-Color matrix is split into connected clusters of columns —
+        // two colors land in the same printed table only if some row uses
+        // BOTH of them together, directly or transitively through a
+        // bridging row (e.g. one item legitimately offered in every color in
+        // the lot ties otherwise-unrelated subsets into one family, and stays
+        // on one table). Columns that are always used together as one family
+        // stay consolidated (the common case, and the one
+        // verify_production_sheet_autofit.py guards: a real 6-colour/11-row
+        // worst case that must NOT fragment into one table per row
+        // signature, or it spills across pages). But two colour groups that
+        // NEVER co-occur on any row — e.g. a Painted Mudguard's own plain
+        // Blue/Pink/Purple/Red axis next to the Frame's compound
+        // Blue-White/Black-style axis, which share zero columns — get their
+        // own table instead of doubling every row's column count with
+        // dashes. Sub-Group Components (packing/variant buckets, never more
+        // than a handful of columns) intentionally stays ONE flat table
+        // regardless of this — see verify_production_sheet_subgroup_split.py.
+        const clusterMatrixTables = (columns, rows) => {
+          if (columns.length === 0 || rows.length === 0) return [];
+          const parent = new Map(columns.map(c => [c, c]));
+          const find = c => { while (parent.get(c) !== c) c = parent.get(c); return c; };
+          const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+
+          const rowColumns = rows.map(row => columns.filter(c => String(qtyFor(row, c)).trim() !== ''));
+          rowColumns.forEach(set => { for (let i = 1; i < set.length; i++) union(set[0], set[i]); });
+
+          const clusters = new Map(); // root -> { columns: [], rows: [] }
+          columns.forEach(c => {
+            if (!rowColumns.some(set => set.includes(c))) return; // no row ever uses it — drop
+            const root = find(c);
+            if (!clusters.has(root)) clusters.set(root, { columns: [], rows: [] });
+            clusters.get(root).columns.push(c);
+          });
+          rows.forEach((row, i) => {
+            const set = rowColumns[i];
+            if (set.length === 0) return;
+            clusters.get(find(set[0])).rows.push(row);
+          });
+
+          return Array.from(clusters.values())
+            .filter(g => g.rows.length > 0)
+            .map(g => ({ columns: g.columns, data: g.rows.map(toMatrixRow(g.columns)) }));
+        };
+
+        const matrixGroups = clusterMatrixTables(colors, matrixRows);
         const subGroupData = matrixRows.map(toMatrixRow(subGroups)).filter(hasAnyQty);
 
         // Each section appears only if it has both columns AND rows carrying a
         // quantity in them, so a lot with no sub-groups looks exactly as it
         // always did, and a kit-bag-only lot shows no empty color matrix.
-        if (matrixSection) matrixSection.style.display = (colors.length > 0 && matrixData.length > 0) ? '' : 'none';
+        if (matrixSection) matrixSection.style.display = matrixGroups.length > 0 ? '' : 'none';
         if (subGroupSection) subGroupSection.style.display = (subGroups.length > 0 && subGroupData.length > 0) ? '' : 'none';
 
         // Density tiers the fit loop steps through, tightest last: shrink
@@ -28572,7 +28713,7 @@
           }
           if (matrixDest) {
             const hideSize = tier.hideSize && matrixSizeDroppable;
-            matrixDest.innerHTML = buildMatrixTable(matrixData, tier, hideSize, colors);
+            matrixDest.innerHTML = matrixGroups.map(g => buildMatrixTable(g.data, tier, hideSize, g.columns)).join('');
           }
           if (subGroupDest) {
             const hideSize = tier.hideSize && matrixSizeDroppable;

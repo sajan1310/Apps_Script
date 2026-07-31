@@ -2299,8 +2299,63 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
+     PRINT / PDF TEMPLATE ISOLATION — deliberately OUTSIDE @media print
+
+     Every print template (View_Print.html and the buildXPrintPageHtml
+     builders) is written to be self-contained: it carries its own
+     typography inline and expects nothing from the app's screen styling.
+     That contract was silently broken by the app's own base `th` rule
+     (~line 1682), which is a bare element selector and therefore applies
+     inside the print containers too — where no inline style overrides it,
+     because the templates set header typography on the <tr>, not on each
+     <th>. Two of its properties actively break output:
+
+       white-space: nowrap  A print <th> could not wrap, so its min-content
+                            width became the whole header phrase ("Incoming
+                            Qty" = 107px against a declared 9% = 63px). These
+                            tables are table-layout:auto, where a declared %
+                            is only a hint and no column may go below its
+                            min-content, so the table grew past width:100%:
+                            the Item Ledger history table measured 842px and
+                            the Vendor Ledger's 764px against a 708px content
+                            box. Both window.print() and html2canvas capture
+                            the container's own box and simply CUT there, so
+                            the right-hand columns (Price / Total Value) were
+                            missing from the output entirely.
+       color                Overrode the white the templates set on the header
+                            <tr>, printing every header in the app's muted
+                            grey — including grey on the Low Stock sheet's
+                            near-black header band.
+
+     This block must stay out of @media print: html2canvas is a screen-media
+     renderer and never applies @media print rules, so a fix living in there
+     would repair window.print() and leave every PDF still clipped.
+
+     table-layout:fixed would also cap the width, and is deliberately NOT
+     used — see TABLE_STYLE in Script_Production.html: html2canvas
+     mis-measures fixed-layout columns and paints each header on a single
+     unwrapped line, clipping it mid-word. Auto layout plus a wrappable
+     header is what both renderers agree on.
+     ═════════════════════════════════════════════════════════════════════ */
+
+  #print-po-container th,
+  #print-item-ledger-container th,
+  #print-vendor-ledger-container th,
+  #print-client-ledger-container th,
+  #print-contractor-ledger-container th,
+  #print-production-sheet-container th,
+  #print-low-stock-container th,
+  #print-bill-container th,
+  #print-bom-container th,
+  #print-dispatch-container th,
+  #print-bulk-container th {
+    white-space: normal;
+    color: inherit;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
      @media print — VISIBILITY SWITCHES ONLY
-     
+
      Principles:
      ──────────────────────────────────────────────────────────────────────
      - Show/hide elements for print output
@@ -2348,13 +2403,27 @@
       visibility: hidden !important;
     }
 
+    /* Every list below must name all 11 containers in App.Print.CONTAINER_IDS
+       (Script_Print.html). They had drifted to the original 6: the Bill, BOM,
+       Dispatch, Client Ledger and bulk containers were reaching print with no
+       rules of their own at all, relying entirely on the
+       [style*="display: none"] switch above to hide them and on their own
+       inline styles for everything else — which is why their rows had no
+       page-break protection (see the tr rule below) and could be sliced in
+       half by a page boundary. */
+
     /* Hide all print containers by default during printing */
     #print-po-container,
     #print-item-ledger-container,
     #print-vendor-ledger-container,
+    #print-client-ledger-container,
     #print-contractor-ledger-container,
     #print-production-sheet-container,
-    #print-low-stock-container {
+    #print-low-stock-container,
+    #print-bill-container,
+    #print-bom-container,
+    #print-dispatch-container,
+    #print-bulk-container {
       display: none !important;
     }
 
@@ -2362,9 +2431,14 @@
     #print-po-container.active-print,
     #print-item-ledger-container.active-print,
     #print-vendor-ledger-container.active-print,
+    #print-client-ledger-container.active-print,
     #print-contractor-ledger-container.active-print,
     #print-production-sheet-container.active-print,
-    #print-low-stock-container.active-print {
+    #print-low-stock-container.active-print,
+    #print-bill-container.active-print,
+    #print-bom-container.active-print,
+    #print-dispatch-container.active-print,
+    #print-bulk-container.active-print {
       display: block !important;
       visibility: visible !important;
       width: 100% !important;
@@ -2376,9 +2450,14 @@
     #print-po-container *,
     #print-item-ledger-container *,
     #print-vendor-ledger-container *,
+    #print-client-ledger-container *,
     #print-contractor-ledger-container *,
     #print-production-sheet-container *,
-    #print-low-stock-container * {
+    #print-low-stock-container *,
+    #print-bill-container *,
+    #print-bom-container *,
+    #print-dispatch-container *,
+    #print-bulk-container * {
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
@@ -2401,27 +2480,42 @@
     #print-po-container thead,
     #print-item-ledger-container thead,
     #print-vendor-ledger-container thead,
+    #print-client-ledger-container thead,
     #print-contractor-ledger-container thead,
     #print-production-sheet-container thead,
-    #print-low-stock-container thead {
+    #print-low-stock-container thead,
+    #print-bill-container thead,
+    #print-bom-container thead,
+    #print-dispatch-container thead,
+    #print-bulk-container thead {
       display: table-header-group;
     }
 
     #print-po-container tfoot,
     #print-item-ledger-container tfoot,
     #print-vendor-ledger-container tfoot,
+    #print-client-ledger-container tfoot,
     #print-contractor-ledger-container tfoot,
     #print-production-sheet-container tfoot,
-    #print-low-stock-container tfoot {
+    #print-low-stock-container tfoot,
+    #print-bill-container tfoot,
+    #print-bom-container tfoot,
+    #print-dispatch-container tfoot,
+    #print-bulk-container tfoot {
       display: table-footer-group;
     }
 
     #print-po-container tr,
     #print-item-ledger-container tr,
     #print-vendor-ledger-container tr,
+    #print-client-ledger-container tr,
     #print-contractor-ledger-container tr,
     #print-production-sheet-container tr,
-    #print-low-stock-container tr {
+    #print-low-stock-container tr,
+    #print-bill-container tr,
+    #print-bom-container tr,
+    #print-dispatch-container tr,
+    #print-bulk-container tr {
       page-break-inside: avoid;
       break-inside: avoid;
     }

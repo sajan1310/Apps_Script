@@ -4282,7 +4282,19 @@
           // lot already has a saved value for it — so reopening an existing
           // lot doesn't hide one of its own already-recorded columns just
           // because something upstream changed since it was saved.
-          const checkedLower = this._checkedColorTokensLower(axisKey);
+          //
+          // Must use the exact-wins-then-tokens rule (_checkedPoolGroupColors),
+          // NOT raw token matching: once this pool item's own colors are
+          // composites ("Blue-White / Black"), splitting each checked color
+          // into tokens lights up a column for every SEGMENT too
+          // ("Blue-White", "Black"), none of which was ever checked. Those
+          // columns can never hold a value (_poolGroupCellValue's exact
+          // branch wins for the composite), so reopening a 6-composite lot
+          // rendered 13 columns, 7 permanently blank — and the first
+          // checkbox toggle then dropped them again, since
+          // syncPoolColorGroupColumns already used the exact-wins rule.
+          const checkedLower = new Set(
+            this._checkedPoolGroupColors(groupColors, axisKey).map(c => c.toLowerCase()));
           const savedLower = new Set();
           groupEntries.forEach(e => Object.keys(e.colorsQty || {}).forEach(c => savedLower.add(c)));
           const visibleColors = groupColors.filter(c => checkedLower.has(c.toLowerCase()) || savedLower.has(c.toLowerCase()));
@@ -5962,26 +5974,10 @@
         if (colorWrapper) colorWrapper.style.display = lotColor ? '' : 'none';
         setText('print-prod-color', lotColor);
 
-        const sheet = App.State.currentProductionSheet || {};
-        const allGroups = sheet.colors || [];
-
-        // Real colors stay clubbed together in one matrix — including ones that
-        // only segment-match each other ("Blue", "Blue-White", "Blue-White/Black"
-        // are all the same family and belong side by side). Everything that is
-        // not a color at all is pulled out into its own table below, so a
-        // packing bucket can never widen (or get clipped out of) the color
-        // matrix. See _isColorGroupName.
-        //
-        // Prefer the split _populateProductionSheetData already stored so the
-        // dialog and the export can never disagree; re-derive only if this was
-        // reached without it (older state, or a caller that built the sheet by
-        // hand).
         // Anything unticked in the Print options panel is dropped from the
         // printed sheet only — the lot's own data is untouched.
         const { excluded } = this._printOptions();
         const kept = g => !excluded.some(e => App.Utils.sameColor(e, g));
-        const colors = (sheet.colorGroups || allGroups.filter(c => this._isColorGroupName(c))).filter(kept);
-        const subGroups = (sheet.subGroups || allGroups.filter(c => !this._isColorGroupName(c))).filter(kept);
 
         const get = (row, sel) => escapeHtml(row.querySelector(sel)?.value.trim() || '');
         const getRaw = (row, sel) => row.querySelector(sel)?.value.trim() || '';
@@ -6009,10 +6005,6 @@
           unit: this._sheetRowUnitFromDom(row)
         }));
 
-        // One row per item, one column per group — replaces the old
-        // per-color-signature grouping (which spawned a separate mini-table,
-        // each repeating its own header, whenever items used different
-        // subsets of colors). Unused columns just render a dash.
         const qtyFor = (row, group) => {
           const input = $$('.prod-sheet-color-qty', row).find(el => App.Utils.sameColor(el.dataset.color, group));
           return input?.value || '';
@@ -6029,13 +6021,63 @@
         // every kit-bag-only item as a full row of dashes (and vice versa),
         // which is what made the sheet run to a second, mostly-empty page.
         const hasAnyQty = r => r.colorQty.some(q => String(q).trim() !== '');
-        const matrixData = matrixRows.map(toMatrixRow(colors)).filter(hasAnyQty);
+
+        const sheet = App.State.currentProductionSheet || {};
+        const allGroups = sheet.colors || [];
+        const colors = (sheet.colorGroups || allGroups.filter(c => this._isColorGroupName(c))).filter(kept);
+        const subGroups = (sheet.subGroups || allGroups.filter(c => !this._isColorGroupName(c))).filter(kept);
+
+        // The Per-Color matrix is split into connected clusters of columns —
+        // two colors land in the same printed table only if some row uses
+        // BOTH of them together, directly or transitively through a
+        // bridging row (e.g. one item legitimately offered in every color in
+        // the lot ties otherwise-unrelated subsets into one family, and stays
+        // on one table). Columns that are always used together as one family
+        // stay consolidated (the common case, and the one
+        // verify_production_sheet_autofit.py guards: a real 6-colour/11-row
+        // worst case that must NOT fragment into one table per row
+        // signature, or it spills across pages). But two colour groups that
+        // NEVER co-occur on any row — e.g. a Painted Mudguard's own plain
+        // Blue/Pink/Purple/Red axis next to the Frame's compound
+        // Blue-White/Black-style axis, which share zero columns — get their
+        // own table instead of doubling every row's column count with
+        // dashes. Sub-Group Components (packing/variant buckets, never more
+        // than a handful of columns) intentionally stays ONE flat table
+        // regardless of this — see verify_production_sheet_subgroup_split.py.
+        const clusterMatrixTables = (columns, rows) => {
+          if (columns.length === 0 || rows.length === 0) return [];
+          const parent = new Map(columns.map(c => [c, c]));
+          const find = c => { while (parent.get(c) !== c) c = parent.get(c); return c; };
+          const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+
+          const rowColumns = rows.map(row => columns.filter(c => String(qtyFor(row, c)).trim() !== ''));
+          rowColumns.forEach(set => { for (let i = 1; i < set.length; i++) union(set[0], set[i]); });
+
+          const clusters = new Map(); // root -> { columns: [], rows: [] }
+          columns.forEach(c => {
+            if (!rowColumns.some(set => set.includes(c))) return; // no row ever uses it — drop
+            const root = find(c);
+            if (!clusters.has(root)) clusters.set(root, { columns: [], rows: [] });
+            clusters.get(root).columns.push(c);
+          });
+          rows.forEach((row, i) => {
+            const set = rowColumns[i];
+            if (set.length === 0) return;
+            clusters.get(find(set[0])).rows.push(row);
+          });
+
+          return Array.from(clusters.values())
+            .filter(g => g.rows.length > 0)
+            .map(g => ({ columns: g.columns, data: g.rows.map(toMatrixRow(g.columns)) }));
+        };
+
+        const matrixGroups = clusterMatrixTables(colors, matrixRows);
         const subGroupData = matrixRows.map(toMatrixRow(subGroups)).filter(hasAnyQty);
 
         // Each section appears only if it has both columns AND rows carrying a
         // quantity in them, so a lot with no sub-groups looks exactly as it
         // always did, and a kit-bag-only lot shows no empty color matrix.
-        if (matrixSection) matrixSection.style.display = (colors.length > 0 && matrixData.length > 0) ? '' : 'none';
+        if (matrixSection) matrixSection.style.display = matrixGroups.length > 0 ? '' : 'none';
         if (subGroupSection) subGroupSection.style.display = (subGroups.length > 0 && subGroupData.length > 0) ? '' : 'none';
 
         // Density tiers the fit loop steps through, tightest last: shrink
@@ -6244,7 +6286,7 @@
           }
           if (matrixDest) {
             const hideSize = tier.hideSize && matrixSizeDroppable;
-            matrixDest.innerHTML = buildMatrixTable(matrixData, tier, hideSize, colors);
+            matrixDest.innerHTML = matrixGroups.map(g => buildMatrixTable(g.data, tier, hideSize, g.columns)).join('');
           }
           if (subGroupDest) {
             const hideSize = tier.hideSize && matrixSizeDroppable;
